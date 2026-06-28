@@ -29,7 +29,11 @@
  * Both free and allocated blocks have footers for reliable boundary tags.
  */
 
-/* Block header: size includes header itself. Bit 0 = allocated. */
+/* Block header: size includes header itself.
+ * Bit 0 = allocated (1 = in use, 0 = free)
+ * Bit 1 = prev_free (1 = previous block is free, 0 = previous is allocated)
+ *   This lets us find the previous block's footer for coalescing
+ *   without reading user data as a boundary tag. */
 typedef size_t word_t;
 
 #define WORD_SIZE       sizeof(word_t)
@@ -40,12 +44,16 @@ typedef size_t word_t;
 /* Header access macros */
 #define GET_SIZE(h)     (*(h) & ~(ALIGNMENT - 1))
 #define GET_ALLOC(h)    (*(h) & 0x1)
+#define GET_PREV_FREE(h) ((*(h) >> 1) & 0x1)
 #define SET(h, size, alloc) (*(h) = (size) | (alloc))
+#define SET_WITH_PREV(h, size, alloc, prev_free) (*(h) = (size) | (alloc) | ((prev_free) << 1))
 
 /* Pointer arithmetic */
 #define HDR_TO_PAYLOAD(h) ((void *)((char *)(h) + WORD_SIZE))
 #define PAYLOAD_TO_HDR(p) ((word_t *)((char *)(p) - WORD_SIZE))
 #define NEXT_HDR(h)      ((word_t *)((char *)(h) + GET_SIZE(h)))
+#define FOOTER(h)        ((word_t *)((char *)(h) + GET_SIZE(h) - WORD_SIZE))
+#define IS_EPILOGUE(h)   (GET_SIZE(h) == 0)
 
 /* Heap start/end */
 extern word_t *heap_start;

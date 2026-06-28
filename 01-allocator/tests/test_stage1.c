@@ -1,8 +1,5 @@
 /*
- * Stage 1 tests: Implicit free list
- *
- * Tests: basic allocation, alignment, free, coalescing, splitting,
- *        fragmentation, double-free detection, valgrind-clean operation.
+ * Stage 1 tests: Implicit free list — with heap invariant checks
  */
 
 #include <stdio.h>
@@ -14,6 +11,7 @@
 
 static int tests_run = 0;
 static int tests_passed = 0;
+static int check_failures = 0;
 
 #define TEST(name) \
     do { \
@@ -32,14 +30,67 @@ static int tests_passed = 0;
         printf("✗ %s\n", msg); \
     } while (0)
 
+/* Heap invariant checker — walks the heap and validates every block */
+static void check_heap(const char *where)
+{
+    if (heap_start == NULL) return;
+
+    word_t *prev_blk = NULL;
+    for (word_t *h = heap_start; !IS_EPILOGUE(h); h = NEXT_HDR(h)) {
+        size_t size = GET_SIZE(h);
+        int alloc = GET_ALLOC(h);
+        int pf = GET_PREV_FREE(h);
+
+        /* Size must be aligned and >= MIN_BLOCK_SIZE */
+        if (size < MIN_BLOCK_SIZE || (size & (ALIGNMENT - 1)) != 0) {
+            printf("  HEAP CHECK [%s]: block %p has invalid size %zu (alloc=%d)\n",
+                   where, (void *)h, size, alloc);
+            check_failures++;
+            return;
+        }
+
+        /* Free blocks must have matching footer */
+        if (!alloc) {
+            word_t *foot = FOOTER(h);
+            if (GET_SIZE(foot) != size) {
+                printf("  HEAP CHECK [%s]: free block footer mismatch at %p (hdr=%zu foot=%zu)\n",
+                       where, (void *)h, size, GET_SIZE(foot));
+                check_failures++;
+                return;
+            }
+            /* No two adjacent free blocks (coalescing invariant) */
+            word_t *next_block = NEXT_HDR(h);
+            if (!IS_EPILOGUE(next_block) && !GET_ALLOC(next_block)) {
+                printf("  HEAP CHECK [%s]: adjacent free blocks at %p and %p\n",
+                       where, (void *)h, (void *)next_block);
+                check_failures++;
+                return;
+            }
+        }
+
+        /* prev_free bit must match previous block's alloc status */
+        int expected_pf = (h != heap_start && prev_blk != NULL) ? !GET_ALLOC(prev_blk) : 0;
+        if (pf != expected_pf) {
+            printf("  HEAP CHECK [%s]: prev_free mismatch at %p (expected=%d actual=%d)\n",
+                   where, (void *)h, expected_pf, pf);
+            check_failures++;
+            return;
+        }
+
+        prev_blk = h;
+    }
+}
+
 /* ─── Basic allocation tests ─── */
 
 static void test_alloc_returns_nonnull(void)
 {
     TEST(alloc returns non-null);
     void *p = mira_malloc(100);
+    check_heap("after malloc(100)");
     if (p != NULL) { PASS(); } else { FAIL("returned null"); }
     mira_free(p);
+    check_heap("after free");
 }
 
 static void test_alloc_alignment(void)
@@ -57,6 +108,7 @@ static void test_alloc_alignment(void)
     mira_free(p1);
     mira_free(p2);
     mira_free(p3);
+    check_heap("after alignment test");
 }
 
 static void test_alloc_zero_returns_null(void)
@@ -73,10 +125,8 @@ static void test_multiple_allocs(void)
     void *b = mira_malloc(128);
     void *c = mira_malloc(32);
 
-    /* Pointers should be distinct */
     int distinct = (a != b) && (b != c) && (a != c);
 
-    /* Write to each to verify they don't overlap */
     memset(a, 'A', 64);
     memset(b, 'B', 128);
     memset(c, 'C', 32);
@@ -88,8 +138,11 @@ static void test_multiple_allocs(void)
     if (distinct && correct) { PASS(); } else { FAIL("pointers overlap or write failed"); }
 
     mira_free(a);
+    check_heap("after free(a)");
     mira_free(b);
+    check_heap("after free(b)");
     mira_free(c);
+    check_heap("after free(c)");
 }
 
 /* ─── Free and reuse tests ─── */
@@ -100,11 +153,12 @@ static void test_free_then_realloc(void)
     void *p1 = mira_malloc(64);
     memset(p1, 'X', 64);
     mira_free(p1);
+    check_heap("after free(p1)");
 
     void *p2 = mira_malloc(64);
-    /* Should reuse the freed block (first-fit) */
     if (p2 != NULL) { PASS(); } else { FAIL("null on realloc"); }
     mira_free(p2);
+    check_heap("after free(p2)");
 }
 
 static void test_free_order_independence(void)
@@ -118,12 +172,13 @@ static void test_free_order_independence(void)
     memset(b, 'B', 32);
     memset(c, 'C', 32);
 
-    /* Free in non-linear order */
     mira_free(b);
+    check_heap("after free(b)");
     mira_free(a);
+    check_heap("after free(a)");
     mira_free(c);
+    check_heap("after free(c)");
 
-    /* All should be free - heap should have coalesced */
     size_t free_space = mira_free_space();
     if (free_space > 0) { PASS(); } else { FAIL("no free space after freeing all"); }
 }
@@ -139,14 +194,14 @@ static void test_coalesce_adjacent(void)
 
     size_t free_before = mira_free_space();
 
-    /* Free adjacent blocks - should coalesce */
     mira_free(a);
+    check_heap("after free(a)");
     mira_free(b);
+    check_heap("after free(b)");
     mira_free(c);
+    check_heap("after free(c)");
 
     size_t free_after = mira_free_space();
-    /* After coalescing 3 blocks, we should have more contiguous free space
-     * than the sum of individual blocks would suggest */
     if (free_after > free_before) { PASS(); } else { FAIL("coalescing failed"); }
 }
 
@@ -156,24 +211,18 @@ static void test_coalesce_middle_first(void)
     void *a = mira_malloc(64);
     void *b = mira_malloc(64);
     void *c = mira_malloc(64);
-    void *d = mira_malloc(64);  /* prevent top merge */
-    
-    (void)a; (void)b; (void)c;
+    void *d = mira_malloc(64);
 
-    /* Free middle block first */
     mira_free(b);
-
-    /* Free left neighbor - should coalesce with b */
+    check_heap("after free(b)");
     mira_free(a);
-
-    /* Free right neighbor - should coalesce with a+b */
+    check_heap("after free(a)");
     mira_free(c);
+    check_heap("after free(c)");
 
-    /* Largest free block should span at least a+b+c */
     size_t largest = mira_largest_free();
-    
     mira_free(d);
-    
+
     if (largest >= 192) { PASS(); } else { FAIL("coalescing incomplete"); }
 }
 
@@ -185,16 +234,17 @@ static void test_split_reuse(void)
     void *big = mira_malloc(512);
     memset(big, 'Z', 512);
     mira_free(big);
-    
-    /* Allocate smaller - should split the freed 512-byte block */
+    check_heap("after free(big)");
+
     void *small = mira_malloc(64);
     if (small != NULL) { PASS(); } else { FAIL("split failed"); }
-    
-    /* Verify remaining space exists from the split */
+    check_heap("after malloc(64) from split");
+
     size_t remaining = mira_free_space();
     (void)remaining;
-    
+
     mira_free(small);
+    check_heap("after free(small)");
 }
 
 /* ─── calloc and realloc ─── */
@@ -213,6 +263,7 @@ static void test_calloc_zeroed(void)
 
     if (all_zero) { PASS(); } else { FAIL("memory not zeroed"); }
     mira_free(p);
+    check_heap("after free(calloc)");
 }
 
 static void test_realloc_grow(void)
@@ -220,28 +271,33 @@ static void test_realloc_grow(void)
     TEST(realloc grows in place or copies);
     void *p = mira_malloc(32);
     memset(p, 'Y', 32);
+    check_heap("before realloc grow");
 
     void *p2 = mira_realloc(p, 128);
+    check_heap("after realloc grow");
     if (p2 == NULL) { FAIL("realloc returned null"); return; }
 
-    /* Original data should be preserved */
     int preserved = ((char *)p2)[0] == 'Y' && ((char *)p2)[31] == 'Y';
 
     if (preserved) { PASS(); } else { FAIL("data not preserved"); }
     mira_free(p2);
+    check_heap("after free(realloc'd)");
 }
 
 static void test_realloc_shrink(void)
 {
     TEST(realloc shrinks block);
     void *p = mira_malloc(256);
+    check_heap("after malloc(256)");
     void *p2 = mira_realloc(p, 32);
+    check_heap("after realloc shrink");
 
     if (p2 != NULL) { PASS(); } else { FAIL("shrink realloc failed"); }
     mira_free(p2);
+    check_heap("after free(shrunk)");
 }
 
-/* ─── Stress test ─── */
+/* ─── Stress test with invariant checking ─── */
 
 static void test_stress_random_alloc_free(void)
 {
@@ -252,7 +308,7 @@ static void test_stress_random_alloc_free(void)
     #define MAX_SIZE 256
 
     void *ptrs[MAX_PTRS] = {0};
-    srand(42);  /* deterministic seed */
+    srand(42);
 
     int alloc_count = 0, free_count = 0;
 
@@ -260,17 +316,22 @@ static void test_stress_random_alloc_free(void)
         int slot = rand() % MAX_PTRS;
 
         if (ptrs[slot] == NULL) {
-            /* Allocate */
             size_t size = (size_t)(rand() % MAX_SIZE) + 1;
             ptrs[slot] = mira_malloc(size);
             if (ptrs[slot])
                 memset(ptrs[slot], slot & 0xff, size);
             alloc_count++;
         } else {
-            /* Free */
             mira_free(ptrs[slot]);
             ptrs[slot] = NULL;
             free_count++;
+        }
+
+        /* Check heap invariant every 100 ops */
+        if (i % 100 == 0 && check_failures == 0) {
+            char label[32];
+            snprintf(label, sizeof(label), "stress op %d", i);
+            check_heap(label);
         }
     }
 
@@ -279,11 +340,14 @@ static void test_stress_random_alloc_free(void)
         if (ptrs[i])
             mira_free(ptrs[i]);
     }
+    check_heap("after stress cleanup");
 
     size_t free_space = mira_free_space();
-    if (free_space > 0) { PASS(); } else { FAIL("no free space after stress test"); }
+    if (free_space > 0 && check_failures == 0) { PASS(); }
+    else { FAIL("heap invariant violated or no free space"); }
 
-    printf("    (allocs=%d, frees=%d, free_space=%zu)\n", alloc_count, free_count, free_space);
+    printf("    (allocs=%d, frees=%d, free_space=%zu, check_failures=%d)\n",
+           alloc_count, free_count, free_space, check_failures);
 }
 
 /* ─── Double free detection ─── */
@@ -292,7 +356,9 @@ static void test_double_free_warning(void)
 {
     TEST(double free prints warning);
     void *p = mira_malloc(32);
+    check_heap("before double free");
     mira_free(p);
+    check_heap("after first free");
     mira_free(p);  /* Should print warning, not crash */
     PASS();
 }
@@ -338,7 +404,9 @@ int main(void)
 
     printf("\n═══════════════════════════════════════════\n");
     printf("  Results: %d/%d tests passed\n", tests_passed, tests_run);
+    if (check_failures > 0)
+        printf("  Heap invariant failures: %d\n", check_failures);
     printf("═══════════════════════════════════════════\n\n");
 
-    return (tests_passed == tests_run) ? 0 : 1;
+    return (tests_passed == tests_run && check_failures == 0) ? 0 : 1;
 }
