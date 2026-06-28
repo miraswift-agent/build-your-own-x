@@ -270,7 +270,7 @@ void *mira_malloc(size_t size)
     if (h != NULL) {
         list_remove(h);
         split_block(h, needed);
-        set_alloc_block(h, needed, GET_PREV_FREE(h));
+        set_alloc_block(h, GET_SIZE(h), GET_PREV_FREE(h));
         word_t *next = NEXT_HDR(h);
         if (!IS_EPILOGUE(next))
             set_header(next, GET_SIZE(next), GET_ALLOC(next), 0);
@@ -279,7 +279,7 @@ void *mira_malloc(size_t size)
         if (h == NULL) return NULL;
         list_remove(h);
         split_block(h, needed);
-        set_alloc_block(h, needed, GET_PREV_FREE(h));
+        set_alloc_block(h, GET_SIZE(h), GET_PREV_FREE(h));
         word_t *next = NEXT_HDR(h);
         if (!IS_EPILOGUE(next))
             set_header(next, GET_SIZE(next), GET_ALLOC(next), 0);
