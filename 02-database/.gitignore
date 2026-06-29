@@ -1,0 +1,5 @@
+obj/
+*.a
+tests/test_btree
+tests/*.db
+*.db
