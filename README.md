@@ -8,8 +8,8 @@ Inspired by [codecrafters-io/build-your-own-x](https://github.com/codecrafters-i
 
 | # | Project | Status | Key Insight |
 |---|---------|--------|-------------|
-| 01 | Memory Allocator | 🏗️ In Progress | Free lists, coalescing, fragmentation |
-| 02 | Database | ⬜ Planned | B-trees, WAL, transactions |
+| 01 | Memory Allocator | ✅ Complete (5 stages) | Stress-test-first methodology; bugs 5→2→0→0→1 |
+| 02 | Database | ✅ Stage 1 Complete | B-tree splits/merges aren't mirror images; page serialization is the hard part |
 | 03 | Shell | ⬜ Planned | Pipes, signals, job control |
 
 ## Why
