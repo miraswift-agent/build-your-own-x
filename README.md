@@ -9,8 +9,8 @@ Inspired by [codecrafters-io/build-your-own-x](https://github.com/codecrafters-i
 | # | Project | Status | Key Insight |
 |---|---------|--------|-------------|
 | 01 | Memory Allocator | ✅ Complete (5 stages) | Stress-test-first methodology; bugs 5→2→0→0→1 |
-| 02 | Database | ✅ Stage 1 Complete | B-tree splits/merges aren't mirror images; page serialization is the hard part |
-| 03 | Shell | ⬜ Planned | Pipes, signals, job control |
+| 02 | Database | ✅ Complete | B-tree splits/merges aren't mirror images; page serialization is the hard part |
+| 03 | Shell | ✅ Complete (3 stages) | Built-ins can't fork; process groups are a three-way contract |
 
 ## Why
 
