@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+<head><title>Attribute Edge Cases</title></head>
+<body>
+  <!-- Boolean attributes (no value) -->
+  <input type="checkbox" checked disabled required>
+  <details open>
+    <summary>Open details</summary>
+    <p>Content</p>
+  </details>
+
+  <!-- Attribute quoting styles -->
+  <div id="double-quoted" class="a b c">Double quotes</div>
+  <div id='single-quoted' class='x y'>Single quotes</div>
+  <div id=unquoted class=z>Unquoted</div>
+
+  <!-- Empty attribute value -->
+  <div class="" id="empty-class">Empty class</div>
+
+  <!-- Attribute with special chars -->
+  <a href="page?a=1&amp;b=2&amp;c=3">URL with entities</a>
+  <a href="/search?q=hello+world&lang=en">URL with plus</a>
+  <input placeholder="Say &quot;hello&quot;">
+
+  <!-- Data attributes -->
+  <div
+    data-id="42"
+    data-name="test item"
+    data-json='{"key":"value"}'
+    data-url="https://example.com/path?a=1&b=2"
+  >Data attributes</div>
+
+  <!-- ARIA attributes -->
+  <button
+    aria-label="Close dialog"
+    aria-pressed="false"
+    aria-expanded="true"
+    aria-controls="menu"
+    aria-haspopup="true"
+    role="button"
+  >×</button>
+
+  <!-- Duplicate attributes (first wins) -->
+  <div id="first" id="second" class="a" class="b">Duplicate attrs</div>
+</body>
+</html>

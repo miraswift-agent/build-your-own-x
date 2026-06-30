@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Script and Style</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      color: #333;
+    }
+    /* Note: per HTML5 spec, </style> inside raw text DOES end the element,
+       even inside CSS strings. So we avoid literal </style> in the content. */
+    .foo::before {
+      content: '<\/style>';
+    }
+    h1 { font-size: 2em; }
+  </style>
+  <script>
+    // This is JavaScript, not HTML
+    // </script> inside a string should NOT end the block
+    var x = '</script>';
+    function hello() {
+      document.title = "Hello";
+      if (x < 10 && y > 5) { return true; }
+    }
+    /* Multi-line
+       comment with <tags> inside */
+  </script>
+</head>
+<body>
+  <h1>Script and Style Test</h1>
+  <p>The script and style blocks above contain fake tags that should NOT appear in the DOM.</p>
+  <script>
+    // Inline script in body
+    console.log("body script");
+  </script>
+</body>
+</html>

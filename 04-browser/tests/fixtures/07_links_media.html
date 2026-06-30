@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Links and Media</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="canonical" href="https://example.com/page">
+</head>
+<body>
+  <h1>Links and Media</h1>
+
+  <!-- Various link types -->
+  <a href="https://example.com">Absolute link</a>
+  <a href="/relative/path">Relative link</a>
+  <a href="#section">Anchor link</a>
+  <a href="mailto:user@example.com">Email link</a>
+  <a href="tel:+1234567890">Phone link</a>
+  <a href="">Empty href</a>
+  <a>No href at all</a>
+
+  <!-- Images -->
+  <img src="photo.jpg" alt="A beautiful photo" width="800" height="600">
+  <img src="icon.png" alt=""> <!-- decorative, empty alt -->
+  <img src="missing.jpg"> <!-- no alt -->
+
+  <!-- Figure with caption -->
+  <figure>
+    <img src="diagram.svg" alt="Architecture diagram">
+    <figcaption>Figure 1: System architecture</figcaption>
+  </figure>
+
+  <!-- Video -->
+  <video src="movie.mp4" controls>
+    <source src="movie.webm" type="video/webm">
+    <source src="movie.mp4" type="video/mp4">
+    Your browser does not support video.
+  </video>
+
+  <!-- Audio -->
+  <audio controls>
+    <source src="audio.ogg" type="audio/ogg">
+    <source src="audio.mp3" type="audio/mpeg">
+  </audio>
+
+  <!-- Iframe -->
+  <iframe src="https://embed.example.com/widget" title="Embedded widget"></iframe>
+</body>
+</html>

@@ -1,0 +1,41 @@
+<!-- Tests that p, li, dt, dd auto-close correctly -->
+<html>
+<body>
+  <!-- Adjacent paragraphs: first <p> must be closed before second opens -->
+  <p>First paragraph
+  <p>Second paragraph
+  <p>Third paragraph
+  <p>Fourth paragraph</p>
+
+  <!-- li auto-close -->
+  <ul>
+    <li>First item
+    <li>Second item
+    <li>Third item
+  </ul>
+
+  <!-- Block-level start tags close open <p> -->
+  <p>Paragraph before a div
+  <div>This div should close the paragraph above</div>
+  <p>Paragraph after div</p>
+
+  <!-- Heading closes paragraph -->
+  <p>Paragraph text
+  <h2>Heading that closes the p</h2>
+
+  <!-- dt/dd closing -->
+  <dl>
+    <dt>Term one
+    <dd>Definition one
+    <dt>Term two
+    <dt>Another term without definition
+    <dd>Definition for both terms above
+  </dl>
+
+  <!-- table closes p -->
+  <p>Text before table
+  <table>
+    <tr><td>Cell</td></tr>
+  </table>
+</body>
+</html>

@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="description" content="Agent Browser — build your own headless browser">
+  <meta property="og:title" content="Agent Browser">
+  <title>Agent Browser — Stage 01</title>
+  <link rel="stylesheet" href="/assets/style.css">
+  <script async src="/assets/analytics.js"></script>
+</head>
+<body>
+  <header role="banner">
+    <nav aria-label="Primary navigation">
+      <a href="/" class="logo">agent-browser</a>
+      <ul>
+        <li><a href="/docs">Docs</a></li>
+        <li><a href="/stages">Stages</a></li>
+        <li><a href="https://github.com/example/agent-browser">GitHub</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <main>
+    <article>
+      <header>
+        <h1>Stage 01: HTML Parser</h1>
+        <p class="meta">
+          <time datetime="2025-01-01">January 2025</time>
+          &mdash;
+          <a href="/tags/rust">Rust</a>
+        </p>
+      </header>
+
+      <section id="intro">
+        <h2>Introduction</h2>
+        <p>
+          This stage builds a <em>tolerant</em> HTML5 parser that can handle
+          both well-formed documents and the kind of broken markup found on
+          real websites.
+        </p>
+        <blockquote>
+          <p>Not a validator — a parser. We accept what browsers accept.</p>
+        </blockquote>
+      </section>
+
+      <section id="features">
+        <h2>Key Features</h2>
+        <ul>
+          <li>Full HTML5 tokenization (35+ states)</li>
+          <li>Tolerant tree construction with error recovery</li>
+          <li>Semantic node classification for agents</li>
+          <li>Accessibility tree extraction</li>
+          <li>Zero dependencies — pure Rust std</li>
+        </ul>
+      </section>
+
+      <section id="usage">
+        <h2>Usage</h2>
+        <pre><code>cargo run -- parse index.html
+cargo run -- accessibility index.html
+echo '&lt;h1&gt;Hello&lt;/h1&gt;' | cargo run -- parse</code></pre>
+      </section>
+    </article>
+  </main>
+
+  <aside aria-label="Related content">
+    <h3>Related stages</h3>
+    <ul>
+      <li><a href="/stage/02">Stage 02: DOM Tree</a></li>
+      <li><a href="/stage/03">Stage 03: Network</a></li>
+    </ul>
+  </aside>
+
+  <footer>
+    <p>&copy; 2025 Agent Browser Project. MIT License.</p>
+    <nav aria-label="Footer navigation">
+      <a href="/privacy">Privacy</a>
+      <a href="/terms">Terms</a>
+    </nav>
+  </footer>
+</body>
+</html>

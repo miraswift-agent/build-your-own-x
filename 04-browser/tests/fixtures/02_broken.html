@@ -1,0 +1,26 @@
+<!-- Deliberately broken HTML — the parser should recover gracefully -->
+<html>
+<head><title>Broken Page</title>
+<body>
+  <!-- Missing closing tags everywhere -->
+  <div>
+    <p>Unclosed paragraph
+    <p>Another paragraph — first one should auto-close
+    <div>
+      <span>Unclosed span
+    </div>
+    <!-- div closed before span — span should get auto-closed -->
+
+  <!-- Misnested tags -->
+  <b>Bold <i>Bold-italic</b> just italic</i>
+
+  <!-- Start tag with no matching end tag -->
+  <section>
+    <h2>Heading without closing tag
+    <p>Content</p>
+  <!-- section never closed -->
+</html>
+<!-- extra end tags that have no matching open -->
+</body>
+</div>
+</span>

@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+<head><title>Forms</title></head>
+<body>
+  <h1>Login</h1>
+  <form action="/login" method="POST">
+    <fieldset>
+      <legend>User Credentials</legend>
+      <label for="email">Email address</label>
+      <input type="email" id="email" name="email" placeholder="you@example.com" required>
+      <label for="password">Password</label>
+      <input type="password" id="password" name="password" placeholder="••••••••" required>
+      <input type="checkbox" id="remember" name="remember">
+      <label for="remember">Remember me</label>
+      <button type="submit">Sign in</button>
+    </fieldset>
+  </form>
+
+  <h2>Registration</h2>
+  <form action="/register" method="POST">
+    <label for="username">Username</label>
+    <input type="text" id="username" name="username" placeholder="Pick a username" required>
+
+    <label for="bio">Bio</label>
+    <textarea id="bio" name="bio" placeholder="Tell us about yourself..." rows="4"></textarea>
+
+    <label for="country">Country</label>
+    <select id="country" name="country">
+      <option value="">Select country</option>
+      <option value="us">United States</option>
+      <option value="gb">United Kingdom</option>
+      <option value="ca">Canada</option>
+    </select>
+
+    <input type="hidden" name="csrf" value="abc123">
+    <button type="submit">Create Account</button>
+    <button type="reset">Reset</button>
+  </form>
+</body>
+</html>

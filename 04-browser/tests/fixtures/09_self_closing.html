@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="style.css" />
+  <base href="https://example.com/" />
+</head>
+<body>
+  <!-- Void elements: no children, self-close implied -->
+  <br>
+  <hr>
+  <br/>
+  <hr/>
+
+  <img src="test.png" alt="test">
+  <img src="test2.png" alt="test2" />
+
+  <input type="text" name="q">
+  <input type="submit" value="Go" />
+
+  <!-- Explicit self-closing on non-void elements — treat as start + immediate end -->
+  <div/>
+  <span/>
+  <p/>
+
+  <!-- Void in head -->
+  <script src="/app.js"></script>
+  <noscript>JavaScript required</noscript>
+
+  <!-- Void with many attributes -->
+  <input
+    type="email"
+    name="email"
+    id="email"
+    placeholder="Enter your email"
+    autocomplete="email"
+    required
+    disabled
+  />
+</body>
+</html>

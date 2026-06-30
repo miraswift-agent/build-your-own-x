@@ -1,0 +1,19 @@
+[package]
+name = "agent-browser"
+version = "0.1.0"
+edition = "2021"
+description = "An agent-first headless browser — Stage 01: HTML Parser"
+
+[[bin]]
+name = "agent-browser"
+path = "src/main.rs"
+
+[dependencies]
+
+[dev-dependencies]
+
+[profile.dev]
+opt-level = 0
+
+[profile.release]
+opt-level = 3
