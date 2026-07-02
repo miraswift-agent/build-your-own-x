@@ -1,16 +1,24 @@
 [package]
 name = "agent-browser"
-version = "0.1.0"
+version = "0.3.0"
 edition = "2021"
-description = "An agent-first headless browser — Stage 01: HTML Parser"
+description = "An agent-first headless browser — Stage 03: Network & Protocol"
 
 [[bin]]
 name = "agent-browser"
 path = "src/main.rs"
 
 [dependencies]
+hyper = { version = "1", features = ["http1", "http2", "client"] }
+hyper-util = { version = "0.1", features = ["client", "client-legacy", "http1", "http2", "tokio"] }
+hyper-rustls = { version = "0.27", features = ["http1", "http2", "webpki-tokio"] }
+tokio = { version = "1", features = ["full"] }
+http = "1"
+http-body-util = "0.1"
+url = "2"
 
 [dev-dependencies]
+tokio = { version = "1", features = ["full"] }
 
 [profile.dev]
 opt-level = 0
