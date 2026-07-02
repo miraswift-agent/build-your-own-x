@@ -12,8 +12,8 @@ pub mod tree_builder;
 // `use agent_browser::html::Foo` without knowing which submodule owns it.
 #[allow(unused_imports)]
 pub use dom::{
-    Attribute, Document, ElementCategory, ElementData, FormKind, Node, NodeData, NodeId,
-    SemanticRole, DOCUMENT_NODE_ID,
+    Attribute, Document, ElementCategory, ElementData, FormKind, MutationKind, MutationRecord,
+    Node, NodeData, NodeId, SemanticRole, DOCUMENT_NODE_ID,
 };
 #[allow(unused_imports)]
 pub use tokenizer::{tokenize, Token};
