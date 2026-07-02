@@ -1,8 +1,8 @@
 [package]
 name = "agent-browser"
-version = "0.3.0"
+version = "0.5.0"
 edition = "2021"
-description = "An agent-first headless browser — Stage 03: Network & Protocol"
+description = "An agent-first headless browser — Stage 05: Agent API"
 
 [[bin]]
 name = "agent-browser"
@@ -16,9 +16,16 @@ tokio = { version = "1", features = ["full"] }
 http = "1"
 http-body-util = "0.1"
 url = "2"
+rquickjs = { version = "0.12", features = ["full", "parallel"] }
+tokio-tungstenite = "0.29"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+futures-util = "0.3"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = "0.29"
 
 [profile.dev]
 opt-level = 0
