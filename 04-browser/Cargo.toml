@@ -1,8 +1,8 @@
 [package]
 name = "agent-browser"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2021"
-description = "An agent-first headless browser — Stage 05: Agent API"
+description = "An agent-first headless browser — Stage 06: Production Readiness"
 
 [[bin]]
 name = "agent-browser"

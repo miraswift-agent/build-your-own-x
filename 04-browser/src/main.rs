@@ -1,6 +1,8 @@
-//! agent-browser — Stage 05: Agent API
+//! agent-browser — Stage 06: Production Readiness
 //!
 //! Usage:
+//!   agent-browser serve [--port N] [--max-pages N] [--max-memory MB] [--session-timeout DURATION]
+//!                                                    Start CDP server with full session management
 //!   agent-browser fetch <URL>                        Fetch URL, print status/headers/body length
 //!   agent-browser fetch <URL> --parse                Fetch URL, parse HTML, print DOM
 //!   agent-browser fetch <URL> --accessibility        Fetch URL, parse HTML, print accessibility tree
@@ -19,6 +21,12 @@
 //!   agent-browser agent <URL> --click <selector>     Simulate clicking element
 //!   agent-browser agent <URL> --type <sel> <text>    Simulate typing into element
 //!   agent-browser --help                             Show this help
+//!
+//! Environment variables (serve mode):
+//!   AGENT_BROWSER_PORT             CDP server port (default 9222)
+//!   AGENT_BROWSER_MAX_PAGES        Max pages per session (default 10)
+//!   AGENT_BROWSER_MAX_MEMORY_MB    Max memory per session in MB (default 512)
+//!   AGENT_BROWSER_SESSION_TIMEOUT  Session idle timeout, e.g. 30m, 1h (default 30m)
 
 mod html;
 mod dom;
@@ -29,7 +37,10 @@ mod agent;
 use std::env;
 use std::fs;
 use std::io::{self, Read};
+use std::path::Path;
 use std::process;
+use std::sync::Arc;
+use std::time::Duration;
 
 use html::{build_access_tree, parse, tokenize};
 use dom::{build_enhanced_access_tree, query_selector_all};
@@ -37,7 +48,7 @@ use html::dom::DOCUMENT_NODE_ID;
 use net::{CookieJar, HttpClient, Url};
 use js::engine::{JsEngine, QuickJsEngine};
 use js::cdp::CdpServer;
-use agent::Page;
+use agent::{Page, ResourceLimits, SessionManager};
 
 #[tokio::main]
 async fn main() {
@@ -51,6 +62,7 @@ async fn main() {
 
     match args[1].as_str() {
         "--help" | "-h" => print_help(prog),
+        "serve" => run_serve(&args[2..]).await,
         "fetch" => run_fetch(&args[2..], prog).await,
         "parse" | "p" => run_parse(&args[2..]),
         "accessibility" | "access" | "ax" => run_accessibility(&args[2..]),
@@ -205,6 +217,191 @@ async fn run_agent(args: &[String], prog: &str) {
         let text = page.extract_text();
         let snippet: String = text.chars().take(200).collect();
         println!("Text:  {snippet}…");
+    }
+}
+
+// ─── Stage 06: Production serve mode ─────────────────────────────────────────
+
+async fn run_serve(args: &[String]) {
+    // Defaults (lowest priority)
+    let mut port: u16 = 9222;
+    let mut max_pages: usize = 10;
+    let mut max_memory_mb: usize = 512;
+    let mut session_timeout = Duration::from_secs(30 * 60);
+
+    // Environment variable overrides
+    if let Ok(v) = std::env::var("AGENT_BROWSER_PORT") {
+        if let Ok(p) = v.parse() { port = p; }
+    }
+    if let Ok(v) = std::env::var("AGENT_BROWSER_MAX_PAGES") {
+        if let Ok(n) = v.parse() { max_pages = n; }
+    }
+    if let Ok(v) = std::env::var("AGENT_BROWSER_MAX_MEMORY_MB") {
+        if let Ok(n) = v.parse() { max_memory_mb = n; }
+    }
+    if let Ok(v) = std::env::var("AGENT_BROWSER_SESSION_TIMEOUT") {
+        if let Some(d) = parse_duration_arg(&v) { session_timeout = d; }
+    }
+
+    // CLI argument overrides (highest priority)
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--port" | "-p" => {
+                i += 1;
+                if let Some(v) = args.get(i) {
+                    port = v.parse().unwrap_or(port);
+                }
+            }
+            "--max-pages" => {
+                i += 1;
+                if let Some(v) = args.get(i) {
+                    max_pages = v.parse().unwrap_or(max_pages);
+                }
+            }
+            "--max-memory" => {
+                i += 1;
+                if let Some(v) = args.get(i) {
+                    max_memory_mb = v.parse().unwrap_or(max_memory_mb);
+                }
+            }
+            "--session-timeout" => {
+                i += 1;
+                if let Some(v) = args.get(i) {
+                    if let Some(d) = parse_duration_arg(v) {
+                        session_timeout = d;
+                    }
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+
+    let limits = ResourceLimits::new()
+        .with_max_pages(max_pages)
+        .with_max_memory_mb(max_memory_mb);
+
+    let session_manager = Arc::new(tokio::sync::Mutex::new(
+        SessionManager::new()
+            .with_timeout(session_timeout)
+            .with_per_session_limits(limits),
+    ));
+
+    // Health check server on port+1
+    let health_port = port + 1;
+    let sm_health = Arc::clone(&session_manager);
+    tokio::spawn(run_health_server(health_port, sm_health));
+
+    // Periodic session expiry check (every 60 seconds)
+    let sm_expiry = Arc::clone(&session_manager);
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(60));
+        loop {
+            interval.tick().await;
+            let mut sm = sm_expiry.lock().await;
+            let removed = sm.expire_sessions();
+            if removed > 0 {
+                eprintln!("[session-gc] expired {removed} idle session(s)");
+            }
+        }
+    });
+
+    // CDP WebSocket server
+    let cdp_addr = format!("127.0.0.1:{port}");
+    let server = CdpServer::bind(&cdp_addr).await.unwrap_or_else(|e| {
+        eprintln!("Failed to start CDP server on {cdp_addr}: {e}");
+        process::exit(1);
+    });
+
+    println!("agent-browser serve");
+    println!("  CDP:    {}", server.debugger_url());
+    println!("  Health: http://127.0.0.1:{health_port}/health");
+    println!("  Max pages/session: {max_pages}  Max memory: {max_memory_mb}MB");
+    println!("  Session timeout: {:?}", session_timeout);
+    println!("  Press Ctrl-C or send SIGTERM to shut down gracefully.");
+
+    // Run until shutdown signal
+    tokio::select! {
+        _ = server.run() => {},
+        _ = shutdown_signal() => {},
+    }
+
+    // Graceful shutdown: save sessions
+    println!("\nShutting down gracefully…");
+    let sm = session_manager.lock().await;
+    let count = sm.session_count();
+    let save_path = Path::new("agent-browser-sessions.json");
+    match sm.save_to_disk(save_path) {
+        Ok(()) => println!("Saved {count} session(s) to {}", save_path.display()),
+        Err(e) => eprintln!("Warning: could not save sessions: {e}"),
+    }
+    println!("Done.");
+}
+
+async fn run_health_server(port: u16, session_manager: Arc<tokio::sync::Mutex<SessionManager>>) {
+    use tokio::io::AsyncWriteExt;
+    use tokio::net::TcpListener;
+
+    let addr = format!("127.0.0.1:{port}");
+    let listener = match TcpListener::bind(&addr).await {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("Health server could not bind {addr}: {e}");
+            return;
+        }
+    };
+
+    loop {
+        if let Ok((mut stream, _)) = listener.accept().await {
+            let sm = Arc::clone(&session_manager);
+            tokio::spawn(async move {
+                let sm = sm.lock().await;
+                let sessions = sm.session_count();
+                let pages = sm.total_active_pages();
+                drop(sm);
+
+                let body = format!(
+                    r#"{{"status":"ok","sessions":{sessions},"total_pages":{pages}}}"#
+                );
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(response.as_bytes()).await;
+            });
+        }
+    }
+}
+
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        let mut sigterm = signal(SignalKind::terminate()).expect("SIGTERM handler failed");
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {},
+            _ = sigterm.recv() => {},
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        tokio::signal::ctrl_c().await.expect("Ctrl-C handler failed");
+    }
+}
+
+/// Parse a human-readable duration string: "30m", "1h", "90s", or bare seconds.
+fn parse_duration_arg(s: &str) -> Option<Duration> {
+    let s = s.trim();
+    if let Some(v) = s.strip_suffix('h') {
+        v.parse::<u64>().ok().map(|n| Duration::from_secs(n * 3600))
+    } else if let Some(v) = s.strip_suffix('m') {
+        v.parse::<u64>().ok().map(|n| Duration::from_secs(n * 60))
+    } else if let Some(v) = s.strip_suffix('s') {
+        v.parse::<u64>().ok().map(Duration::from_secs)
+    } else {
+        s.parse::<u64>().ok().map(Duration::from_secs)
     }
 }
 
@@ -501,9 +698,11 @@ fn status_text(code: u16) -> &'static str {
 }
 
 fn print_help(prog: &str) {
-    println!("agent-browser — Stage 05: Agent API");
+    println!("agent-browser — Stage 06: Production Readiness");
     println!();
     println!("USAGE:");
+    println!("  {prog} serve [--port N] [--max-pages N] [--max-memory MB] [--session-timeout D]");
+    println!("                                          Start CDP server with session management");
     println!("  {prog} fetch <URL>                      Fetch URL, print response info");
     println!("  {prog} fetch <URL> --parse              Fetch and parse HTML, show DOM");
     println!("  {prog} fetch <URL> --accessibility      Fetch and show accessibility tree");
