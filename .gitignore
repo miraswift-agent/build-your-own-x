@@ -1,3 +1,4 @@
 target/
 *.rlib
 *.d
+05-vm/tests/test_vm
