@@ -3,3 +3,4 @@ target/
 *.d
 05-vm/tests/test_vm
 05-vm/tests/test_lantern
+05-vm/tests/test_compiler
