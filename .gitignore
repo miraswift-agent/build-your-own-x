@@ -6,3 +6,5 @@ target/
 05-vm/tests/test_compiler
 05-vm/lox/bin/
 05-vm/lox/build/
+05-vm/clox/bin/
+05-vm/clox/build/
