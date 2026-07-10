@@ -40,11 +40,54 @@ static char* readFile(const char *path) {
     return buffer;
 }
 
+/*
+ * Walk the accumulated REPL input and return the number of unclosed
+ * `{` and `(` (with negative values meaning more closing than opening,
+ * which is impossible in valid Lox but we just treat as "ready to run").
+ * Skips over string literals and line comments. clox has no block
+ * comments and no array literals, so we don't track block-comment
+ * regions or square brackets.
+ */
+static int openBraceAndParenCount(const char *source) {
+    int braces = 0;
+    int parens = 0;
+    bool inString = false;
+    bool inLineComment = false;
+    for (const char *p = source; *p != '\0'; p++) {
+        if (inLineComment) {
+            if (*p == '\n') inLineComment = false;
+            continue;
+        }
+        if (inString) {
+            if (*p == '"') inString = false;
+            continue;
+        }
+        if (*p == '"') { inString = true; continue; }
+        if (*p == '/' && *(p + 1) == '/') {
+            inLineComment = true;
+            p++;
+            continue;
+        }
+        if (*p == '{') braces++;
+        else if (*p == '}') braces--;
+        else if (*p == '(') parens++;
+        else if (*p == ')') parens--;
+    }
+    return braces > 0 ? braces : (parens > 0 ? parens : 0);
+}
+
 static void repl(void) {
+    /* Accumulator for the current REPL input. Bounded — 64 KiB is enough
+     * for any interactive session; if the user pastes more, we warn and
+     * discard. A static buffer avoids malloc churn. */
+    static char source[65536];
+    source[0] = '\0';
     char line[1024];
 
     for (;;) {
-        printf("> ");
+        /* Prompt: '> ' for a fresh statement, '| ' for a continuation
+         * line. The choice tells the user the REPL is waiting for more. */
+        printf(source[0] == '\0' ? "> " : "| ");
         fflush(stdout);
 
         if (fgets(line, sizeof(line), stdin) == NULL) {
@@ -52,7 +95,25 @@ static void repl(void) {
             break;
         }
 
-        interpret(line);
+        size_t curLen = strlen(source);
+        size_t lineLen = strlen(line);
+        if (curLen + lineLen + 1 >= sizeof(source)) {
+            fprintf(stderr, "Input too long; discarding.\n");
+            source[0] = '\0';
+            continue;
+        }
+        memcpy(source + curLen, line, lineLen + 1);
+
+        /* Keep reading until braces and parens balance. */
+        if (openBraceAndParenCount(source) > 0) continue;
+
+        /* Run. interpret() prints its own errors (compile + runtime) and
+         * recovers from both via setjmp. Whether the run succeeded or
+         * failed, the buffer is reset — a failed REPL input is discarded
+         * because partial input is more confusing to recover from than
+         * to start fresh. */
+        interpret(source);
+        source[0] = '\0';
     }
 }
 
