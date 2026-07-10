@@ -485,6 +485,95 @@ static Value ioReadLineNative(int argCount, Value *args) {
     return OBJ_VAL(copyString(line, (int)len));
 }
 
+/* --- Stage 12a: array value type via natives. The value type
+ *   (ObjArray) is in object.h; the GC mark/sweep is in gc.c. The
+ *   natives below are the only way a Lox program can create or
+ *   manipulate an array in this stage. Stage 12b will add the
+ *   [1, 2, 3] literal and a[i] index access at the language level. */
+
+static Value arrayCreateNative(int argCount, Value *args) {
+    /* array(arg1, arg2, ...) -> ObjArray of the given args. */
+    ObjArray *array = newArray(argCount);
+    push(OBJ_VAL(array));  /* GC: keep alive while filling */
+    for (int i = 0; i < argCount; i++) {
+        arrayPush(array, args[i]);
+    }
+    pop();
+    return OBJ_VAL(array);
+}
+
+static Value arrayLengthNative(int argCount, Value *args) {
+    if (argCount != 1) {
+        runtimeError("array_length() takes 1 argument (%d given).", argCount);
+        return NIL_VAL;
+    }
+    if (!IS_ARRAY(args[0])) {
+        runtimeError("array_length() argument must be an array.");
+        return NIL_VAL;
+    }
+    return NUMBER_VAL((double)AS_ARRAY(args[0])->count);
+}
+
+static Value arrayGetNative(int argCount, Value *args) {
+    if (argCount != 2) {
+        runtimeError("array_get() takes 2 arguments (%d given).", argCount);
+        return NIL_VAL;
+    }
+    if (!IS_ARRAY(args[0])) {
+        runtimeError("array_get() first argument must be an array.");
+        return NIL_VAL;
+    }
+    if (!IS_NUMBER(args[1])) {
+        runtimeError("array_get() second argument must be a number.");
+        return NIL_VAL;
+    }
+    ObjArray *array = AS_ARRAY(args[0]);
+    int index = (int)AS_NUMBER(args[1]);
+    if (index < 0 || index >= array->count) {
+        runtimeError("array_get() index %d out of bounds (length %d).",
+                     index, array->count);
+        return NIL_VAL;
+    }
+    return arrayRead(array, index);
+}
+
+static Value arraySetNative(int argCount, Value *args) {
+    if (argCount != 3) {
+        runtimeError("array_set() takes 3 arguments (%d given).", argCount);
+        return NIL_VAL;
+    }
+    if (!IS_ARRAY(args[0])) {
+        runtimeError("array_set() first argument must be an array.");
+        return NIL_VAL;
+    }
+    if (!IS_NUMBER(args[1])) {
+        runtimeError("array_set() second argument must be a number.");
+        return NIL_VAL;
+    }
+    ObjArray *array = AS_ARRAY(args[0]);
+    int index = (int)AS_NUMBER(args[1]);
+    if (index < 0 || index >= array->count) {
+        runtimeError("array_set() index %d out of bounds (length %d).",
+                     index, array->count);
+        return NIL_VAL;
+    }
+    arrayWrite(array, index, args[2]);
+    return NIL_VAL;
+}
+
+static Value arrayPushNative(int argCount, Value *args) {
+    if (argCount != 2) {
+        runtimeError("array_push() takes 2 arguments (%d given).", argCount);
+        return NIL_VAL;
+    }
+    if (!IS_ARRAY(args[0])) {
+        runtimeError("array_push() first argument must be an array.");
+        return NIL_VAL;
+    }
+    arrayPush(AS_ARRAY(args[0]), args[1]);
+    return NIL_VAL;
+}
+
 static Value typeofNative(int argCount, Value *args) {
     if (argCount != 1) {
         runtimeError("typeof() takes 1 argument (%d given).", argCount);
@@ -638,6 +727,32 @@ void defineNatives(void) {
     name = copyString("io_read_line", (int)strlen("io_read_line"));
     push(OBJ_VAL(name));
     tableSet(&vm.globals, name, OBJ_VAL(newNative(ioReadLineNative)));
+    pop();
+
+    /* Stage 12a: array value type via natives. */
+    name = copyString("array", (int)strlen("array"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayCreateNative)));
+    pop();
+
+    name = copyString("array_length", (int)strlen("array_length"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayLengthNative)));
+    pop();
+
+    name = copyString("array_get", (int)strlen("array_get"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayGetNative)));
+    pop();
+
+    name = copyString("array_set", (int)strlen("array_set"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(arraySetNative)));
+    pop();
+
+    name = copyString("array_push", (int)strlen("array_push"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayPushNative)));
     pop();
 
     /* Stage 7: type predicate. */

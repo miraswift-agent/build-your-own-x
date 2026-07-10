@@ -596,6 +596,117 @@ static void test_io_read_line(void) {
     }
 }
 
+/* --- Stage 12a tests: array value type via natives --- */
+
+static void test_array_create_and_length(void) {
+    /* array(arg1, arg2, ...) -> ObjArray
+     * array_length(arr) -> number */
+    int exitCode;
+    char* out = runClox(
+        "var a = array(1, 2, 3);\n"
+        "print array_length(a);\n"
+        "var b = array();\n"     /* empty array */
+        "print array_length(b);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-create-length: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "3\n") || !contains(out, "0\n")) {
+        fail("stdlib/array-create-length: expected '3' and '0' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_get_set(void) {
+    /* array_get(arr, i) -> element; runtime error if out of bounds
+     * array_set(arr, i, val) -> modifies arr; runtime error if OOB */
+    int exitCode;
+    char* out = runClox(
+        "var a = array(10, 20, 30);\n"
+        "print array_get(a, 0);\n"      /* 10 */
+        "print array_get(a, 1);\n"      /* 20 */
+        "print array_get(a, 2);\n"      /* 30 */
+        "array_set(a, 1, 99);\n"
+        "print array_get(a, 1);\n",     /* 99 */
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-get-set: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "10\n") || !contains(out, "20\n") ||
+               !contains(out, "30\n") || !contains(out, "99\n")) {
+        fail("stdlib/array-get-set: expected 10,20,30,99 in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_push(void) {
+    /* array_push(arr, val) -> modifies arr; arr now has one more element */
+    int exitCode;
+    char* out = runClox(
+        "var a = array(1, 2);\n"
+        "print array_length(a);\n"     /* 2 */
+        "array_push(a, 3);\n"
+        "print array_length(a);\n"     /* 3 */
+        "print array_get(a, 2);\n",    /* 3 */
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-push: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "2\n") || !contains(out, "3\n")) {
+        fail("stdlib/array-push: expected '2' and '3' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_get_out_of_bounds(void) {
+    /* Runtime error: array_get(a, 5) on a 3-element array. */
+    int exitCode;
+    char* out = runClox(
+        "var a = array(1, 2, 3);\n"
+        "print array_get(a, 5);\n",
+        &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-oob-get: expected nonzero exit, got 0");
+    } else if (!contains(out, "out of bounds") && !contains(out, "Index")) {
+        fail("stdlib/array-oob-get: expected 'out of bounds' or 'Index' in error, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_set_out_of_bounds(void) {
+    /* Runtime error: array_set(a, 5, 99) on a 3-element array. */
+    int exitCode;
+    char* out = runClox(
+        "var a = array(1, 2, 3);\n"
+        "array_set(a, 5, 99);\n",
+        &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-oob-set: expected nonzero exit, got 0");
+    } else if (!contains(out, "out of bounds") && !contains(out, "Index")) {
+        fail("stdlib/array-oob-set: expected 'out of bounds' or 'Index' in error, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_wrong_args(void) {
+    /* Type error: array_length() called with a number. */
+    int exitCode;
+    char* out = runClox("print array_length(42);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-wrong-args: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
 int main(void) {
     test_clock_exists();
     test_number_abs();
@@ -628,6 +739,13 @@ int main(void) {
     test_io_wrong_type();
     test_io_exit();
     test_io_read_line();
+    /* Stage 12a: array value type via natives. */
+    test_array_create_and_length();
+    test_array_get_set();
+    test_array_push();
+    test_array_get_out_of_bounds();
+    test_array_set_out_of_bounds();
+    test_array_wrong_args();
 
     printf("%d passed, %d failed\n", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
