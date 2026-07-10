@@ -384,6 +384,92 @@ static void test_string_trim(void) {
     free(out);
 }
 
+/* --- Stage 10 tests: more number operations --- */
+
+static void test_number_floor_ceil_round(void) {
+    int exitCode;
+    char* out = runClox(
+        "print number_floor(3.7);\n"   /* 3  */
+        "print number_floor(-2.3);\n"  /* -3 */
+        "print number_floor(5.0);\n"   /* 5  */
+        "print number_ceil(3.2);\n"    /* 4  */
+        "print number_ceil(-2.7);\n"   /* -2 */
+        "print number_round(3.5);\n"   /* 4  (banker's rounding? no — C's round() rounds half away from zero, so 3.5 -> 4) */
+        "print number_round(3.4);\n",  /* 3  */
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/floor-ceil-round: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "3\n") || !contains(out, "-3") ||
+               !contains(out, "4\n") || !contains(out, "-2")) {
+        fail("stdlib/floor-ceil-round: expected 3, -3, 4, -2 in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_number_sqrt(void) {
+    int exitCode;
+    char* out = runClox(
+        "print number_sqrt(16);\n"    /* 4   */
+        "print number_sqrt(2);\n"     /* 1.4142... */
+        "print number_sqrt(0);\n",    /* 0   */
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/sqrt: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "4") || !contains(out, "0\n")) {
+        fail("stdlib/sqrt: expected 4 and 0 in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_number_sqrt_negative(void) {
+    /* Sqrt of a negative is a runtime error, not a successful call.
+     * Run as a separate test that expects nonzero exit. */
+    int exitCode;
+    char* out = runClox("print number_sqrt(-1);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/sqrt-negative: expected nonzero exit on negative input, got 0 (output: %s)", out);
+    } else if (!contains(out, "non-negative")) {
+        fail("stdlib/sqrt-negative: expected 'non-negative' in error output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_number_pow(void) {
+    int exitCode;
+    char* out = runClox(
+        "print number_pow(2, 10);\n"  /* 1024 */
+        "print number_pow(3, 0);\n"   /* 1    */
+        "print number_pow(5, -1);\n"  /* 0.2  */
+        "print number_pow(0, 0);\n",  /* 1 (by convention) */
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/pow: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "1024") || !contains(out, "0.2")) {
+        fail("stdlib/pow: expected 1024 and 0.2 in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_number_wrong_args(void) {
+    /* Arity error path on a new native. */
+    int exitCode;
+    char* out = runClox("print number_sqrt();\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/sqrt-wrong-args: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
 int main(void) {
     test_clock_exists();
     test_number_abs();
@@ -403,6 +489,12 @@ int main(void) {
     test_string_ends_with();
     test_string_index_of();
     test_string_trim();
+    /* Stage 10: more number operations. */
+    test_number_floor_ceil_round();
+    test_number_sqrt();
+    test_number_sqrt_negative();
+    test_number_pow();
+    test_number_wrong_args();
 
     printf("%d passed, %d failed\n", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;

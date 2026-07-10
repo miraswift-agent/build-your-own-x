@@ -1,5 +1,6 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -std=c99 -pedantic -g -O0
+LDLIBS = -lm
 
 SRCDIR = src
 TESTDIR = tests
@@ -25,11 +26,11 @@ TEST_OBJECTS = $(patsubst $(TESTDIR)/%.c,$(BUILDDIR)/test_%.o, $(TEST_SOURCES))
 all: $(TARGET)
 
 $(TARGET): $(OBJECTS) | $(BINDIR)
-	$(CC) $(CFLAGS) -o $@ $(OBJECTS)
+	$(CC) $(CFLAGS) -o $@ $(OBJECTS) $(LDLIBS)
 
 # Generic rule: bin/test_<name> <- tests/test_<name>.c + all library objects.
 $(BINDIR)/test_%: $(LIB_OBJECTS) $(BUILDDIR)/test_%.o | $(BINDIR)
-	$(CC) $(CFLAGS) -o $@ $(LIB_OBJECTS) $(BUILDDIR)/test_$*.o
+	$(CC) $(CFLAGS) -o $@ $(LIB_OBJECTS) $(BUILDDIR)/test_$*.o $(LDLIBS)
 
 $(BUILDDIR)/%.o: $(SRCDIR)/%.c | $(BUILDDIR)
 	$(CC) $(CFLAGS) -c -o $@ $<

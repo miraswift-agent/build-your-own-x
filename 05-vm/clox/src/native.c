@@ -332,6 +332,76 @@ static Value stringTrimNative(int argCount, Value *args) {
     return OBJ_VAL(result);
 }
 
+static Value numberFloorNative(int argCount, Value *args) {
+    if (argCount != 1) {
+        runtimeError("number_floor() takes 1 argument (%d given).", argCount);
+        return NIL_VAL;
+    }
+    if (!IS_NUMBER(args[0])) {
+        runtimeError("number_floor() argument must be a number.");
+        return NIL_VAL;
+    }
+    return NUMBER_VAL(floor(AS_NUMBER(args[0])));
+}
+
+static Value numberCeilNative(int argCount, Value *args) {
+    if (argCount != 1) {
+        runtimeError("number_ceil() takes 1 argument (%d given).", argCount);
+        return NIL_VAL;
+    }
+    if (!IS_NUMBER(args[0])) {
+        runtimeError("number_ceil() argument must be a number.");
+        return NIL_VAL;
+    }
+    return NUMBER_VAL(ceil(AS_NUMBER(args[0])));
+}
+
+static Value numberRoundNative(int argCount, Value *args) {
+    if (argCount != 1) {
+        runtimeError("number_round() takes 1 argument (%d given).", argCount);
+        return NIL_VAL;
+    }
+    if (!IS_NUMBER(args[0])) {
+        runtimeError("number_round() argument must be a number.");
+        return NIL_VAL;
+    }
+    /* C's round() rounds half away from zero, not banker's rounding.
+     * Documented in the close-out doc. */
+    return NUMBER_VAL(round(AS_NUMBER(args[0])));
+}
+
+static Value numberSqrtNative(int argCount, Value *args) {
+    if (argCount != 1) {
+        runtimeError("number_sqrt() takes 1 argument (%d given).", argCount);
+        return NIL_VAL;
+    }
+    if (!IS_NUMBER(args[0])) {
+        runtimeError("number_sqrt() argument must be a number.");
+        return NIL_VAL;
+    }
+    double x = AS_NUMBER(args[0]);
+    if (x < 0) {
+        /* Negative input: print a runtime error and return NaN. sqrt(-1)
+         * is mathematically undefined; the Lox-level error message lets
+         * the user know what they did wrong. */
+        runtimeError("number_sqrt() argument must be non-negative.");
+        return NUMBER_VAL(0.0 / 0.0);  /* NaN; unreachable */
+    }
+    return NUMBER_VAL(sqrt(x));
+}
+
+static Value numberPowNative(int argCount, Value *args) {
+    if (argCount != 2) {
+        runtimeError("number_pow() takes 2 arguments (%d given).", argCount);
+        return NIL_VAL;
+    }
+    if (!IS_NUMBER(args[0]) || !IS_NUMBER(args[1])) {
+        runtimeError("number_pow() arguments must be numbers.");
+        return NIL_VAL;
+    }
+    return NUMBER_VAL(pow(AS_NUMBER(args[0]), AS_NUMBER(args[1])));
+}
+
 static Value typeofNative(int argCount, Value *args) {
     if (argCount != 1) {
         runtimeError("typeof() takes 1 argument (%d given).", argCount);
@@ -438,6 +508,32 @@ void defineNatives(void) {
     name = copyString("string_trim", (int)strlen("string_trim"));
     push(OBJ_VAL(name));
     tableSet(&vm.globals, name, OBJ_VAL(newNative(stringTrimNative)));
+    pop();
+
+    /* Stage 10: more number operations. */
+    name = copyString("number_floor", (int)strlen("number_floor"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(numberFloorNative)));
+    pop();
+
+    name = copyString("number_ceil", (int)strlen("number_ceil"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(numberCeilNative)));
+    pop();
+
+    name = copyString("number_round", (int)strlen("number_round"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(numberRoundNative)));
+    pop();
+
+    name = copyString("number_sqrt", (int)strlen("number_sqrt"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(numberSqrtNative)));
+    pop();
+
+    name = copyString("number_pow", (int)strlen("number_pow"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(numberPowNative)));
     pop();
 
     /* Stage 7: type predicate. */
