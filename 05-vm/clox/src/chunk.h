@@ -46,7 +46,8 @@ typedef enum {
     OP_RETURN,
     OP_CLASS,
     OP_INHERIT,
-    OP_METHOD
+    OP_METHOD,
+    OP_ARRAY  /* Stage 12b-i: build ObjArray from top N stack values; operand = element count */
 } OpCode;
 
 typedef struct {

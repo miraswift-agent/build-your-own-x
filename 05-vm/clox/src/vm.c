@@ -422,6 +422,38 @@ static InterpretResult run(void) {
                 closeUpvalues(vm.stackTop - 1);
                 pop();
                 break;
+            case OP_ARRAY: {
+                /* Stage 12b-i: build an ObjArray from the top N stack
+                 * values. Operand (read below) is the element count.
+                 * The values are below the protective push of the
+                 * array itself: stackTop is one above the array, and
+                 * the source values are stackTop[-count..-1].
+                 * We allocate the array with capacity == count, fill
+                 * it from bottom (first element, stackTop[-count]) to
+                 * top (last element, stackTop[-1]), then set
+                 * array->count, pop the protective push and the
+                 * source values, and push the array as the single
+                 * result. The push(OBJ_VAL) is GC-protective: the
+                 * arrayWrite calls could otherwise collect the
+                 * partially-built array. Note: arrayWrite writes
+                 * elements[index] but does NOT increment count (the
+                 * Stage 12a natives use arrayPush for that). For a
+                 * literal, we know the final count, so we set it
+                 * explicitly after the fill loop. */
+                uint8_t count = READ_BYTE();
+                ObjArray *array = newArray(count);
+                push(OBJ_VAL(array));
+                for (uint8_t i = 0; i < count; i++) {
+                    arrayWrite(array, i, peek(count - i));
+                }
+                array->count = count;
+                pop();  /* the protective push */
+                for (uint8_t i = 0; i < count; i++) {
+                    pop();  /* the source values */
+                }
+                push(OBJ_VAL(array));
+                break;
+            }
             case OP_RETURN: {
                 Value result = pop();
                 closeUpvalues(frame->slots);

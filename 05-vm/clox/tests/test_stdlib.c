@@ -707,6 +707,101 @@ static void test_array_wrong_args(void) {
     free(out);
 }
 
+/* --- Stage 12b-i tests: array literals [1, 2, 3] --- */
+
+static void test_array_literal_3(void) {
+    /* [1, 2, 3] builds a 3-element array. */
+    int exitCode;
+    char* out = runClox(
+        "var a = [1, 2, 3];\n"
+        "print array_length(a);\n"     /* 3 */
+        "print array_get(a, 0);\n"     /* 1 */
+        "print array_get(a, 1);\n"     /* 2 */
+        "print array_get(a, 2);\n",    /* 3 */
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-literal-3: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "3\n") || !contains(out, "1\n") ||
+               !contains(out, "2\n")) {
+        fail("stdlib/array-literal-3: expected 3, 1, 2, 3 in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_literal_empty(void) {
+    /* [] builds a 0-element array. */
+    int exitCode;
+    char* out = runClox(
+        "var a = [];\n"
+        "print array_length(a);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-literal-empty: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "0\n")) {
+        fail("stdlib/array-literal-empty: expected '0' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_literal_mixed(void) {
+    /* Mixed-type literal: numbers and strings in one array. */
+    int exitCode;
+    char* out = runClox(
+        "var a = [1, \"foo\", true];\n"
+        "print array_length(a);\n"     /* 3 */
+        "print array_get(a, 0);\n"     /* 1 */
+        "print array_get(a, 1);\n"     /* foo (no quotes) */
+        "print array_get(a, 2);\n",    /* true */
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-literal-mixed: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "3\n") || !contains(out, "1\n") ||
+               !contains(out, "foo\n") || !contains(out, "true\n")) {
+        fail("stdlib/array-literal-mixed: expected 3, 1, foo, true in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_literal_nested(void) {
+    /* Nested literal: [[1, 2], [3, 4]] is a 2-element array of arrays. */
+    int exitCode;
+    char* out = runClox(
+        "var a = [[1, 2], [3, 4]];\n"
+        "print array_length(a);\n"             /* 2 */
+        "print array_length(array_get(a, 0));\n" /* 2 */
+        "print array_length(array_get(a, 1));\n" /* 2 */
+        "print array_get(array_get(a, 0), 1);\n",/* 2 */
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-literal-nested: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "2\n")) {
+        fail("stdlib/array-literal-nested: expected multiple '2's in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_print_array_literal(void) {
+    /* print [1, 2, 3] should output [1, 2, 3]. */
+    int exitCode;
+    char* out = runClox("print [1, 2, 3];\n", &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/print-array-literal: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "[1, 2, 3]")) {
+        fail("stdlib/print-array-literal: expected '[1, 2, 3]' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
 int main(void) {
     test_clock_exists();
     test_number_abs();
@@ -746,6 +841,12 @@ int main(void) {
     test_array_get_out_of_bounds();
     test_array_set_out_of_bounds();
     test_array_wrong_args();
+    /* Stage 12b-i: array literals. */
+    test_array_literal_3();
+    test_array_literal_empty();
+    test_array_literal_mixed();
+    test_array_literal_nested();
+    test_print_array_literal();
 
     printf("%d passed, %d failed\n", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;

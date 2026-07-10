@@ -267,6 +267,7 @@ static void declaration(void);
 static ParseRule *getRule(TokenType type);
 static void parsePrecedence(Precedence precedence);
 static uint8_t argumentList(void);
+static void arrayLiteral(bool canAssign);  /* Stage 12b-i */
 
 static uint8_t identifierConstant(Token *name) {
     return makeConstant(OBJ_VAL(copyString(name->start, name->length)));
@@ -431,6 +432,26 @@ static void call(bool canAssign) {
     emitBytes(OP_CALL, argCount);
 }
 
+static void arrayLiteral(bool canAssign) {
+    /* Stage 12b-i: compile [a, b, c] into a sequence of element
+     * expressions followed by OP_ARRAY with the count as operand.
+     * The VM, on dispatch, builds an ObjArray from the top N stack
+     * values. Empty literal `[]` is count == 0. */
+    (void)canAssign;
+    uint8_t count = 0;
+    if (!check(TOKEN_RIGHT_BRACKET)) {
+        do {
+            expression();
+            if (count == 255) {
+                error("Can't have more than 255 elements in an array literal.");
+            }
+            count++;
+        } while (match(TOKEN_COMMA));
+    }
+    consume(TOKEN_RIGHT_BRACKET, "Expect ']' after array elements.");
+    emitBytes(OP_ARRAY, count);
+}
+
 static uint8_t argumentList(void) {
     uint8_t argCount = 0;
     if (!check(TOKEN_RIGHT_PAREN)) {
@@ -567,6 +588,8 @@ static ParseRule rules[] = {
     [TOKEN_RIGHT_PAREN]   = {NULL,     NULL,   PREC_NONE},
     [TOKEN_LEFT_BRACE]    = {NULL,     NULL,   PREC_NONE},
     [TOKEN_RIGHT_BRACE]   = {NULL,     NULL,   PREC_NONE},
+    [TOKEN_LEFT_BRACKET]  = {arrayLiteral, NULL, PREC_NONE},  /* Stage 12b-i */
+    [TOKEN_RIGHT_BRACKET] = {NULL,     NULL,   PREC_NONE},
     [TOKEN_COMMA]         = {NULL,     NULL,   PREC_NONE},
     [TOKEN_DOT]           = {NULL,     dot,    PREC_CALL},
     [TOKEN_MINUS]         = {unary,    binary, PREC_TERM},
