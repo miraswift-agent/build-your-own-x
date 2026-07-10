@@ -802,6 +802,129 @@ static void test_print_array_literal(void) {
     free(out);
 }
 
+/* --- Stage 12b-ii tests: a[i] index read --- */
+
+static void test_array_index_read(void) {
+    /* a[i] reads the i-th element. */
+    int exitCode;
+    char* out = runClox(
+        "var a = [10, 20, 30];\n"
+        "print a[0];\n"   /* 10 */
+        "print a[1];\n"   /* 20 */
+        "print a[2];\n",  /* 30 */
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-index-read: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "10\n") || !contains(out, "20\n") ||
+               !contains(out, "30\n")) {
+        fail("stdlib/array-index-read: expected 10, 20, 30 in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_index_nested(void) {
+    /* a[i][j] reads a 2D array. */
+    int exitCode;
+    char* out = runClox(
+        "var grid = [[1, 2, 3], [4, 5, 6]];\n"
+        "print grid[0][0];\n"  /* 1 */
+        "print grid[0][2];\n"  /* 3 */
+        "print grid[1][1];\n"  /* 5 */
+        "print grid[1][2];\n", /* 6 */
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-index-nested: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "1\n") || !contains(out, "3\n") ||
+               !contains(out, "5\n") || !contains(out, "6\n")) {
+        fail("stdlib/array-index-nested: expected 1, 3, 5, 6 in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_index_expression(void) {
+    /* Index can be an expression: a[i+1], a[i*2]. */
+    int exitCode;
+    char* out = runClox(
+        "var a = [10, 20, 30, 40, 50];\n"
+        "var i = 2;\n"
+        "print a[i];\n"       /* 30 */
+        "print a[i + 1];\n"   /* 40 */
+        "print a[i * 2];\n",  /* 50 */
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-index-expression: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "30\n") || !contains(out, "40\n") ||
+               !contains(out, "50\n")) {
+        fail("stdlib/array-index-expression: expected 30, 40, 50 in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_index_out_of_bounds(void) {
+    /* a[5] on a 3-element array is a runtime error. */
+    int exitCode;
+    char* out = runClox(
+        "var a = [1, 2, 3];\n"
+        "print a[5];\n",
+        &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-index-oob: expected nonzero exit, got 0");
+    } else if (!contains(out, "out of bounds") && !contains(out, "Index")) {
+        fail("stdlib/array-index-oob: expected 'out of bounds' in error, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_index_negative(void) {
+    /* a[-1] is a runtime error (we don't support negative indexing). */
+    int exitCode;
+    char* out = runClox(
+        "var a = [1, 2, 3];\n"
+        "print a[-1];\n",
+        &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-index-negative: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_index_wrong_type(void) {
+    /* a["foo"] is a runtime error: index must be a number. */
+    int exitCode;
+    char* out = runClox(
+        "var a = [1, 2, 3];\n"
+        "print a[\"foo\"];\n",
+        &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-index-wrong-type: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_index_on_non_array(void) {
+    /* 42[0] is a runtime error: subscript requires an array. */
+    int exitCode;
+    char* out = runClox("print 42[0];\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-index-on-non-array: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
 int main(void) {
     test_clock_exists();
     test_number_abs();
@@ -847,6 +970,14 @@ int main(void) {
     test_array_literal_mixed();
     test_array_literal_nested();
     test_print_array_literal();
+    /* Stage 12b-ii: a[i] index read. */
+    test_array_index_read();
+    test_array_index_nested();
+    test_array_index_expression();
+    test_array_index_out_of_bounds();
+    test_array_index_negative();
+    test_array_index_wrong_type();
+    test_array_index_on_non_array();
 
     printf("%d passed, %d failed\n", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;

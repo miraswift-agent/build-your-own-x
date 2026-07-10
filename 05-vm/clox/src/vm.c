@@ -422,6 +422,32 @@ static InterpretResult run(void) {
                 closeUpvalues(vm.stackTop - 1);
                 pop();
                 break;
+            case OP_INDEX_GET: {
+                /* Stage 12b-ii: read array[i]. Stack: ..., array, index.
+                 * Pop the index (top), validate it's a number, then peek
+                 * the array and bounds-check, then push the element. */
+                Value indexValue = pop();
+                if (!IS_NUMBER(indexValue)) {
+                    runtimeError("Array index must be a number.");
+                    return INTERPRET_RUNTIME_ERROR;
+                }
+                int index = (int)AS_NUMBER(indexValue);
+                Value arrayValue = peek(0);
+                if (!IS_ARRAY(arrayValue)) {
+                    runtimeError("Only arrays can be indexed.");
+                    return INTERPRET_RUNTIME_ERROR;
+                }
+                ObjArray *array = AS_ARRAY(arrayValue);
+                if (index < 0 || index >= array->count) {
+                    runtimeError("Array index %d out of bounds (length %d).",
+                                 index, array->count);
+                    return INTERPRET_RUNTIME_ERROR;
+                }
+                Value element = arrayRead(array, index);
+                pop();  /* the array */
+                push(element);
+                break;
+            }
             case OP_ARRAY: {
                 /* Stage 12b-i: build an ObjArray from the top N stack
                  * values. Operand (read below) is the element count.

@@ -268,6 +268,7 @@ static ParseRule *getRule(TokenType type);
 static void parsePrecedence(Precedence precedence);
 static uint8_t argumentList(void);
 static void arrayLiteral(bool canAssign);  /* Stage 12b-i */
+static void arrayIndex(bool canAssign);    /* Stage 12b-ii: a[i] infix */
 
 static uint8_t identifierConstant(Token *name) {
     return makeConstant(OBJ_VAL(copyString(name->start, name->length)));
@@ -452,6 +453,17 @@ static void arrayLiteral(bool canAssign) {
     emitBytes(OP_ARRAY, count);
 }
 
+static void arrayIndex(bool canAssign) {
+    /* Stage 12b-ii: compile a[i] into OP_INDEX_GET. The array and
+     * index are already on the stack from the prefix expression and
+     * the inner expression(); we just emit the opcode. Note: this is
+     * the *infix* for TOKEN_LEFT_BRACKET; the prefix is arrayLiteral. */
+    (void)canAssign;
+    expression();  /* the index expression */
+    consume(TOKEN_RIGHT_BRACKET, "Expect ']' after index.");
+    emitByte(OP_INDEX_GET);
+}
+
 static uint8_t argumentList(void) {
     uint8_t argCount = 0;
     if (!check(TOKEN_RIGHT_PAREN)) {
@@ -588,7 +600,7 @@ static ParseRule rules[] = {
     [TOKEN_RIGHT_PAREN]   = {NULL,     NULL,   PREC_NONE},
     [TOKEN_LEFT_BRACE]    = {NULL,     NULL,   PREC_NONE},
     [TOKEN_RIGHT_BRACE]   = {NULL,     NULL,   PREC_NONE},
-    [TOKEN_LEFT_BRACKET]  = {arrayLiteral, NULL, PREC_NONE},  /* Stage 12b-i */
+    [TOKEN_LEFT_BRACKET]  = {arrayLiteral, arrayIndex, PREC_CALL},  /* Stage 12b-i prefix, 12b-ii infix */
     [TOKEN_RIGHT_BRACKET] = {NULL,     NULL,   PREC_NONE},
     [TOKEN_COMMA]         = {NULL,     NULL,   PREC_NONE},
     [TOKEN_DOT]           = {NULL,     dot,    PREC_CALL},
