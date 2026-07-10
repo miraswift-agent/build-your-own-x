@@ -470,6 +470,132 @@ static void test_number_wrong_args(void) {
     free(out);
 }
 
+/* --- Stage 11 tests: I/O natives --- */
+
+static void test_io_print(void) {
+    /* io_print(s) writes to stdout (same channel as print).
+     * Without redirection we can only assert exit code 0. */
+    int exitCode;
+    char* out = runClox(
+        "io_print(\"hello, stdout\\n\");\n"
+        "io_print(\"\");\n"
+        "io_print(\"trailing\");\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/io-print: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_io_eprint(void) {
+    /* io_eprint(s) writes to stderr. In script mode stdout and stderr
+     * both end up in our popen pipe (stderr is line-buffered, so order
+     * is preserved in practice). We assert both channels reach us. */
+    int exitCode;
+    char* out = runClox(
+        "io_eprint(\"to stderr\\n\");\n"
+        "io_eprint(\"still stderr\");\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/io-eprint: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "to stderr") || !contains(out, "still stderr")) {
+        fail("stdlib/io-eprint: expected both stderr lines in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_io_wrong_args(void) {
+    /* Arity error on a new native. */
+    int exitCode;
+    char* out = runClox("io_print();\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/io-print-wrong-args: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_io_wrong_type(void) {
+    /* Type error on a new native. */
+    int exitCode;
+    char* out = runClox("io_print(42);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/io-print-wrong-type: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_io_exit(void) {
+    /* io_exit(code) terminates the script with the given exit code.
+     * Negative: positive; zero: success; positive: error code.
+     * Run as a separate test that expects the explicit exit code. */
+    int exitCode;
+    char* out = runClox(
+        "io_exit(42);\n"
+        "print \"unreachable\";\n",  /* must NOT run */
+        &exitCode);
+    if (exitCode != 42) {
+        fail("stdlib/io-exit: expected exit 42, got %d (output: %s)", exitCode, out);
+    } else if (contains(out, "unreachable")) {
+        fail("stdlib/io-exit: 'unreachable' should not have printed, output: %s", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_io_read_line(void) {
+    /* io_read_line() reads a line from stdin. The test framework's
+     * popen("w") opens a write pipe to the child, so we can't read the
+     * child's stdin from us. Instead, we write a one-shot script to /tmp
+     * and invoke clox with shell input redirection. */
+    const char *scriptPath = "/tmp/clox_s11_readline_test.lox";
+    FILE *f = fopen(scriptPath, "w");
+    if (f == NULL) {
+        fail("stdlib/io-read-line: could not write test script");
+        return;
+    }
+    fputs(
+        "var line = io_read_line();\n"
+        "if (line == \"hello stdin\") {\n"
+        "  print \"matched\";\n"
+        "} else {\n"
+        "  print \"mismatch\";\n"
+        "}\n",
+        f);
+    fclose(f);
+
+    char cmd[512];
+    snprintf(cmd, sizeof(cmd), "echo 'hello stdin' | %s/bin/clox %s",
+             "/home/mira/build-your-own-x/05-vm/clox", scriptPath);
+
+    FILE *pipe = popen(cmd, "r");
+    if (pipe == NULL) {
+        fail("stdlib/io-read-line: popen failed");
+        return;
+    }
+
+    char out[1024] = {0};
+    size_t n = fread(out, 1, sizeof(out) - 1, pipe);
+    out[n] = '\0';
+    int exitCode = pclose(pipe);
+
+    if (exitCode != 0) {
+        fail("stdlib/io-read-line: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "matched")) {
+        fail("stdlib/io-read-line: expected 'matched' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+}
+
 int main(void) {
     test_clock_exists();
     test_number_abs();
@@ -495,6 +621,13 @@ int main(void) {
     test_number_sqrt_negative();
     test_number_pow();
     test_number_wrong_args();
+    /* Stage 11: I/O natives. */
+    test_io_print();
+    test_io_eprint();
+    test_io_wrong_args();
+    test_io_wrong_type();
+    test_io_exit();
+    test_io_read_line();
 
     printf("%d passed, %d failed\n", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
