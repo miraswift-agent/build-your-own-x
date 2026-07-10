@@ -20,7 +20,7 @@ OBJECTS = $(patsubst $(SRCDIR)/%.c,$(BUILDDIR)/%.o, $(SOURCES))
 LIB_OBJECTS = $(patsubst $(SRCDIR)/%.c,$(BUILDDIR)/%.o, $(LIB_SOURCES))
 TEST_OBJECTS = $(patsubst $(TESTDIR)/%.c,$(BUILDDIR)/test_%.o, $(TEST_SOURCES))
 
-.PHONY: all test test-clox test-repl valgrind clean run run-repl
+.PHONY: all test test-clox test-repl test-stdlib valgrind clean run run-repl
 
 all: $(TARGET)
 
@@ -63,9 +63,16 @@ test-clox: $(BINDIR)/test_clox
 test-repl: $(BINDIR)/test_repl
 	./$(BINDIR)/test_repl
 
+test-stdlib: $(BINDIR)/test_stdlib
+	./$(BINDIR)/test_stdlib
+
 valgrind: $(TEST_BINARIES)
-	valgrind --leak-check=full --error-exitcode=1 ./$(BINDIR)/test_clox
-	valgrind --leak-check=full --error-exitcode=1 ./$(BINDIR)/test_repl
+	@status=0; \
+	for t in $(TEST_BINARIES); do \
+		echo "==> valgrind $$t"; \
+		valgrind --leak-check=full --error-exitcode=1 ./$$t || status=$$?; \
+	done; \
+	exit $$status
 
 run: $(TARGET)
 	./$(TARGET) $(FILE)
