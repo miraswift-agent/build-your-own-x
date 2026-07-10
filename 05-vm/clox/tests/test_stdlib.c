@@ -307,6 +307,83 @@ static void test_string_replace_wrong_args(void) {
     free(out);
 }
 
+/* --- Stage 9 tests: starts_with, ends_with, index_of, trim --- */
+
+static void test_string_starts_with(void) {
+    int exitCode;
+    char* out = runClox(
+        "print string_starts_with(\"hello world\", \"hello\");\n"
+        "print string_starts_with(\"hello world\", \"world\");\n"
+        "print string_starts_with(\"hello\", \"\");\n",      /* empty always matches */
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/starts-with: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "true") || !contains(out, "false")) {
+        fail("stdlib/starts-with: expected 'true' and 'false' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_ends_with(void) {
+    int exitCode;
+    char* out = runClox(
+        "print string_ends_with(\"hello world\", \"world\");\n"
+        "print string_ends_with(\"hello world\", \"hello\");\n"
+        "print string_ends_with(\"hello\", \"\");\n",       /* empty always matches */
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/ends-with: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "true") || !contains(out, "false")) {
+        fail("stdlib/ends-with: expected 'true' and 'false' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_index_of(void) {
+    /* string_index_of(haystack, needle) — returns -1 if not found, else position. */
+    int exitCode;
+    char* out = runClox(
+        "print string_index_of(\"hello world\", \"world\");\n"   /* 6  */
+        "print string_index_of(\"hello world\", \"hello\");\n"   /* 0  */
+        "print string_index_of(\"hello world\", \"xyz\");\n"     /* -1 */
+        "print string_index_of(\"hello\", \"\");\n",             /* 0  (empty matches at 0) */
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/index-of: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "6") || !contains(out, "0\n") ||
+               !contains(out, "-1")) {
+        fail("stdlib/index-of: expected 6, 0, and -1 in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_trim(void) {
+    /* string_trim(s) — strip leading and trailing whitespace.
+     * Note: clox strings don't have escape sequences, so we test with
+     * literal spaces (and the all-whitespace edge case). */
+    int exitCode;
+    char* out = runClox(
+        "print string_trim(\"  hello  \");\n"
+        "print string_trim(\"\");\n"
+        "print string_trim(\"   \");\n"             /* all whitespace -> empty */
+        "print string_trim(\"no whitespace\");\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/trim: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "hello\n") || !contains(out, "no whitespace")) {
+        fail("stdlib/trim: expected trimmed 'hello' and 'no whitespace' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
 int main(void) {
     test_clock_exists();
     test_number_abs();
@@ -321,6 +398,11 @@ int main(void) {
     test_string_contains();
     test_string_replace();
     test_string_replace_wrong_args();
+    /* Stage 9: even more string operations. */
+    test_string_starts_with();
+    test_string_ends_with();
+    test_string_index_of();
+    test_string_trim();
 
     printf("%d passed, %d failed\n", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;

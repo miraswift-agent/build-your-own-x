@@ -242,6 +242,96 @@ static Value stringReplaceNative(int argCount, Value *args) {
     return OBJ_VAL(result);
 }
 
+static bool startsWithString(ObjString *s, ObjString *prefix) {
+    if (prefix->length > s->length) return false;
+    return memcmp(s->chars, prefix->chars, (size_t)prefix->length) == 0;
+}
+
+static Value stringStartsWithNative(int argCount, Value *args) {
+    if (argCount != 2) {
+        runtimeError("string_starts_with() takes 2 arguments (%d given).", argCount);
+        return NIL_VAL;
+    }
+    if (!IS_STRING(args[0]) || !IS_STRING(args[1])) {
+        runtimeError("string_starts_with() arguments must be strings.");
+        return NIL_VAL;
+    }
+    return BOOL_VAL(startsWithString(AS_STRING(args[0]), AS_STRING(args[1])));
+}
+
+static bool endsWithString(ObjString *s, ObjString *suffix) {
+    if (suffix->length > s->length) return false;
+    int offset = s->length - suffix->length;
+    return memcmp(s->chars + offset, suffix->chars, (size_t)suffix->length) == 0;
+}
+
+static Value stringEndsWithNative(int argCount, Value *args) {
+    if (argCount != 2) {
+        runtimeError("string_ends_with() takes 2 arguments (%d given).", argCount);
+        return NIL_VAL;
+    }
+    if (!IS_STRING(args[0]) || !IS_STRING(args[1])) {
+        runtimeError("string_ends_with() arguments must be strings.");
+        return NIL_VAL;
+    }
+    return BOOL_VAL(endsWithString(AS_STRING(args[0]), AS_STRING(args[1])));
+}
+
+static Value stringIndexOfNative(int argCount, Value *args) {
+    if (argCount != 2) {
+        runtimeError("string_index_of() takes 2 arguments (%d given).", argCount);
+        return NIL_VAL;
+    }
+    if (!IS_STRING(args[0]) || !IS_STRING(args[1])) {
+        runtimeError("string_index_of() arguments must be strings.");
+        return NIL_VAL;
+    }
+    ObjString *haystack = AS_STRING(args[0]);
+    ObjString *needle   = AS_STRING(args[1]);
+    if (needle->length == 0) return NUMBER_VAL(0);
+    if (needle->length > haystack->length) return NUMBER_VAL(-1);
+    /* Reuse the same naive search as string_contains, but return the
+     * position of the first match (or -1 if not found). */
+    for (int i = 0; i <= haystack->length - needle->length; i++) {
+        bool match = true;
+        for (int j = 0; j < needle->length; j++) {
+            if (haystack->chars[i + j] != needle->chars[j]) {
+                match = false;
+                break;
+            }
+        }
+        if (match) return NUMBER_VAL((double)i);
+    }
+    return NUMBER_VAL(-1);
+}
+
+static bool isWhitespace(char c) {
+    return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f';
+}
+
+static Value stringTrimNative(int argCount, Value *args) {
+    if (argCount != 1) {
+        runtimeError("string_trim() takes 1 argument (%d given).", argCount);
+        return NIL_VAL;
+    }
+    if (!IS_STRING(args[0])) {
+        runtimeError("string_trim() argument must be a string.");
+        return NIL_VAL;
+    }
+    ObjString *s = AS_STRING(args[0]);
+    int start = 0;
+    int end = s->length;
+    while (start < end && isWhitespace(s->chars[start])) start++;
+    while (end > start && isWhitespace(s->chars[end - 1])) end--;
+    if (start == end) {
+        /* All whitespace: return a fresh empty string. */
+        ObjString *result = copyString("", 0);
+        return OBJ_VAL(result);
+    }
+    ObjString *result = copyString(s->chars + start, end - start);
+    return OBJ_VAL(result);
+}
+
 static Value typeofNative(int argCount, Value *args) {
     if (argCount != 1) {
         runtimeError("typeof() takes 1 argument (%d given).", argCount);
@@ -327,6 +417,27 @@ void defineNatives(void) {
     name = copyString("string_replace", (int)strlen("string_replace"));
     push(OBJ_VAL(name));
     tableSet(&vm.globals, name, OBJ_VAL(newNative(stringReplaceNative)));
+    pop();
+
+    /* Stage 9: even more string operations. */
+    name = copyString("string_starts_with", (int)strlen("string_starts_with"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(stringStartsWithNative)));
+    pop();
+
+    name = copyString("string_ends_with", (int)strlen("string_ends_with"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(stringEndsWithNative)));
+    pop();
+
+    name = copyString("string_index_of", (int)strlen("string_index_of"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(stringIndexOfNative)));
+    pop();
+
+    name = copyString("string_trim", (int)strlen("string_trim"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(stringTrimNative)));
     pop();
 
     /* Stage 7: type predicate. */
