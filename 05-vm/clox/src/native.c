@@ -140,6 +140,108 @@ static Value stringLowerNative(int argCount, Value *args) {
     return OBJ_VAL(result);
 }
 
+static Value stringSubstringNative(int argCount, Value *args) {
+    if (argCount != 3) {
+        runtimeError("string_substring() takes 3 arguments (%d given).", argCount);
+        return NIL_VAL;
+    }
+    if (!IS_STRING(args[0])) {
+        runtimeError("string_substring() argument 0 must be a string.");
+        return NIL_VAL;
+    }
+    if (!IS_NUMBER(args[1]) || !IS_NUMBER(args[2])) {
+        runtimeError("string_substring() arguments 1 and 2 must be numbers.");
+        return NIL_VAL;
+    }
+    ObjString *s = AS_STRING(args[0]);
+    double startD = AS_NUMBER(args[1]);
+    double endD   = AS_NUMBER(args[2]);
+    /* Clamp. start below 0 → 0. end above length → length. start > end → empty. */
+    int start = (int)startD;
+    int end   = (int)endD;
+    if (start < 0) start = 0;
+    if (end > s->length) end = s->length;
+    if (start > end) start = end;
+    /* copyString() copies the bytes, so the substring is a fresh ObjString. */
+    ObjString *result = copyString(s->chars + start, (end - start));
+    return OBJ_VAL(result);
+}
+
+static Value stringContainsNative(int argCount, Value *args) {
+    if (argCount != 2) {
+        runtimeError("string_contains() takes 2 arguments (%d given).", argCount);
+        return NIL_VAL;
+    }
+    if (!IS_STRING(args[0]) || !IS_STRING(args[1])) {
+        runtimeError("string_contains() arguments must be strings.");
+        return NIL_VAL;
+    }
+    ObjString *haystack = AS_STRING(args[0]);
+    ObjString *needle   = AS_STRING(args[1]);
+    /* Empty needle is contained in any string. */
+    if (needle->length == 0) return BOOL_VAL(true);
+    if (needle->length > haystack->length) return BOOL_VAL(false);
+    /* Naive substring search. KMP or Boyer-Moore is overkill for a
+     * stdlib primitive on a 1k-10k string; the Lox use case is small. */
+    for (int i = 0; i <= haystack->length - needle->length; i++) {
+        bool match = true;
+        for (int j = 0; j < needle->length; j++) {
+            if (haystack->chars[i + j] != needle->chars[j]) {
+                match = false;
+                break;
+            }
+        }
+        if (match) return BOOL_VAL(true);
+    }
+    return BOOL_VAL(false);
+}
+
+static Value stringReplaceNative(int argCount, Value *args) {
+    if (argCount != 3) {
+        runtimeError("string_replace() takes 3 arguments (%d given).", argCount);
+        return NIL_VAL;
+    }
+    if (!IS_STRING(args[0]) || !IS_STRING(args[1]) || !IS_STRING(args[2])) {
+        runtimeError("string_replace() arguments must be strings.");
+        return NIL_VAL;
+    }
+    ObjString *s      = AS_STRING(args[0]);
+    ObjString *oldStr = AS_STRING(args[1]);
+    ObjString *newStr = AS_STRING(args[2]);
+    /* Find the first occurrence of oldStr in s. */
+    int found = -1;
+    if (oldStr->length > 0 && oldStr->length <= s->length) {
+        for (int i = 0; i <= s->length - oldStr->length; i++) {
+            bool match = true;
+            for (int j = 0; j < oldStr->length; j++) {
+                if (s->chars[i + j] != oldStr->chars[j]) {
+                    match = false;
+                    break;
+                }
+            }
+            if (match) { found = i; break; }
+        }
+    }
+    if (found < 0) {
+        /* Not found: return a fresh copy of s (so the caller can rely
+         * on getting an ObjString either way). copyString() interns the
+         * result, so this is essentially a no-op cost. */
+        ObjString *result = copyString(s->chars, s->length);
+        return OBJ_VAL(result);
+    }
+    /* Build the new string: s[0..found] + newStr + s[found+old..s.length]. */
+    int newLen = s->length - oldStr->length + newStr->length;
+    char *buf = ALLOCATE(char, newLen + 1);
+    memcpy(buf, s->chars, found);
+    memcpy(buf + found, newStr->chars, newStr->length);
+    memcpy(buf + found + newStr->length, s->chars + found + oldStr->length,
+           s->length - found - oldStr->length);
+    buf[newLen] = '\0';
+    ObjString *result = copyString(buf, newLen);
+    FREE_ARRAY(char, buf, newLen + 1);
+    return OBJ_VAL(result);
+}
+
 static Value typeofNative(int argCount, Value *args) {
     if (argCount != 1) {
         runtimeError("typeof() takes 1 argument (%d given).", argCount);
@@ -209,6 +311,22 @@ void defineNatives(void) {
     name = copyString("string_lower", (int)strlen("string_lower"));
     push(OBJ_VAL(name));
     tableSet(&vm.globals, name, OBJ_VAL(newNative(stringLowerNative)));
+    pop();
+
+    /* Stage 8: more string operations. */
+    name = copyString("string_substring", (int)strlen("string_substring"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(stringSubstringNative)));
+    pop();
+
+    name = copyString("string_contains", (int)strlen("string_contains"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(stringContainsNative)));
+    pop();
+
+    name = copyString("string_replace", (int)strlen("string_replace"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(stringReplaceNative)));
     pop();
 
     /* Stage 7: type predicate. */
