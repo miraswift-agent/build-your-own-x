@@ -86,17 +86,21 @@ not an interactive tool.
   listed these as candidates inside option A. I scoped to REPL +
   stack traces only. The other candidates are still live for a future
   stage; they are not done.
-* **Fix the latent UB I noticed but did not address:** the static
-  `Compiler *current` in `src/compiler.c` points into a Compiler that
-  lives on the stack of `compile()`. After `compile()` returns, `current`
-  is a dangling pointer. `initCompiler` correctly overwrites it on the
-  next call, but `initCompiler` reads `current` to set
-  `compiler->enclosing` *before* overwriting, and `markCompilerRoots` in
-  `gc.c` walks `current` and follows `enclosing` pointers — both touch
-  the dangling pointer. Valgrind found no actual leak, and the existing
-  tests pass, so this is latent not observable. I am noting it here so
-  it is not forgotten. It should be a one-line fix: set
-  `current = NULL;` at the end of `compile()`.
+* **Noted, then re-verified, then removed: a "latent UB" in `src/compiler.c`.**
+  I wrote in an earlier draft of this close-out that the static
+  `Compiler *current` is dangling after `compile()` returns, because it
+  points into a Compiler on `compile()`'s stack frame. On re-tracing
+  the code carefully, the static is initialized to `NULL`, `initCompiler`
+  sets `current = &compiler` (a local on the calling frame), and
+  `endCompiler` does `current = current->enclosing`. For `TYPE_SCRIPT`
+  (the top-level call from `compile()`), `enclosing` is `NULL`, so after
+  the outermost `endCompiler`, `current` is `NULL`. For recursive
+  `function(TYPE_FUNCTION)` calls, `enclosing` is the *caller's*
+  Compiler — which is on the caller's stack, alive. The pointer is only
+  ever live when its owning stack frame is alive. So no UB. **The lesson
+  from this is the same as the Stage 6 misdiagnosis: verify the bug
+  before fixing it.** I am removing the "noted UB" from this list
+  because the *fix* is to do nothing — there is no bug.
 
 ## Verification
 
