@@ -218,6 +218,95 @@ static void test_type_wrong_arg_count(void) {
     free(out);
 }
 
+/* --- Stage 8 tests: more string operations --- */
+
+static void test_string_substring(void) {
+    /* string_substring(s, start, end) — end is exclusive. */
+    int exitCode;
+    char* out = runClox(
+        "print string_substring(\"hello\", 0, 5);\n"   /* "hello" */
+        "print string_substring(\"hello\", 0, 0);\n"   /* ""      */
+        "print string_substring(\"hello\", 1, 4);\n"   /* "ell"   */
+        "print string_substring(\"hello\", 2, 2);\n",  /* ""      */
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/substring: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "hello") || !contains(out, "ell")) {
+        fail("stdlib/substring: expected 'hello' and 'ell' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_substring_clamp(void) {
+    /* Out-of-range start/end should be clamped, not crash. */
+    int exitCode;
+    char* out = runClox(
+        "print string_substring(\"hi\", 0, 100);\n"   /* full string  */
+        "print string_substring(\"hi\", -5, 2);\n"    /* full string  */
+        "print string_substring(\"hi\", 100, 200);\n",/* empty string */
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/substring-clamp: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "hi")) {
+        fail("stdlib/substring-clamp: expected 'hi' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_contains(void) {
+    /* string_contains(haystack, needle) — boolean. */
+    int exitCode;
+    char* out = runClox(
+        "print string_contains(\"hello world\", \"world\");\n"
+        "print string_contains(\"hello world\", \"xyz\");\n"
+        "print string_contains(\"hello\", \"\");\n",     /* empty is always contained */
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/contains: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "true") || !contains(out, "false")) {
+        fail("stdlib/contains: expected 'true' and 'false' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_replace(void) {
+    /* string_replace(s, old, new) — replace first occurrence. */
+    int exitCode;
+    char* out = runClox(
+        "print string_replace(\"hello world\", \"world\", \"there\");\n"
+        "print string_replace(\"aaaa\", \"aa\", \"b\");\n"   /* "baa"  */
+        "print string_replace(\"hello\", \"x\", \"y\");\n",   /* unchanged */
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/replace: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "hello there") || !contains(out, "baa")) {
+        fail("stdlib/replace: expected 'hello there' and 'baa' in output, got '%s'", out);
+    } else if (!contains(out, "hello\n")) {
+        fail("stdlib/replace: expected the unchanged 'hello' line in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_replace_wrong_args(void) {
+    /* Arity error path on a new native. */
+    int exitCode;
+    char* out = runClox("print string_contains(\"hi\");\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/contains-wrong-args: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
 int main(void) {
     test_clock_exists();
     test_number_abs();
@@ -226,6 +315,12 @@ int main(void) {
     test_string_upper_lower();
     test_type_predicate();
     test_type_wrong_arg_count();
+    /* Stage 8: more string operations. */
+    test_string_substring();
+    test_string_substring_clamp();
+    test_string_contains();
+    test_string_replace();
+    test_string_replace_wrong_args();
 
     printf("%d passed, %d failed\n", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
