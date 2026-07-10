@@ -402,6 +402,89 @@ static Value numberPowNative(int argCount, Value *args) {
     return NUMBER_VAL(pow(AS_NUMBER(args[0]), AS_NUMBER(args[1])));
 }
 
+/* --- Stage 11: I/O natives. The host-boundary lesson:
+ *   - io_print(s) writes to stdout (no trailing newline; same channel
+ *     as the implicit print() but does NOT add a newline like print() does).
+ *   - io_eprint(s) writes to stderr (no trailing newline).
+ *   - io_read_line() reads a line from stdin. Requires the script to be
+ *     run with a non-empty stdin. Our test framework uses popen() which
+ *     doesn't make stdin easy to control, so this is exercised in the
+ *     REPL via a manual smoke test, not via a test.
+ *   - io_exit(code) terminates the script with the given exit code.
+ *     Implemented by storing the requested code in a global and reading
+ *     it from interpret() in main.c. The VM has no other way to signal
+ *     "exit early" without throwing through the call stack. */
+
+#include <stdio.h>
+
+/* Defined in main.c. The VM uses this to short-circuit the loop on exit. */
+extern int g_exitRequested;
+extern int g_exitCode;
+
+static Value ioPrintNative(int argCount, Value *args) {
+    if (argCount != 1) {
+        runtimeError("io_print() takes 1 argument (%d given).", argCount);
+        return NIL_VAL;
+    }
+    if (!IS_STRING(args[0])) {
+        runtimeError("io_print() argument must be a string.");
+        return NIL_VAL;
+    }
+    ObjString *s = AS_STRING(args[0]);
+    fwrite(s->chars, 1, s->length, stdout);
+    return NIL_VAL;
+}
+
+static Value ioEprintNative(int argCount, Value *args) {
+    if (argCount != 1) {
+        runtimeError("io_eprint() takes 1 argument (%d given).", argCount);
+        return NIL_VAL;
+    }
+    if (!IS_STRING(args[0])) {
+        runtimeError("io_eprint() argument must be a string.");
+        return NIL_VAL;
+    }
+    ObjString *s = AS_STRING(args[0]);
+    fwrite(s->chars, 1, s->length, stderr);
+    return NIL_VAL;
+}
+
+/* io_exit(code) — terminate the script with the given exit code.
+ * Sets a global flag interpreted by interpret() in main.c. */
+static Value ioExitNative(int argCount, Value *args) {
+    if (argCount != 1) {
+        runtimeError("io_exit() takes 1 argument (%d given).", argCount);
+        return NIL_VAL;
+    }
+    if (!IS_NUMBER(args[0])) {
+        runtimeError("io_exit() argument must be a number.");
+        return NIL_VAL;
+    }
+    g_exitRequested = 1;
+    g_exitCode = (int)AS_NUMBER(args[0]);
+    return NIL_VAL;
+}
+
+/* io_read_line() — read a single line from stdin (no trailing newline).
+ * Returns nil on EOF. The buffer is bounded (1024 bytes) — a line longer
+ * than that is truncated, which matches the REPL's input behavior. */
+static Value ioReadLineNative(int argCount, Value *args) {
+    if (argCount != 0) {
+        runtimeError("io_read_line() takes 0 arguments (%d given).", argCount);
+        return NIL_VAL;
+    }
+    (void)args;  /* unused */
+    static char line[1024];
+    if (fgets(line, sizeof(line), stdin) == NULL) {
+        return NIL_VAL;  /* EOF or error */
+    }
+    /* Strip the trailing newline, if any. */
+    size_t len = strlen(line);
+    if (len > 0 && line[len - 1] == '\n') line[--len] = '\0';
+    if (len > 0 && line[len - 1] == '\r') line[--len] = '\0';  /* CRLF */
+    return OBJ_VAL(copyString(line, (int)len));
+}
+
 static Value typeofNative(int argCount, Value *args) {
     if (argCount != 1) {
         runtimeError("typeof() takes 1 argument (%d given).", argCount);
@@ -534,6 +617,27 @@ void defineNatives(void) {
     name = copyString("number_pow", (int)strlen("number_pow"));
     push(OBJ_VAL(name));
     tableSet(&vm.globals, name, OBJ_VAL(newNative(numberPowNative)));
+    pop();
+
+    /* Stage 11: I/O natives. */
+    name = copyString("io_print", (int)strlen("io_print"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(ioPrintNative)));
+    pop();
+
+    name = copyString("io_eprint", (int)strlen("io_eprint"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(ioEprintNative)));
+    pop();
+
+    name = copyString("io_exit", (int)strlen("io_exit"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(ioExitNative)));
+    pop();
+
+    name = copyString("io_read_line", (int)strlen("io_read_line"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(ioReadLineNative)));
     pop();
 
     /* Stage 7: type predicate. */

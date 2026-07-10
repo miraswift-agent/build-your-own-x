@@ -13,6 +13,11 @@
 #include "common.h"
 #include "vm.h"
 
+/* Stage 11: io_exit() flags defined in vm.c. main.c just consults
+ * them on the way out. */
+extern int g_exitRequested;
+extern int g_exitCode;
+
 static char* readFile(const char *path) {
     FILE *file = fopen(path, "rb");
     if (file == NULL) {
@@ -124,6 +129,10 @@ static int runFile(const char *path) {
 
     if (result == INTERPRET_COMPILE_ERROR) exit(65);
     if (result == INTERPRET_RUNTIME_ERROR) exit(70);
+    /* Stage 11: io_exit() takes precedence over both compile and
+     * runtime errors. The point of an explicit exit is to honor
+     * the user's request, even if it came after an error was logged. */
+    if (g_exitRequested) exit(g_exitCode);
     return 0;
 }
 
@@ -132,6 +141,11 @@ int main(int argc, const char *argv[]) {
 
     if (argc == 1 || (argc == 2 && strcmp(argv[1], "--repl") == 0)) {
         repl();
+        if (g_exitRequested) {
+            int code = g_exitCode;
+            freeVM();
+            return code;
+        }
     } else if (argc == 2) {
         int code = runFile(argv[1]);
         freeVM();

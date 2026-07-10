@@ -16,7 +16,8 @@
 typedef enum {
     INTERPRET_OK,
     INTERPRET_COMPILE_ERROR,
-    INTERPRET_RUNTIME_ERROR
+    INTERPRET_RUNTIME_ERROR,
+    INTERPRET_EXIT  /* io_exit(code) requested termination. */
 } InterpretResult;
 
 #define FRAMES_MAX 64

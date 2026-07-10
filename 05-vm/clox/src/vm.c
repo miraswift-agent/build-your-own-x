@@ -18,6 +18,12 @@
 #include "native.h"
 #include "object.h"
 #include "table.h"
+
+/* Stage 11: io_exit() flags. Defined here (not in main.c) so the
+ * test binaries (which don't link main.c) can find them. main.c
+ * and native.c declare them as extern. */
+int g_exitRequested = 0;
+int g_exitCode = 0;
 #include "value.h"
 #include "vm.h"
 
@@ -221,13 +227,18 @@ static InterpretResult run(void) {
     } while (false)
 
     for (;;) {
+        /* Stage 11: io_exit() sets g_exitRequested from a native; the
+         * VM loop checks it on every tick and bails out cleanly. The
+         * check is at the top (not bottom) so a long native sequence
+         * ends as soon as the next instruction boundary hits. */
+        if (g_exitRequested) return INTERPRET_EXIT;
+
 #if DEBUG_TRACE_EXEC
         printf("          ");
         for (Value *slot = vm.stack; slot < vm.stackTop; slot++) {
             printf("[ ");
             printValue(*slot);
-            printf(" ]");
-        }
+            printf(" ]");        }
         printf("\n");
         disassembleInstruction(&frame->closure->function->chunk,
             (int)(frame->ip - frame->closure->function->chunk.code));
