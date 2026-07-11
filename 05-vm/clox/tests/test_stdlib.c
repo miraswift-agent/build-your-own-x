@@ -2377,6 +2377,100 @@ static void test_array_reverse_wrong_type(void) {
     free(out);
 }
 
+/* --- Stage 20 tests: array_push now returns the new length ---
+ *
+ * Convention refinement: array_push used to return nil, forcing
+ * the user to read the new length via a separate array_length()
+ * call. The new convention is "return the natural value": for
+ * array_push, the natural return value is the new length. This
+ * is consistent with the Stage 19 reverse-style mutator return
+ * pattern (return a useful value, not nil).
+ *
+ * Existing tests that call array_push without using the return
+ * value still pass — the return value is ignored if the call
+ * appears as a statement. */
+
+static void test_array_push_returns_new_length(void) {
+    /* array_push returns the new length, not nil. */
+    int exitCode;
+    char *out = runClox(
+        "var a = [1, 2, 3];\n"
+        "var n = array_push(a, 4);\n"
+        "print(n);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-push-returns-new-length: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "4\n")) {
+        fail("stdlib/array-push-returns-new-length: expected '4' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_push_returns_length_growing(void) {
+    /* Each push returns the new (larger) length. */
+    int exitCode;
+    char *out = runClox(
+        "var a = [];\n"
+        "print(array_push(a, \"a\"));\n"   /* 1 */
+        "print(array_push(a, \"b\"));\n"   /* 2 */
+        "print(array_push(a, \"c\"));\n",  /* 3 */
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-push-returns-length-growing: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "1\n2\n3\n")) {
+        fail("stdlib/array-push-returns-length-growing: expected '1\\n2\\n3\\n' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_push_return_value_is_number(void) {
+    /* The return value is a number, not an array. The user can
+     * do arithmetic on it. */
+    int exitCode;
+    char *out = runClox(
+        "var a = [1, 2, 3];\n"
+        "var n = array_push(a, 4);\n"
+        "print(n + 10);\n"        /* 14, not 4 (which would mean
+                                    * the return was the new element) */
+        "print(n - 3);\n",        /* 1, which is the old length */
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-push-return-value-is-number: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "14\n1\n")) {
+        fail("stdlib/array-push-return-value-is-number: expected '14\\n1\\n' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_push_chained_returns(void) {
+    /* Chained: each push returns the new length, so the next
+     * push can use it. */
+    int exitCode;
+    char *out = runClox(
+        "var a = [];\n"
+        "var n = 0;\n"
+        "n = array_push(a, 1);\n"
+        "n = array_push(a, 2);\n"
+        "n = array_push(a, 3);\n"
+        "print(n);\n"               /* 3 */
+        "print(array_length(a));\n", /* 3, both agree */
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-push-chained-returns: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "3\n3\n")) {
+        fail("stdlib/array-push-chained-returns: expected '3\\n3\\n' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
 int main(void) {
     test_clock_exists();
     test_number_abs();
@@ -2507,6 +2601,12 @@ int main(void) {
     test_array_reverse_twice();
     test_array_reverse_wrong_arg_count();
     test_array_reverse_wrong_type();
+
+    /* Stage 20: array_push returns the new length. */
+    test_array_push_returns_new_length();
+    test_array_push_returns_length_growing();
+    test_array_push_return_value_is_number();
+    test_array_push_chained_returns();
 
     printf("%d passed, %d failed\n", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;

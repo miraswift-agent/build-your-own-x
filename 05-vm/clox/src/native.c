@@ -1068,8 +1068,13 @@ static Value arrayPushNative(int argCount, Value *args) {
         runtimeError("array_push() first argument must be an array.");
         return NIL_VAL;
     }
-    arrayPush(AS_ARRAY(args[0]), args[1]);
-    return NIL_VAL;
+    /* Stage 20: return the new length instead of nil. The
+     * "return the natural value" convention: for a push, the
+     * natural return value is the new length. Existing callers
+     * that ignore the return value are unaffected. */
+    ObjArray *array = AS_ARRAY(args[0]);
+    arrayPush(array, args[1]);
+    return NUMBER_VAL((double)array->count);
 }
 
 /* Stage 19: array_reverse(arr) -> arr
