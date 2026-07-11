@@ -1072,6 +1072,42 @@ static Value arrayPushNative(int argCount, Value *args) {
     return NIL_VAL;
 }
 
+/* Stage 19: array_reverse(arr) -> arr
+ *
+ * Reverses the array in place and returns the same array, so calls
+ * can chain. The return-the-array convention differs from
+ * array_push (which returns nil) because the natural return value
+ * of a reverse is the reversed array, not a void. Users who want
+ * statement-style mutation write `array_reverse(a); print a;` and
+ * ignore the return value. Users who want expression-style
+ * chaining write `print(array_reverse(a));`.
+ *
+ * The reversal is an in-place swap loop: swap elements[i] with
+ * elements[count-1-i] for i in 0..count/2. No allocation, no GC
+ * concern — the elements are Values (8 bytes each on 64-bit),
+ * the swap is just moving two pointers. */
+static Value arrayReverseNative(int argCount, Value *args) {
+    if (argCount != 1) {
+        runtimeError("array_reverse() takes 1 argument (%d given).", argCount);
+        return NIL_VAL;
+    }
+    if (!IS_ARRAY(args[0])) {
+        runtimeError("array_reverse() argument must be an array.");
+        return NIL_VAL;
+    }
+    ObjArray *array = AS_ARRAY(args[0]);
+    int i = 0;
+    int j = array->count - 1;
+    while (i < j) {
+        Value tmp = array->elements[i];
+        array->elements[i] = array->elements[j];
+        array->elements[j] = tmp;
+        i++;
+        j--;
+    }
+    return args[0];
+}
+
 static Value typeofNative(int argCount, Value *args) {
     if (argCount != 1) {
         runtimeError("typeof() takes 1 argument (%d given).", argCount);
@@ -1296,6 +1332,12 @@ void defineNatives(void) {
     name = copyString("array_push", (int)strlen("array_push"));
     push(OBJ_VAL(name));
     tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayPushNative)));
+    pop();
+
+    /* Stage 19: array_reverse. */
+    name = copyString("array_reverse", (int)strlen("array_reverse"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayReverseNative)));
     pop();
 
     /* Stage 7: type predicate. */

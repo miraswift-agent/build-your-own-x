@@ -2163,6 +2163,220 @@ static void test_string_gc_stress(void) {
     free(out);
 }
 
+/* --- Stage 19 tests: array_reverse(arr) -> arr (in place) ---
+ *
+ * array_reverse mutates the input array in place, reversing the
+ * order of its elements, and returns the same array (so calls
+ * can chain). This closes the third of the four language gaps
+ * from Stage 15's composability tests (the hand-rolled reverse
+ * loop). */
+
+static void test_array_reverse_basic(void) {
+    /* [1, 2, 3] reversed is [3, 2, 1]. */
+    int exitCode;
+    char *out = runClox(
+        "var a = [1, 2, 3];\n"
+        "array_reverse(a);\n"
+        "print(a[0]);\n"
+        "print(a[1]);\n"
+        "print(a[2]);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-reverse-basic: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "3\n2\n1\n")) {
+        fail("stdlib/array-reverse-basic: expected '3\\n2\\n1\\n' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_reverse_returns_self(void) {
+    /* The returned value is the same array object. */
+    int exitCode;
+    char *out = runClox(
+        "var a = [10, 20, 30];\n"
+        "var b = array_reverse(a);\n"
+        "print(b == a);\n"
+        "print(b[0]);\n"
+        "print(b[1]);\n"
+        "print(b[2]);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-reverse-returns-self: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "true\n30\n20\n10\n")) {
+        fail("stdlib/array-reverse-returns-self: expected 'true\\n30\\n20\\n10\\n' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_reverse_empty(void) {
+    /* Reversing an empty array is a no-op. Length stays 0. */
+    int exitCode;
+    char *out = runClox(
+        "var a = [];\n"
+        "array_reverse(a);\n"
+        "print(array_length(a));\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-reverse-empty: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "0\n")) {
+        fail("stdlib/array-reverse-empty: expected '0' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_reverse_single(void) {
+    /* Reversing a 1-element array leaves it unchanged. */
+    int exitCode;
+    char *out = runClox(
+        "var a = [42];\n"
+        "array_reverse(a);\n"
+        "print(a[0]);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-reverse-single: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "42\n")) {
+        fail("stdlib/array-reverse-single: expected '42' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_reverse_two(void) {
+    /* [1, 2] -> [2, 1]. The smallest non-trivial case. */
+    int exitCode;
+    char *out = runClox(
+        "var a = [1, 2];\n"
+        "array_reverse(a);\n"
+        "print(a[0]);\n"
+        "print(a[1]);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-reverse-two: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "2\n1\n")) {
+        fail("stdlib/array-reverse-two: expected '2\\n1\\n' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_reverse_even_length(void) {
+    /* [1, 2, 3, 4] -> [4, 3, 2, 1]. Exercises the full swap loop. */
+    int exitCode;
+    char *out = runClox(
+        "var a = [1, 2, 3, 4];\n"
+        "array_reverse(a);\n"
+        "print(a[0]);\n"
+        "print(a[1]);\n"
+        "print(a[2]);\n"
+        "print(a[3]);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-reverse-even: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "4\n3\n2\n1\n")) {
+        fail("stdlib/array-reverse-even: expected '4\\n3\\n2\\n1\\n' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_reverse_strings(void) {
+    /* array_reverse works on arrays of strings, not just numbers. */
+    int exitCode;
+    char *out = runClox(
+        "var a = [\"a\", \"b\", \"c\"];\n"
+        "array_reverse(a);\n"
+        "print(a[0]);\n"
+        "print(a[1]);\n"
+        "print(a[2]);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-reverse-strings: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "c\nb\na\n")) {
+        fail("stdlib/array-reverse-strings: expected 'c\\nb\\na\\n' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_reverse_then_push(void) {
+    /* After reversing, push works as expected. */
+    int exitCode;
+    char *out = runClox(
+        "var a = [1, 2, 3];\n"
+        "array_reverse(a);\n"
+        "array_push(a, 99);\n"
+        "print(a[0]);\n"
+        "print(a[1]);\n"
+        "print(a[2]);\n"
+        "print(a[3]);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-reverse-then-push: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "3\n2\n1\n99\n")) {
+        fail("stdlib/array-reverse-then-push: expected '3\\n2\\n1\\n99\\n' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_reverse_twice(void) {
+    /* Reversing twice returns to the original order. */
+    int exitCode;
+    char *out = runClox(
+        "var a = [1, 2, 3, 4, 5];\n"
+        "array_reverse(a);\n"
+        "array_reverse(a);\n"
+        "print(a[0]);\n"
+        "print(a[1]);\n"
+        "print(a[2]);\n"
+        "print(a[3]);\n"
+        "print(a[4]);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-reverse-twice: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "1\n2\n3\n4\n5\n")) {
+        fail("stdlib/array-reverse-twice: expected '1\\n2\\n3\\n4\\n5\\n' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_reverse_wrong_arg_count(void) {
+    /* array_reverse() with no args is a runtime error. */
+    int exitCode;
+    char *out = runClox("array_reverse();\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-reverse-wrong-args: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_reverse_wrong_type(void) {
+    /* array_reverse("not an array") is a runtime error. */
+    int exitCode;
+    char *out = runClox("array_reverse(\"hello\");\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-reverse-wrong-type: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
 int main(void) {
     test_clock_exists();
     test_number_abs();
@@ -2280,6 +2494,19 @@ int main(void) {
     test_string_wrong_type();
     test_string_concat_pattern();
     test_string_gc_stress();
+
+    /* Stage 19: array_reverse. */
+    test_array_reverse_basic();
+    test_array_reverse_returns_self();
+    test_array_reverse_empty();
+    test_array_reverse_single();
+    test_array_reverse_two();
+    test_array_reverse_even_length();
+    test_array_reverse_strings();
+    test_array_reverse_then_push();
+    test_array_reverse_twice();
+    test_array_reverse_wrong_arg_count();
+    test_array_reverse_wrong_type();
 
     printf("%d passed, %d failed\n", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
