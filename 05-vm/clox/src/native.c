@@ -485,6 +485,159 @@ static Value ioReadLineNative(int argCount, Value *args) {
     return OBJ_VAL(copyString(line, (int)len));
 }
 
+/* --- Stage 14: more I/O natives. The host-boundary lesson from
+ *   Stage 11 still applies: bounded buffers, errors surface at the
+ *   host boundary, the VM loop is unaware of file state. The new
+ *   natives are:
+ *     - io_read_file(path) -> string | nil
+ *     - io_write_file(path, contents) -> nil
+ *     - io_file_exists(path) -> bool
+ *   File I/O errors (file not found, permission denied) surface as
+ *   nil return values for read/exists and silent no-ops for write.
+ *   Arity and type errors are runtime errors (consistent with the
+ *   other natives). */
+
+#include <sys/stat.h>   /* stat, S_ISREG */
+
+/* Upper bound on file size we'll slurp into a clox string. Files
+ * larger than this are not loadable. A real VM would do streaming
+ * I/O for large files, but clox strings are fine for moderate
+ * config-sized reads (logs, JSON, source code). 1 MiB is a
+ * conservative bound for a stage 14 stdlib. */
+#define IO_READ_FILE_MAX_BYTES (1 << 20)
+
+/* io_read_file(path) -> string | nil.
+ * Reads the entire file at `path` into a string. Returns nil on
+ * any I/O error (file not found, permission denied, file too large,
+ * fopen failure, etc). The size cap is enforced via fseek/ftell. */
+static Value ioReadFileNative(int argCount, Value *args) {
+    if (argCount != 1) {
+        runtimeError("io_read_file() takes 1 argument (%d given).", argCount);
+        return NIL_VAL;
+    }
+    if (!IS_STRING(args[0])) {
+        runtimeError("io_read_file() argument must be a string.");
+        return NIL_VAL;
+    }
+    ObjString *path = AS_STRING(args[0]);
+
+    /* fopen wants a NUL-terminated string. Copy from the clox string. */
+    char *pathC = malloc(path->length + 1);
+    if (pathC == NULL) {
+        return NIL_VAL;  /* OOM is its own host-boundary failure */
+    }
+    memcpy(pathC, path->chars, path->length);
+    pathC[path->length] = '\0';
+
+    FILE *f = fopen(pathC, "rb");
+    free(pathC);
+    if (f == NULL) {
+        return NIL_VAL;  /* file not found, permission denied, etc. */
+    }
+
+    /* Measure the file. Reject anything that looks like a special
+     * file (pipe, socket, device) or that exceeds our size cap. */
+    if (fseek(f, 0, SEEK_END) != 0) {
+        fclose(f);
+        return NIL_VAL;
+    }
+    long size = ftell(f);
+    if (size < 0 || size > IO_READ_FILE_MAX_BYTES) {
+        fclose(f);
+        return NIL_VAL;
+    }
+    rewind(f);
+
+    /* Slurp the file into a stack buffer if it fits, else malloc.
+     * For clox stdlib purposes, the file is small enough to slurp. */
+    char stackBuf[8192];
+    char *buf = (size <= (long)sizeof(stackBuf)) ? stackBuf : malloc((size_t)size);
+    if (buf == NULL) {
+        fclose(f);
+        return NIL_VAL;
+    }
+
+    size_t n = fread(buf, 1, (size_t)size, f);
+    fclose(f);
+    if (n != (size_t)size) {
+        if (buf != stackBuf) free(buf);
+        return NIL_VAL;
+    }
+
+    /* copyString copies the bytes into a clox ObjString. We free our
+     * temporary buffer after the copy is in the heap. */
+    Value result = OBJ_VAL(copyString(buf, (int)n));
+    if (buf != stackBuf) free(buf);
+    return result;
+}
+
+/* io_write_file(path, contents) -> nil.
+ * Writes `contents` to `path`, overwriting if it exists. Returns nil
+ * on success. Returns nil on I/O failure (silent — consistent with
+ * io_read_file's "nil on error" convention). The arity/type errors
+ * are runtime errors. */
+static Value ioWriteFileNative(int argCount, Value *args) {
+    if (argCount != 2) {
+        runtimeError("io_write_file() takes 2 arguments (%d given).", argCount);
+        return NIL_VAL;
+    }
+    if (!IS_STRING(args[0]) || !IS_STRING(args[1])) {
+        runtimeError("io_write_file() arguments must be (string, string).");
+        return NIL_VAL;
+    }
+    ObjString *path     = AS_STRING(args[0]);
+    ObjString *contents = AS_STRING(args[1]);
+
+    char *pathC = malloc(path->length + 1);
+    if (pathC == NULL) return NIL_VAL;
+    memcpy(pathC, path->chars, path->length);
+    pathC[path->length] = '\0';
+
+    FILE *f = fopen(pathC, "wb");
+    free(pathC);
+    if (f == NULL) {
+        return NIL_VAL;  /* permission denied, invalid path, etc. */
+    }
+
+    size_t written = fwrite(contents->chars, 1, contents->length, f);
+    fclose(f);
+    if (written != (size_t)contents->length) {
+        return NIL_VAL;  /* disk full, etc. */
+    }
+    return NIL_VAL;
+}
+
+/* io_file_exists(path) -> bool.
+ * Returns true if a regular file exists at `path`, false otherwise.
+ * Uses stat() which works on the symlink target (consistent with
+ * what users expect from a "does this file exist" check). */
+static Value ioFileExistsNative(int argCount, Value *args) {
+    if (argCount != 1) {
+        runtimeError("io_file_exists() takes 1 argument (%d given).", argCount);
+        return NIL_VAL;
+    }
+    if (!IS_STRING(args[0])) {
+        runtimeError("io_file_exists() argument must be a string.");
+        return NIL_VAL;
+    }
+    ObjString *path = AS_STRING(args[0]);
+
+    char *pathC = malloc(path->length + 1);
+    if (pathC == NULL) return BOOL_VAL(false);  /* OOM -> "doesn't exist" */
+    memcpy(pathC, path->chars, path->length);
+    pathC[path->length] = '\0';
+
+    struct stat st;
+    int result = stat(pathC, &st);
+    free(pathC);
+    if (result != 0) {
+        return BOOL_VAL(false);  /* file doesn't exist or unreachable */
+    }
+    /* Only return true for regular files. A directory or device
+     * at `path` is not "a file" for this check. */
+    return BOOL_VAL(S_ISREG(st.st_mode));
+}
+
 /* --- Stage 12a: array value type via natives. The value type
  *   (ObjArray) is in object.h; the GC mark/sweep is in gc.c. The
  *   natives below are the only way a Lox program can create or
@@ -873,6 +1026,22 @@ void defineNatives(void) {
     name = copyString("io_read_line", (int)strlen("io_read_line"));
     push(OBJ_VAL(name));
     tableSet(&vm.globals, name, OBJ_VAL(newNative(ioReadLineNative)));
+    pop();
+
+    /* Stage 14: more file I/O natives. */
+    name = copyString("io_read_file", (int)strlen("io_read_file"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(ioReadFileNative)));
+    pop();
+
+    name = copyString("io_write_file", (int)strlen("io_write_file"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(ioWriteFileNative)));
+    pop();
+
+    name = copyString("io_file_exists", (int)strlen("io_file_exists"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(ioFileExistsNative)));
     pop();
 
     /* Stage 12a: array value type via natives. */

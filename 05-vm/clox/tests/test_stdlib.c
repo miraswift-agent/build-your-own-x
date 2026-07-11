@@ -1255,6 +1255,375 @@ static void test_string_join_non_string_element(void) {
     free(out);
 }
 
+/* --- Stage 14 tests: io_read_file / io_write_file / io_file_exists ---
+ *
+ * The file I/O tests use fixed paths under /tmp and clean up after
+ * themselves. Each test creates a unique file, runs the operation,
+ * and removes the file. This avoids interference between tests if
+ * they ever run in parallel and avoids leaving junk in /tmp.
+ *
+ * The `runCloxWithStdin`-style helper isn't needed because file I/O
+ * tests don't pipe stdin — they use the file system directly. The
+ * existing `runClox` helper (which captures stdout+stderr via popen)
+ * is sufficient.
+ *
+ * The /tmp paths use PID to keep tests independent. */
+
+#include <unistd.h>   /* unlink, getpid */
+#include <sys/stat.h> /* stat */
+
+/* Helper: write `content` to `path`. Returns 0 on success, -1 on failure. */
+static int writeFileToDisk(const char *path, const char *content) {
+    FILE *f = fopen(path, "wb");
+    if (f == NULL) return -1;
+    size_t len = strlen(content);
+    size_t written = fwrite(content, 1, len, f);
+    fclose(f);
+    return (written == len) ? 0 : -1;
+}
+
+/* Helper: build a unique /tmp path for a test. */
+static void buildTmpPath(char *buf, size_t bufsz, const char *suffix) {
+    snprintf(buf, bufsz, "/tmp/clox_s14_%d_%s", (int)getpid(), suffix);
+}
+
+/* --- io_read_file tests --- */
+
+static void test_io_read_file_basic(void) {
+    /* Read a known file. Write it first, then read it via clox. */
+    char path[256];
+    buildTmpPath(path, sizeof(path), "read_basic.txt");
+    const char *expected = "hello, file system\nline 2\n";
+    if (writeFileToDisk(path, expected) != 0) {
+        fail("stdlib/io-read-file-basic: could not seed test file");
+        return;
+    }
+    char script[1024];
+    snprintf(script, sizeof(script),
+        "var contents = io_read_file(\"%s\");\n"
+        "if (contents == nil) {\n"
+        "  print \"read returned nil\";\n"
+        "} else {\n"
+        "  print contents;\n"
+        "}\n",
+        path);
+    int exitCode;
+    char *out = runClox(script, &exitCode);
+
+    if (exitCode != 0) {
+        fail("stdlib/io-read-file-basic: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "hello, file system") || !contains(out, "line 2")) {
+        fail("stdlib/io-read-file-basic: expected file contents in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+    unlink(path);
+}
+
+static void test_io_read_file_nonexistent(void) {
+    /* Read a file that doesn't exist -> returns nil. */
+    int exitCode;
+    char *out = runClox(
+        "var contents = io_read_file(\"/tmp/clox_s14_does_not_exist_xyz_12345.txt\");\n"
+        "if (contents == nil) {\n"
+        "  print \"ok\";\n"
+        "} else {\n"
+        "  print \"unexpectedly read a file\";\n"
+        "}\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/io-read-file-nonexistent: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "ok\n")) {
+        fail("stdlib/io-read-file-nonexistent: expected 'ok' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_io_read_file_empty(void) {
+    /* Read an existing but empty file -> returns "" (empty string), not nil. */
+    char path[256];
+    buildTmpPath(path, sizeof(path), "read_empty.txt");
+    if (writeFileToDisk(path, "") != 0) {
+        fail("stdlib/io-read-file-empty: could not seed test file");
+        return;
+    }
+    char script[1024];
+    snprintf(script, sizeof(script),
+        "var contents = io_read_file(\"%s\");\n"
+        "if (contents == nil) {\n"
+        "  print \"unexpectedly nil\";\n"
+        "} else if (contents == \"\") {\n"
+        "  print \"empty\";\n"
+        "} else {\n"
+        "  print \"unexpectedly non-empty\";\n"
+        "}\n",
+        path);
+    int exitCode;
+    char *out = runClox(script, &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/io-read-file-empty: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "empty\n")) {
+        fail("stdlib/io-read-file-empty: expected 'empty' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+    unlink(path);
+}
+
+static void test_io_read_file_wrong_args(void) {
+    /* Arity error. */
+    int exitCode;
+    char *out = runClox("io_read_file();\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/io-read-file-wrong-args: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_io_read_file_wrong_type(void) {
+    /* Type error: path must be string. */
+    int exitCode;
+    char *out = runClox("io_read_file(42);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/io-read-file-wrong-type: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+/* --- io_write_file tests --- */
+
+static void test_io_write_file_new(void) {
+    /* Write to a new file, then read it back to verify contents. */
+    char path[256];
+    buildTmpPath(path, sizeof(path), "write_new.txt");
+    unlink(path);  /* ensure it doesn't exist */
+
+    char script[1024];
+    snprintf(script, sizeof(script),
+        "io_write_file(\"%s\", \"written by clox\\nsecond line\\n\");\n",
+        path);
+    int exitCode;
+    char *out = runClox(script, &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/io-write-file-new: write phase expected exit 0, got %d (output: %s)", exitCode, out);
+        free(out);
+        unlink(path);
+        return;
+    }
+    free(out);
+
+    /* Now verify the file exists and has the right contents via clox itself. */
+    char verify[1024];
+    snprintf(verify, sizeof(verify),
+        "if (io_file_exists(\"%s\")) {\n"
+        "  var c = io_read_file(\"%s\");\n"
+        "  print c;\n"
+        "} else {\n"
+        "  print \"file was not created\";\n"
+        "}\n",
+        path, path);
+    out = runClox(verify, &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/io-write-file-new: verify phase expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "written by clox") || !contains(out, "second line")) {
+        fail("stdlib/io-write-file-new: expected written contents in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+    unlink(path);
+}
+
+static void test_io_write_file_overwrite(void) {
+    /* Pre-seed a file with old contents, write new contents, verify overwrite. */
+    char path[256];
+    buildTmpPath(path, sizeof(path), "write_overwrite.txt");
+    if (writeFileToDisk(path, "OLD OLD OLD") != 0) {
+        fail("stdlib/io-write-file-overwrite: could not seed test file");
+        return;
+    }
+    char script[1024];
+    snprintf(script, sizeof(script),
+        "io_write_file(\"%s\", \"NEW\");\n"
+        "print(io_read_file(\"%s\"));\n",
+        path, path);
+    int exitCode;
+    char *out = runClox(script, &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/io-write-file-overwrite: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "NEW\n") || contains(out, "OLD")) {
+        fail("stdlib/io-write-file-overwrite: expected NEW without OLD, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+    unlink(path);
+}
+
+static void test_io_write_file_empty(void) {
+    /* Writing empty contents is allowed and creates an empty file. */
+    char path[256];
+    buildTmpPath(path, sizeof(path), "write_empty.txt");
+    unlink(path);
+    char script[1024];
+    snprintf(script, sizeof(script),
+        "io_write_file(\"%s\", \"\");\n"
+        "if (io_file_exists(\"%s\")) {\n"
+        "  print \"exists\";\n"
+        "} else {\n"
+        "  print \"missing\";\n"
+        "}\n",
+        path, path);
+    int exitCode;
+    char *out = runClox(script, &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/io-write-file-empty: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "exists\n")) {
+        fail("stdlib/io-write-file-empty: expected file to exist, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+    unlink(path);
+}
+
+static void test_io_write_file_wrong_args(void) {
+    /* Arity error. */
+    int exitCode;
+    char *out = runClox("io_write_file(\"/tmp/x\");\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/io-write-file-wrong-args: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_io_write_file_wrong_type(void) {
+    /* Type error: path must be string, contents must be string. */
+    int exitCode;
+    char *out = runClox("io_write_file(42, \"data\");\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/io-write-file-wrong-type-path: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+/* --- io_file_exists tests --- */
+
+static void test_io_file_exists_true(void) {
+    /* Pre-seed a file, then check. */
+    char path[256];
+    buildTmpPath(path, sizeof(path), "exists_true.txt");
+    if (writeFileToDisk(path, "x") != 0) {
+        fail("stdlib/io-file-exists-true: could not seed test file");
+        return;
+    }
+    char script[1024];
+    snprintf(script, sizeof(script),
+        "print(io_file_exists(\"%s\"));\n",
+        path);
+    int exitCode;
+    char *out = runClox(script, &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/io-file-exists-true: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "true\n")) {
+        fail("stdlib/io-file-exists-true: expected 'true' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+    unlink(path);
+}
+
+static void test_io_file_exists_false(void) {
+    /* Check a non-existent file. */
+    int exitCode;
+    char *out = runClox(
+        "print(io_file_exists(\"/tmp/clox_s14_does_not_exist_xyz_67890.txt\"));\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/io-file-exists-false: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "false\n")) {
+        fail("stdlib/io-file-exists-false: expected 'false' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_io_file_exists_wrong_args(void) {
+    /* Arity error. */
+    int exitCode;
+    char *out = runClox("io_file_exists();\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/io-file-exists-wrong-args: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_io_file_exists_wrong_type(void) {
+    /* Type error: path must be string. */
+    int exitCode;
+    char *out = runClox("io_file_exists(42);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/io-file-exists-wrong-type: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+/* --- GC stress test for file I/O --- */
+
+static void test_io_file_gc_stress(void) {
+    /* 200 iterations of write+read+exists on a single file. Each
+     * iteration allocates a string from io_read_file. Valgrind must
+     * verify all allocs balance. */
+    char path[256];
+    buildTmpPath(path, sizeof(path), "gc_stress.txt");
+    unlink(path);
+
+    char script[4096];
+    snprintf(script, sizeof(script),
+        "var path = \"%s\";\n"
+        "var sink = [];\n"
+        "var i = 0;\n"
+        "while (i < 200) {\n"
+        "  io_write_file(path, \"stress test content\");\n"
+        "  var contents = io_read_file(path);\n"
+        "  array_push(sink, contents);\n"
+        "  i = i + 1;\n"
+        "}\n"
+        "print(array_length(sink));\n"
+        "print(sink[0]);\n",
+        path);
+
+    int exitCode;
+    char *out = runClox(script, &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/io-file-gc-stress: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "200\n") || !contains(out, "stress test content\n")) {
+        fail("stdlib/io-file-gc-stress: expected 200 and stress content in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+    unlink(path);
+}
+
 int main(void) {
     test_clock_exists();
     test_number_abs();
@@ -1328,6 +1697,22 @@ int main(void) {
     test_string_split_wrong_type();
     test_string_join_wrong_type();
     test_string_join_non_string_element();
+    /* Stage 14: more file I/O natives. */
+    test_io_read_file_basic();
+    test_io_read_file_nonexistent();
+    test_io_read_file_empty();
+    test_io_read_file_wrong_args();
+    test_io_read_file_wrong_type();
+    test_io_write_file_new();
+    test_io_write_file_overwrite();
+    test_io_write_file_empty();
+    test_io_write_file_wrong_args();
+    test_io_write_file_wrong_type();
+    test_io_file_exists_true();
+    test_io_file_exists_false();
+    test_io_file_exists_wrong_args();
+    test_io_file_exists_wrong_type();
+    test_io_file_gc_stress();
 
     printf("%d passed, %d failed\n", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
