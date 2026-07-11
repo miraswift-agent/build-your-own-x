@@ -1,0 +1,35 @@
+// reverse-lines.lox — read a file, reverse the order of its lines,
+// write the result. Demonstrates: io_read_file, io_write_file,
+// string_split, indexed access, array_push, string_join.
+//
+// Note: clox's scanner does NOT process backslash escape sequences
+// in string literals, so "\n" in source code is the 2-char string
+// backslash-n, not a newline. We construct the newline delimiter
+// at runtime via a string that contains a real newline.
+
+var input = "lines-input.txt";
+var output = "lines-output.txt";
+
+if (!io_file_exists(input)) {
+    io_eprint("reverse-lines: missing " + input + "
+");
+    io_exit(1);
+}
+
+var text = io_read_file(input);
+// Use a string that contains a real newline as the split delimiter.
+var newline = "
+";
+var lines = string_split(text, newline);
+var n = array_length(lines);
+
+var reversed = [];
+var i = 0;
+while (i < n) {
+    array_push(reversed, lines[n - 1 - i]);
+    i = i + 1;
+}
+
+io_write_file(output, string_join(reversed, newline));
+print("Wrote lines in reverse order");
+print(n);

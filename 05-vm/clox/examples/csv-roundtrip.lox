@@ -1,0 +1,27 @@
+// csv-roundtrip.lox — read a CSV, uppercase each field, write back
+// Demonstrates: io_read_file, io_write_file, string_split,
+// string_upper, string_join, indexed array assignment — the full
+// "transform a file end-to-end" pattern.
+
+var input = "csv-input.txt";
+var output = "csv-output.txt";
+
+if (!io_file_exists(input)) {
+    io_eprint("csv-roundtrip: missing " + input + "
+");
+    io_exit(1);
+}
+
+var csv = io_read_file(input);
+var fields = string_split(csv, ",");
+
+var i = 0;
+var n = array_length(fields);
+while (i < n) {
+    fields[i] = string_upper(fields[i]);
+    i = i + 1;
+}
+
+var result = string_join(fields, ",");
+io_write_file(output, result);
+print(result);

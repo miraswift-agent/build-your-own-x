@@ -1,0 +1,16 @@
+// wordcount.lox — count words in a file
+// Demonstrates: io_read_file, string_split, array_length, the "build
+// a small program from primitives" pattern.
+
+var path = "wordcount-input.txt";
+
+// Check the file exists before reading.
+if (!io_file_exists(path)) {
+    io_eprint("Usage: ./bin/clox wordcount.lox (with wordcount-input.txt in CWD)
+");
+    io_exit(1);
+}
+
+var contents = io_read_file(path);
+var words = string_split(contents, " ");
+print(array_length(words));
