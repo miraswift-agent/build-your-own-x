@@ -1024,6 +1024,237 @@ static void test_array_index_write_on_non_array(void) {
     free(out);
 }
 
+/* --- Stage 13 tests: string_split / string_join --- */
+
+static void test_string_split_basic(void) {
+    /* string_split("a,b,c", ",") -> ["a", "b", "c"] */
+    int exitCode;
+    char* out = runClox(
+        "var parts = string_split(\"a,b,c\", \",\");\n"
+        "print(parts[0]); print(parts[1]); print(parts[2]);\n"
+        "print(array_length(parts));\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/string-split-basic: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "a\n") || !contains(out, "b\n") || !contains(out, "c\n") ||
+               !contains(out, "3\n")) {
+        fail("stdlib/string-split-basic: expected a, b, c, 3 in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_split_empty_delim(void) {
+    /* string_split("hello", "") -> ["hello"] (single element). */
+    int exitCode;
+    char* out = runClox(
+        "var parts = string_split(\"hello\", \"\");\n"
+        "print(array_length(parts));\n"
+        "print(parts[0]);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/string-split-empty-delim: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "1\n") || !contains(out, "hello\n")) {
+        fail("stdlib/string-split-empty-delim: expected 1, hello in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_split_empty_string(void) {
+    /* string_split("", ",") -> [] (empty array). */
+    int exitCode;
+    char* out = runClox(
+        "var parts = string_split(\"\", \",\");\n"
+        "print(array_length(parts));\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/string-split-empty-string: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "0\n")) {
+        fail("stdlib/string-split-empty-string: expected 0 in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_split_no_match(void) {
+    /* string_split("hello", ",") -> ["hello"] (no occurrences of delim). */
+    int exitCode;
+    char* out = runClox(
+        "var parts = string_split(\"hello\", \",\");\n"
+        "print(array_length(parts));\n"
+        "print(parts[0]);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/string-split-no-match: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "1\n") || !contains(out, "hello\n")) {
+        fail("stdlib/string-split-no-match: expected 1, hello in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_split_multi_char(void) {
+    /* string_split("a::b::c", "::") -> ["a", "b", "c"] (multi-char delim). */
+    int exitCode;
+    char* out = runClox(
+        "var parts = string_split(\"a::b::c\", \"::\");\n"
+        "print(array_length(parts));\n"
+        "print(parts[0]); print(parts[1]); print(parts[2]);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/string-split-multi-char: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "3\n") || !contains(out, "a\n") ||
+               !contains(out, "b\n") || !contains(out, "c\n")) {
+        fail("stdlib/string-split-multi-char: expected 3, a, b, c in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_join_basic(void) {
+    /* string_join(["a", "b", "c"], ",") -> "a,b,c" */
+    int exitCode;
+    char* out = runClox(
+        "var s = string_join([\"a\", \"b\", \"c\"], \",\");\n"
+        "print(s);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/string-join-basic: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "a,b,c\n")) {
+        fail("stdlib/string-join-basic: expected 'a,b,c' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_join_empty_array(void) {
+    /* string_join([], ",") -> "" */
+    int exitCode;
+    char* out = runClox(
+        "var s = string_join([], \",\");\n"
+        "print(string_length(s));\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/string-join-empty-array: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "0\n")) {
+        fail("stdlib/string-join-empty-array: expected 0 in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_join_single_element(void) {
+    /* string_join(["only"], ",") -> "only" (no delim used). */
+    int exitCode;
+    char* out = runClox(
+        "var s = string_join([\"only\"], \",\");\n"
+        "print(s);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/string-join-single: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "only\n")) {
+        fail("stdlib/string-join-single: expected 'only' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_split_join_round_trip(void) {
+    /* string_join(string_split(s, ","), ",") == s. */
+    int exitCode;
+    char* out = runClox(
+        "var original = \"one,two,three,four\";\n"
+        "var parts = string_split(original, \",\");\n"
+        "var rejoined = string_join(parts, \",\");\n"
+        "print(rejoined);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/string-split-join-roundtrip: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "one,two,three,four\n")) {
+        fail("stdlib/string-split-join-roundtrip: expected 'one,two,three,four' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_split_gc_stress(void) {
+    /* GC stress: 200 iterations of split+join+push. Each iteration
+     * creates an array of substrings and a joined string. The pieces
+     * are pushed into a growing array (which forces collection) and
+     * the iteration variable is reassigned. All allocs must balance
+     * with frees; valgrind verifies. */
+    int exitCode;
+    char* out = runClox(
+        "var s = \"alpha,beta,gamma,delta,epsilon,zeta,eta,theta\";\n"
+        "var sink = [];\n"
+        "var i = 0;\n"
+        "while (i < 200) {\n"
+        "    var parts = string_split(s, \",\");\n"
+        "    var joined = string_join(parts, \",\");\n"
+        "    array_push(sink, joined);\n"
+        "    i = i + 1;\n"
+        "}\n"
+        "print(array_length(sink));\n"
+        "print(sink[0]);\n"
+        "print(sink[199]);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/string-split-gc-stress: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "200\n") ||
+               !contains(out, "alpha,beta,gamma,delta,epsilon,zeta,eta,theta\n")) {
+        fail("stdlib/string-split-gc-stress: expected 200 and the round-trip string in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_split_wrong_type(void) {
+    /* string_split(42, ",") is a runtime error. */
+    int exitCode;
+    char* out = runClox("string_split(42, \",\");\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/string-split-wrong-type: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_join_wrong_type(void) {
+    /* string_join(42, ",") is a runtime error: first arg must be array. */
+    int exitCode;
+    char* out = runClox("string_join(42, \",\");\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/string-join-wrong-type: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_join_non_string_element(void) {
+    /* string_join(["a", 42, "c"], ",") is a runtime error. */
+    int exitCode;
+    char* out = runClox("string_join([\"a\", 42, \"c\"], \",\");\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/string-join-non-string-element: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
 int main(void) {
     test_clock_exists();
     test_number_abs();
@@ -1083,6 +1314,20 @@ int main(void) {
     test_array_index_write_then_read();
     test_array_index_write_oob();
     test_array_index_write_on_non_array();
+    /* Stage 13: string_split / string_join. */
+    test_string_split_basic();
+    test_string_split_empty_delim();
+    test_string_split_empty_string();
+    test_string_split_no_match();
+    test_string_split_multi_char();
+    test_string_join_basic();
+    test_string_join_empty_array();
+    test_string_join_single_element();
+    test_string_split_join_round_trip();
+    test_string_split_gc_stress();
+    test_string_split_wrong_type();
+    test_string_join_wrong_type();
+    test_string_join_non_string_element();
 
     printf("%d passed, %d failed\n", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
