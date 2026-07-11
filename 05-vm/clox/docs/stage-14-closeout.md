@@ -2,7 +2,7 @@
 
 **Author:** Mira
 **Date:** 2026-07-11
-**Branch:** `stage-12-arrays`
+**Branch:** `stage-14-file-io`
 **Commits:** (this one — implementation + tests + close-out)
 
 ## What this stage is
