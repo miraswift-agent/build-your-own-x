@@ -1996,6 +1996,173 @@ static void test_io_lines_gc_stress(void) {
     unlink(path);
 }
 
+/* --- Stage 17 tests: string(n) for number-to-string conversion.
+ *
+ * The new native closes the "user cannot print a number in a
+ * sentence" gap from Stage 15's composability tests. The contract:
+ *   string(n) -> string, where n is a number.
+ *   - Integers: "42", "0", "-7"
+ *   - Floats: round-trip representation, no trailing zeros
+ *     ("3.14", not "3.140000")
+ *   - 5.0 -> "5" (integer-valued floats drop the decimal)
+ *   - Wrong arity / wrong type: runtime error.
+ *
+ * Format spec: we use "%.14g" which is the round-trip-precision
+ * format for double-precision floats (it produces the shortest
+ * string that round-trips back to the same double). */
+
+static void test_string_int_positive(void) {
+    int exitCode;
+    char *out = runClox("print string(42);\n", &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/string-int-positive: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "42\n")) {
+        fail("stdlib/string-int-positive: expected '42' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_int_zero(void) {
+    int exitCode;
+    char *out = runClox("print string(0);\n", &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/string-int-zero: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "0\n")) {
+        fail("stdlib/string-int-zero: expected '0' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_int_negative(void) {
+    int exitCode;
+    char *out = runClox("print string(-7);\n", &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/string-int-negative: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "-7\n")) {
+        fail("stdlib/string-int-negative: expected '-7' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_float(void) {
+    /* 3.14 -> "3.14". %.14g produces the shortest round-trip
+     * representation, which for 3.14 is "3.14" (not "3.140000"
+     * or "3.1399999999999999"). */
+    int exitCode;
+    char *out = runClox("print string(3.14);\n", &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/string-float: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "3.14\n")) {
+        fail("stdlib/string-float: expected '3.14' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_float_integer_valued(void) {
+    /* 5.0 -> "5", not "5.0" or "5.000000". %.14g drops trailing
+     * zeros after the decimal point. */
+    int exitCode;
+    char *out = runClox("print string(5.0);\n", &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/string-float-integer-valued: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "5\n")) {
+        fail("stdlib/string-float-integer-valued: expected '5' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_wrong_args(void) {
+    /* 0 args: arity error. */
+    int exitCode;
+    char *out = runClox("string();\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/string-wrong-args-zero: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+
+    /* 2 args: arity error. */
+    exitCode = -1;
+    out = runClox("string(1, 2);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/string-wrong-args-two: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_wrong_type(void) {
+    /* String argument is a runtime error. */
+    int exitCode;
+    char *out = runClox("string(\"hello\");\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/string-wrong-type: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_concat_pattern(void) {
+    /* The whole point of Stage 17: print a number in a sentence.
+     * Before Stage 17 this required separate print calls; now it's
+     * a single concatenation. */
+    int exitCode;
+    char *out = runClox(
+        "var age = 42;\n"
+        "var pi = 3.14;\n"
+        "print(\"I am \" + string(age) + \" years old\");\n"
+        "print(\"Pi is roughly \" + string(pi));\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/string-concat-pattern: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "I am 42 years old\n") || !contains(out, "Pi is roughly 3.14\n")) {
+        fail("stdlib/string-concat-pattern: expected 'I am 42 years old' and 'Pi is roughly 3.14' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_gc_stress(void) {
+    /* 1000 calls to string(i) for i in 0..1000. Each call allocates
+     * a fresh ObjString. Valgrind must verify all allocs balance. */
+    int exitCode;
+    char *out = runClox(
+        "var sink = [];\n"
+        "var i = 0;\n"
+        "while (i < 1000) {\n"
+        "  array_push(sink, string(i));\n"
+        "  i = i + 1;\n"
+        "}\n"
+        "print(array_length(sink));\n"
+        "print(sink[0]);\n"
+        "print(sink[999]);\n"
+        "print(sink[500]);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/string-gc-stress: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "1000\n") || !contains(out, "0\n") ||
+               !contains(out, "999\n") || !contains(out, "500\n")) {
+        fail("stdlib/string-gc-stress: expected 1000, 0, 999, 500 in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
 int main(void) {
     test_clock_exists();
     test_number_abs();
@@ -2102,6 +2269,17 @@ int main(void) {
     test_io_write_lines_wrong_type();
     test_io_read_write_lines_round_trip();
     test_io_lines_gc_stress();
+
+    /* Stage 17: number-to-string conversion. */
+    test_string_int_positive();
+    test_string_int_zero();
+    test_string_int_negative();
+    test_string_float();
+    test_string_float_integer_valued();
+    test_string_wrong_args();
+    test_string_wrong_type();
+    test_string_concat_pattern();
+    test_string_gc_stress();
 
     printf("%d passed, %d failed\n", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;

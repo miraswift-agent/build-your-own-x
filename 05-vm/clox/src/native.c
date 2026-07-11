@@ -94,6 +94,40 @@ static Value stringLengthNative(int argCount, Value *args) {
     return NUMBER_VAL((double)s->length);
 }
 
+/* string(n) -> string. Convert a number to its string representation.
+ *
+ * The "round-trip" format: "%.14g" produces the shortest string that
+ * parses back to the same double. So 3.14 -> "3.14" (not "3.140000"
+ * or "3.1399999999999999"), 5.0 -> "5" (not "5.0"), and integers
+ * stay integers. 42 -> "42", -7 -> "-7", 0 -> "0".
+ *
+ * Why this matters: clox's + operator requires matching types
+ * (string+string or number+number), and there is no implicit
+ * number-to-string conversion. Before this native, the only way
+ * to print a number in a sentence was a separate `print(n)` call.
+ * Now you can do `print "I am " + string(age) + " years old"`. */
+static Value stringFromNumberNative(int argCount, Value *args) {
+    if (argCount != 1) {
+        runtimeError("string() takes 1 argument (%d given).", argCount);
+        return NIL_VAL;
+    }
+    if (!IS_NUMBER(args[0])) {
+        runtimeError("string() argument must be a number.");
+        return NIL_VAL;
+    }
+    /* snprintf with %.14g gives the shortest round-trip
+     * representation for double-precision floats. The 32-byte
+     * buffer is enough for any double: the longest %g output
+     * for a double is 24 characters (sign, 17 digits, decimal
+     * point, e+xxx with sign), well within 32. */
+    char buf[32];
+    int n = snprintf(buf, sizeof(buf), "%.14g", AS_NUMBER(args[0]));
+    if (n < 0) return NIL_VAL;
+    /* copyString will intern the result so repeated calls with
+     * the same input return the same ObjString pointer. */
+    return OBJ_VAL(copyString(buf, n));
+}
+
 static Value stringUpperNative(int argCount, Value *args) {
     if (argCount != 1) {
         runtimeError("string_upper() takes 1 argument (%d given).", argCount);
@@ -1097,6 +1131,12 @@ void defineNatives(void) {
     name = copyString("string_length", (int)strlen("string_length"));
     push(OBJ_VAL(name));
     tableSet(&vm.globals, name, OBJ_VAL(newNative(stringLengthNative)));
+    pop();
+
+    /* Stage 17: number-to-string conversion. */
+    name = copyString("string", (int)strlen("string"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(stringFromNumberNative)));
     pop();
 
     name = copyString("string_upper", (int)strlen("string_upper"));

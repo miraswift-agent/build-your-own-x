@@ -1,0 +1,14 @@
+// age-greeting.lox — print a number in a sentence, the
+// Stage 17 closing-the-gap example. Demonstrates: string(n),
+// string concatenation, the "I am 42 years old" pattern that
+// was previously impossible in clox.
+
+var name = "Mira";
+var age = 42;
+var pi = 3.14;
+var n_cats = 0;
+
+print("Hello, my name is " + name);
+print("I am " + string(age) + " years old");
+print("Pi is roughly " + string(pi));
+print("I have " + string(n_cats) + " cats");
