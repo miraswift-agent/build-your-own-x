@@ -422,6 +422,40 @@ static InterpretResult run(void) {
                 closeUpvalues(vm.stackTop - 1);
                 pop();
                 break;
+            case OP_INDEX_SET: {
+                /* Stage 12b-iii: write a[i] = v. Stack: ..., array, index, value.
+                 * Pop the value (top), pop the index, peek the array,
+                 * validate it's an OBJ_ARRAY, bounds-check, then
+                 * arrayWrite(). No push: assignment is a statement,
+                 * not an expression. */
+                Value value = pop();
+                Value indexValue = pop();
+                if (!IS_NUMBER(indexValue)) {
+                    runtimeError("Array index must be a number.");
+                    return INTERPRET_RUNTIME_ERROR;
+                }
+                int index = (int)AS_NUMBER(indexValue);
+                Value arrayValue = peek(0);
+                if (!IS_ARRAY(arrayValue)) {
+                    runtimeError("Only arrays can be indexed.");
+                    return INTERPRET_RUNTIME_ERROR;
+                }
+                ObjArray *array = AS_ARRAY(arrayValue);
+                if (index < 0 || index >= array->count) {
+                    runtimeError("Array index %d out of bounds (length %d).",
+                                 index, array->count);
+                    return INTERPRET_RUNTIME_ERROR;
+                }
+                arrayWrite(array, index, value);
+                /* Pop the array, push the value back as the
+                 * expression result, so that the assignment
+                 * expression itself has a value. Same pattern as
+                 * OP_SET_LOCAL/OP_SET_GLOBAL: leave the assigned
+                 * value on the stack. */
+                pop();  /* the array */
+                push(value);
+                break;
+            }
             case OP_INDEX_GET: {
                 /* Stage 12b-ii: read array[i]. Stack: ..., array, index.
                  * Pop the index (top), validate it's a number, then peek

@@ -925,6 +925,105 @@ static void test_array_index_on_non_array(void) {
     free(out);
 }
 
+/* --- Stage 12b-iii tests: a[i] = v index write --- */
+
+static void test_array_index_write(void) {
+    /* a[i] = v assigns the v-th element. */
+    int exitCode;
+    char* out = runClox(
+        "var a = [1, 2, 3];\n"
+        "a[0] = 99;\n"
+        "a[2] = 77;\n"
+        "print a[0];\n"  /* 99 */
+        "print a[1];\n"  /* 2 */
+        "print a[2];\n", /* 77 */
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-index-write: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "99\n") || !contains(out, "2\n") || !contains(out, "77\n")) {
+        fail("stdlib/array-index-write: expected 99, 2, 77 in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_index_write_expression(void) {
+    /* Right side of = is a full expression. */
+    int exitCode;
+    char* out = runClox(
+        "var a = [1, 2, 3, 4, 5];\n"
+        "var i = 1;\n"
+        "a[i] = 100;\n"
+        "a[i + 1] = 200;\n"
+        "a[2 * 2] = 300;\n"
+        "print a[0];\n"  /* 1 */
+        "print a[1];\n"  /* 100 */
+        "print a[2];\n"  /* 200 */
+        "print a[3];\n"  /* 4 */
+        "print a[4];\n", /* 300 */
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-index-write-expr: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "1\n") || !contains(out, "100\n") ||
+               !contains(out, "200\n") || !contains(out, "4\n") ||
+               !contains(out, "300\n")) {
+        fail("stdlib/array-index-write-expr: expected 1, 100, 200, 4, 300 in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_index_write_then_read(void) {
+    /* Chained write then read: a[0] = a[1]. */
+    int exitCode;
+    char* out = runClox(
+        "var a = [1, 2, 3];\n"
+        "a[0] = a[1];\n"
+        "print a[0];\n"  /* 2 */
+        "print a[1];\n"  /* 2 */
+        "print a[2];\n", /* 3 */
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-index-write-then-read: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "2\n") || !contains(out, "3\n")) {
+        fail("stdlib/array-index-write-then-read: expected 2, 2, 3 in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_index_write_oob(void) {
+    /* a[5] = v on a 3-element array is a runtime error. */
+    int exitCode;
+    char* out = runClox(
+        "var a = [1, 2, 3];\n"
+        "a[5] = 99;\n",
+        &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-index-write-oob: expected nonzero exit, got 0");
+    } else if (!contains(out, "out of bounds")) {
+        fail("stdlib/array-index-write-oob: expected 'out of bounds' in error, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_index_write_on_non_array(void) {
+    /* 42[0] = v is a runtime error: subscript requires an array. */
+    int exitCode;
+    char* out = runClox("42[0] = 99;\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-index-write-on-non-array: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
 int main(void) {
     test_clock_exists();
     test_number_abs();
@@ -978,6 +1077,12 @@ int main(void) {
     test_array_index_negative();
     test_array_index_wrong_type();
     test_array_index_on_non_array();
+    /* Stage 12b-iii: a[i] = v index write. */
+    test_array_index_write();
+    test_array_index_write_expression();
+    test_array_index_write_then_read();
+    test_array_index_write_oob();
+    test_array_index_write_on_non_array();
 
     printf("%d passed, %d failed\n", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;

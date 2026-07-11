@@ -454,14 +454,21 @@ static void arrayLiteral(bool canAssign) {
 }
 
 static void arrayIndex(bool canAssign) {
-    /* Stage 12b-ii: compile a[i] into OP_INDEX_GET. The array and
-     * index are already on the stack from the prefix expression and
-     * the inner expression(); we just emit the opcode. Note: this is
-     * the *infix* for TOKEN_LEFT_BRACKET; the prefix is arrayLiteral. */
-    (void)canAssign;
+    /* Stage 12b-ii/iii: compile a[i] (read) and a[i] = v (write).
+     * The array is on the stack from the prefix expression; we parse
+     * the index expression and either emit OP_INDEX_GET (read) or
+     * OP_INDEX_SET (write) if the caller is in an assignment context
+     * and the next token is =. The same pattern as dot() for
+     * OP_GET_PROPERTY / OP_SET_PROPERTY. */
     expression();  /* the index expression */
     consume(TOKEN_RIGHT_BRACKET, "Expect ']' after index.");
-    emitByte(OP_INDEX_GET);
+
+    if (canAssign && match(TOKEN_EQUAL)) {
+        expression();  /* the value expression */
+        emitByte(OP_INDEX_SET);
+    } else {
+        emitByte(OP_INDEX_GET);
+    }
 }
 
 static uint8_t argumentList(void) {
