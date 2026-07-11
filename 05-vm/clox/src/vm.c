@@ -422,6 +422,98 @@ static InterpretResult run(void) {
                 closeUpvalues(vm.stackTop - 1);
                 pop();
                 break;
+            case OP_INDEX_SET: {
+                /* Stage 12b-iii: write a[i] = v. Stack: ..., array, index, value.
+                 * Pop the value (top), pop the index, peek the array,
+                 * validate it's an OBJ_ARRAY, bounds-check, then
+                 * arrayWrite(). No push: assignment is a statement,
+                 * not an expression. */
+                Value value = pop();
+                Value indexValue = pop();
+                if (!IS_NUMBER(indexValue)) {
+                    runtimeError("Array index must be a number.");
+                    return INTERPRET_RUNTIME_ERROR;
+                }
+                int index = (int)AS_NUMBER(indexValue);
+                Value arrayValue = peek(0);
+                if (!IS_ARRAY(arrayValue)) {
+                    runtimeError("Only arrays can be indexed.");
+                    return INTERPRET_RUNTIME_ERROR;
+                }
+                ObjArray *array = AS_ARRAY(arrayValue);
+                if (index < 0 || index >= array->count) {
+                    runtimeError("Array index %d out of bounds (length %d).",
+                                 index, array->count);
+                    return INTERPRET_RUNTIME_ERROR;
+                }
+                arrayWrite(array, index, value);
+                /* Pop the array, push the value back as the
+                 * expression result, so that the assignment
+                 * expression itself has a value. Same pattern as
+                 * OP_SET_LOCAL/OP_SET_GLOBAL: leave the assigned
+                 * value on the stack. */
+                pop();  /* the array */
+                push(value);
+                break;
+            }
+            case OP_INDEX_GET: {
+                /* Stage 12b-ii: read array[i]. Stack: ..., array, index.
+                 * Pop the index (top), validate it's a number, then peek
+                 * the array and bounds-check, then push the element. */
+                Value indexValue = pop();
+                if (!IS_NUMBER(indexValue)) {
+                    runtimeError("Array index must be a number.");
+                    return INTERPRET_RUNTIME_ERROR;
+                }
+                int index = (int)AS_NUMBER(indexValue);
+                Value arrayValue = peek(0);
+                if (!IS_ARRAY(arrayValue)) {
+                    runtimeError("Only arrays can be indexed.");
+                    return INTERPRET_RUNTIME_ERROR;
+                }
+                ObjArray *array = AS_ARRAY(arrayValue);
+                if (index < 0 || index >= array->count) {
+                    runtimeError("Array index %d out of bounds (length %d).",
+                                 index, array->count);
+                    return INTERPRET_RUNTIME_ERROR;
+                }
+                Value element = arrayRead(array, index);
+                pop();  /* the array */
+                push(element);
+                break;
+            }
+            case OP_ARRAY: {
+                /* Stage 12b-i: build an ObjArray from the top N stack
+                 * values. Operand (read below) is the element count.
+                 * The values are below the protective push of the
+                 * array itself: stackTop is one above the array, and
+                 * the source values are stackTop[-count..-1].
+                 * We allocate the array with capacity == count, fill
+                 * it from bottom (first element, stackTop[-count]) to
+                 * top (last element, stackTop[-1]), then set
+                 * array->count, pop the protective push and the
+                 * source values, and push the array as the single
+                 * result. The push(OBJ_VAL) is GC-protective: the
+                 * arrayWrite calls could otherwise collect the
+                 * partially-built array. Note: arrayWrite writes
+                 * elements[index] but does NOT increment count (the
+                 * Stage 12a natives use arrayPush for that). For a
+                 * literal, we know the final count, so we set it
+                 * explicitly after the fill loop. */
+                uint8_t count = READ_BYTE();
+                ObjArray *array = newArray(count);
+                push(OBJ_VAL(array));
+                for (uint8_t i = 0; i < count; i++) {
+                    arrayWrite(array, i, peek(count - i));
+                }
+                array->count = count;
+                pop();  /* the protective push */
+                for (uint8_t i = 0; i < count; i++) {
+                    pop();  /* the source values */
+                }
+                push(OBJ_VAL(array));
+                break;
+            }
             case OP_RETURN: {
                 Value result = pop();
                 closeUpvalues(frame->slots);

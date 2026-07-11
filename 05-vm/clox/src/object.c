@@ -127,6 +127,36 @@ ObjBoundMethod *newBoundMethod(Value receiver, ObjClosure *method) {
     return bound;
 }
 
+/* --- Stage 12a: ObjArray value type --- */
+
+ObjArray *newArray(int initialCapacity) {
+    ObjArray *array = ALLOCATE_OBJ(ObjArray, OBJ_ARRAY);
+    array->count = 0;
+    array->capacity = initialCapacity < 1 ? 1 : initialCapacity;
+    array->elements = (Value*)malloc(sizeof(Value) * (size_t)array->capacity);
+    return array;
+}
+
+void arrayWrite(ObjArray *array, int index, Value value) {
+    /* Caller (the native) must bounds-check before calling. */
+    array->elements[index] = value;
+}
+
+void arrayPush(ObjArray *array, Value value) {
+    if (array->count + 1 > array->capacity) {
+        int oldCapacity = array->capacity;
+        array->capacity = GROW_CAPACITY(oldCapacity);
+        array->elements = (Value*)realloc(array->elements,
+                                          sizeof(Value) * (size_t)array->capacity);
+    }
+    array->elements[array->count++] = value;
+}
+
+Value arrayRead(ObjArray *array, int index) {
+    /* Caller must bounds-check. */
+    return array->elements[index];
+}
+
 void printObject(Value value) {
     switch (OBJ_TYPE(value)) {
         case OBJ_STRING:
@@ -162,6 +192,14 @@ void printObject(Value value) {
             printf("<bound %s>",
                    AS_BOUND_METHOD(value)->method->function->name->chars);
             break;
+        case OBJ_ARRAY:
+            printf("[");
+            for (int i = 0; i < AS_ARRAY(value)->count; i++) {
+                if (i > 0) printf(", ");
+                printValue(AS_ARRAY(value)->elements[i]);
+            }
+            printf("]");
+            break;
     }
 }
 
@@ -175,6 +213,7 @@ const char *objectTypeName(Obj *obj) {
         case OBJ_CLASS:        return "class";
         case OBJ_INSTANCE:     return "instance";
         case OBJ_BOUND_METHOD: return "bound method";
+        case OBJ_ARRAY:        return "array";
     }
     return "object";
 }

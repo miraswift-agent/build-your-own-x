@@ -21,7 +21,8 @@ typedef enum {
     OBJ_UPVALUE,
     OBJ_CLASS,
     OBJ_INSTANCE,
-    OBJ_BOUND_METHOD
+    OBJ_BOUND_METHOD,
+    OBJ_ARRAY  /* Stage 12a: arrays are first-class heap values */
 } ObjType;
 
 struct Obj {
@@ -84,6 +85,13 @@ typedef struct {
     ObjClosure *method;
 } ObjBoundMethod;
 
+typedef struct {
+    Obj obj;
+    Value *elements;   /* malloc'd, resizable */
+    int count;
+    int capacity;
+} ObjArray;
+
 #define OBJ_TYPE(value)     (AS_OBJ(value)->type)
 #define IS_STRING(value)    isObjType(value, OBJ_STRING)
 #define IS_FUNCTION(value)  isObjType(value, OBJ_FUNCTION)
@@ -92,6 +100,7 @@ typedef struct {
 #define IS_CLASS(value)     isObjType(value, OBJ_CLASS)
 #define IS_INSTANCE(value)  isObjType(value, OBJ_INSTANCE)
 #define IS_BOUND_METHOD(value) isObjType(value, OBJ_BOUND_METHOD)
+#define IS_ARRAY(value)        isObjType(value, OBJ_ARRAY)
 
 #define AS_STRING(value)    ((ObjString*)AS_OBJ(value))
 #define AS_CSTRING(value)   (((ObjString*)AS_OBJ(value))->chars)
@@ -101,6 +110,7 @@ typedef struct {
 #define AS_CLASS(value)     ((ObjClass*)AS_OBJ(value))
 #define AS_INSTANCE(value)  ((ObjInstance*)AS_OBJ(value))
 #define AS_BOUND_METHOD(value) ((ObjBoundMethod*)AS_OBJ(value))
+#define AS_ARRAY(value)        ((ObjArray*)AS_OBJ(value))
 
 static inline bool isObjType(Value value, ObjType type) {
     return IS_OBJ(value) && AS_OBJ(value)->type == type;
@@ -115,6 +125,10 @@ ObjUpvalue *newUpvalue(Value *slot);
 ObjClass *newClass(ObjString *name);
 ObjInstance *newInstance(ObjClass *klass);
 ObjBoundMethod *newBoundMethod(Value receiver, ObjClosure *method);
+ObjArray *newArray(int initialCapacity);
+void arrayWrite(ObjArray *array, int index, Value value);
+void arrayPush(ObjArray *array, Value value);
+Value arrayRead(ObjArray *array, int index);
 
 void printObject(Value value);
 const char *objectTypeName(Obj *obj);
