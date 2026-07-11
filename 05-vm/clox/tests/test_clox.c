@@ -81,6 +81,192 @@ static bool outputsEqual(const char* actual, const char* expected) {
     return strcmp(actual, expected) == 0;
 }
 
+/* --- Stage 18 tests: escape sequence processing in string literals.
+ *
+ * Before Stage 18: "a\nb" in source is the 2-char string backslash-n
+ * (followed by 'a', 'b'). The user had to put a real newline in the
+ * source to get a newline in the string.
+ *
+ * After Stage 18: "a\nb" in source is the 3-char string a-newline-b.
+ * The supported escapes are: \n, \t, \r, \\, \". Unknown escapes
+ * (e.g. \q) and incomplete escapes (a string ending in '\') are
+ * compile errors. */
+
+static void testEscapeNewline(void) {
+    /* "a\nb" -> a, newline, b -> 3 chars. */
+    int exitCode;
+    char *out = runClox("print string_length(\"a\\nb\");\n", &exitCode);
+    if (exitCode != 0) {
+        fail("clox/escape-newline: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!outputsEqual(out, "3\n")) {
+        fail("clox/escape-newline: expected '3', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void testEscapeNewlineInPrint(void) {
+    /* print "a\nb" should output a, newline, b (and the trailing
+     * newline from print). So output is "a\nb\n". */
+    int exitCode;
+    char *out = runClox("print \"a\\nb\";\n", &exitCode);
+    if (exitCode != 0) {
+        fail("clox/escape-newline-print: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!outputsEqual(out, "a\nb\n")) {
+        fail("clox/escape-newline-print: expected 'a\\nb\\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void testEscapeTab(void) {
+    /* "\t" -> 1 char (tab). */
+    int exitCode;
+    char *out = runClox("print string_length(\"\\t\");\n", &exitCode);
+    if (exitCode != 0) {
+        fail("clox/escape-tab: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!outputsEqual(out, "1\n")) {
+        fail("clox/escape-tab: expected '1', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void testEscapeCarriageReturn(void) {
+    /* "\r" -> 1 char (CR). */
+    int exitCode;
+    char *out = runClox("print string_length(\"\\r\");\n", &exitCode);
+    if (exitCode != 0) {
+        fail("clox/escape-cr: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!outputsEqual(out, "1\n")) {
+        fail("clox/escape-cr: expected '1', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void testEscapeBackslash(void) {
+    /* "\\\\" in source -> "\\" in C string -> one source char `\\` ->
+     * one source char `\` -> \\ is the escape for `\ -> output 1 char. */
+    int exitCode;
+    char *out = runClox("print string_length(\"\\\\\");\n", &exitCode);
+    if (exitCode != 0) {
+        fail("clox/escape-backslash: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!outputsEqual(out, "1\n")) {
+        fail("clox/escape-backslash: expected '1', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void testEscapeBackslashInPrint(void) {
+    /* "\\\\" in source -> output is "\". So print produces "\\n" (the
+     * literal backslash followed by the print's newline). */
+    int exitCode;
+    char *out = runClox("print \"\\\\\";\n", &exitCode);
+    if (exitCode != 0) {
+        fail("clox/escape-backslash-print: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!outputsEqual(out, "\\\n")) {
+        fail("clox/escape-backslash-print: expected '\\\\\\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void testEscapeDoubleQuote(void) {
+    /* "\"" in source -> 1 char ("). And we can embed " inside a string
+     * without ending it. */
+    int exitCode;
+    char *out = runClox("print string_length(\"\\\"\");\n", &exitCode);
+    if (exitCode != 0) {
+        fail("clox/escape-double-quote: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!outputsEqual(out, "1\n")) {
+        fail("clox/escape-double-quote: expected '1', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void testEscapeEmbeddedQuote(void) {
+    /* "a\"b" -> a, ", b -> 3 chars. The string contains a literal ". */
+    int exitCode;
+    char *out = runClox(
+        "var s = \"a\\\"b\";\n"
+        "print string_length(s);\n"
+        "print s;\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("clox/escape-embedded-quote: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!outputsEqual(out, "3\na\"b\n")) {
+        fail("clox/escape-embedded-quote: expected '3\\na\"b\\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void testEscapeMixed(void) {
+    /* "a\nb\tc\\d\"e" -> a, NL, b, TAB, c, \, d, ", e -> 9 chars. */
+    int exitCode;
+    char *out = runClox("print string_length(\"a\\nb\\tc\\\\d\\\"e\");\n", &exitCode);
+    if (exitCode != 0) {
+        fail("clox/escape-mixed: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!outputsEqual(out, "9\n")) {
+        fail("clox/escape-mixed: expected '9', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void testEscapeUnknown(void) {
+    /* "\q" is not a known escape -> compile error (exit 65). */
+    int exitCode;
+    char *out = runClox("var s = \"\\q\";\n", &exitCode);
+    if (exitCode != 65) {
+        fail("clox/escape-unknown: expected exit 65, got %d (output: %s)", exitCode, out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void testEscapeIncomplete(void) {
+    /* String ending in '\' (no escape char after) -> compile error. */
+    int exitCode;
+    char *out = runClox("var s = \"foo\\\";\n", &exitCode);
+    if (exitCode != 65) {
+        fail("clox/escape-incomplete: expected exit 65, got %d (output: %s)", exitCode, out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void testEscapeNoLongerNeedsRealNewline(void) {
+    /* The Stage 15 workaround: put a real newline in source to get a
+     * newline in the string. After Stage 18, "\n" works. This test
+     * confirms the new idiom produces the same result as the old one
+     * would have. */
+    int exitCode;
+    char *out = runClox("var a = \"line1\\nline2\";\nprint a;\n", &exitCode);
+    if (exitCode != 0) {
+        fail("clox/escape-no-real-newline: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!outputsEqual(out, "line1\nline2\n")) {
+        fail("clox/escape-no-real-newline: expected 'line1\\nline2\\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
 static void testArithmetic(void) {
     int exitCode;
     char* out = runClox("print 1 + 2 * 3 - 4 / 2;", &exitCode);
@@ -372,6 +558,20 @@ int main(void) {
     testRuntimeError();
     testBlockScope();
     testGCStress();
+
+    /* Stage 18: escape sequence processing in string literals. */
+    testEscapeNewline();
+    testEscapeNewlineInPrint();
+    testEscapeTab();
+    testEscapeCarriageReturn();
+    testEscapeBackslash();
+    testEscapeBackslashInPrint();
+    testEscapeDoubleQuote();
+    testEscapeEmbeddedQuote();
+    testEscapeMixed();
+    testEscapeUnknown();
+    testEscapeIncomplete();
+    testEscapeNoLongerNeedsRealNewline();
 
     printf("%d passed, %d failed\n", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;

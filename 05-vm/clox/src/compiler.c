@@ -521,10 +521,70 @@ static void number(bool canAssign) {
     emitConstant(NUMBER_VAL(value));
 }
 
+/* Stage 18: string literal with escape processing.
+ *
+ * Before Stage 18: "a\nb" in source was the 4-char string a-\-n-b
+ * (the scanner kept the source range verbatim; the compiler copied
+ * it without interpretation). To get a real newline, the user had
+ * to put a real newline in the source, which clox's scanner
+ * preserved.
+ *
+ * After Stage 18: "a\nb" in source is the 3-char string a-newline-b.
+ * Supported escapes: \n (newline), \t (tab), \r (carriage return),
+ * \\ (backslash), \" (double quote). Unknown escapes (e.g. \q) and
+ * incomplete escapes (a string ending in '\' with no escape char
+ * following) are compile errors.
+ *
+ * The change is localized to the compiler's string() function. The
+ * scanner still produces a single TOKEN_STRING spanning the source
+ * range; the compiler now walks that range and produces the
+ * processed string. The maximum output size is bounded by the input
+ * size, since each escape shrinks (\\n -> 1 char) or stays the same
+ * size (\\n -> 1 char, \\t -> 1 char). */
 static void string(bool canAssign) {
     (void)canAssign;
-    emitConstant(OBJ_VAL(copyString(parser.previous.start + 1,
-                                    parser.previous.length - 2)));
+    /* Source range between the quotes: start+1 to start+length-1.
+     * The string length cannot grow during escape processing (each
+     * escape reduces to 1 or 2 source chars and produces 1 output
+     * char), so the source range is an upper bound on the output. */
+    const char *src = parser.previous.start + 1;
+    int srcLen = parser.previous.length - 2;
+    char buf[2048];
+    if (srcLen >= (int)sizeof(buf)) {
+        error("String literal too long.");
+        return;
+    }
+    int outLen = 0;
+    for (int i = 0; i < srcLen; i++) {
+        char c = src[i];
+        if (c == '\\') {
+            /* Need a char after the backslash. */
+            if (i + 1 >= srcLen) {
+                error("Unterminated escape sequence.");
+                return;
+            }
+            char esc = src[i + 1];
+            switch (esc) {
+                case 'n':  buf[outLen++] = '\n'; break;
+                case 't':  buf[outLen++] = '\t'; break;
+                case 'r':  buf[outLen++] = '\r'; break;
+                case '\\': buf[outLen++] = '\\'; break;
+                case '"':  buf[outLen++] = '"';  break;
+                default: {
+                    /* Report as a single-char error message. */
+                    char msg[64];
+                    snprintf(msg, sizeof(msg),
+                             "Invalid escape character '%c'.", esc);
+                    error(msg);
+                    return;
+                }
+            }
+            i++;  /* consume the escape char */
+        } else {
+            buf[outLen++] = c;
+        }
+    }
+    emitConstant(OBJ_VAL(copyString(buf, outLen)));
 }
 
 static void namedVariable(Token name, bool canAssign) {

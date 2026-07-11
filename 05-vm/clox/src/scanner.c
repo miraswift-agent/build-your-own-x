@@ -149,9 +149,25 @@ static Token number(Scanner *scanner) {
     return makeToken(scanner, TOKEN_NUMBER);
 }
 
+/* Stage 18: scanner now also handles the \" escape so the embedded
+ * quote doesn't terminate the string. The scanner is otherwise
+ * unchanged: it stores the source range verbatim and the compiler
+ * processes escapes. The scanner's only job is to find the real
+ * closing quote, which means it must skip a backslash + the next
+ * char. */
 static Token string(Scanner *scanner) {
     while (peek(scanner) != '"' && !isAtEnd(scanner)) {
         if (peek(scanner) == '\n') scanner->line++;
+        /* Skip a backslash + the char following it. We don't store
+         * the result; the compiler will re-read the source range
+         * and process the escape. The point here is only to keep
+         * the scanner from terminating the string on the escaped
+         * char (especially \"). */
+        if (peek(scanner) == '\\' && !isAtEnd(scanner)) {
+            advance(scanner);
+            if (!isAtEnd(scanner)) advance(scanner);
+            continue;
+        }
         advance(scanner);
     }
 

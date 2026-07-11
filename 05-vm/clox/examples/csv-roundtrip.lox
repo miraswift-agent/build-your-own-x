@@ -2,13 +2,16 @@
 // Demonstrates: io_read_file, io_write_file, string_split,
 // string_upper, string_join, indexed array assignment — the full
 // "transform a file end-to-end" pattern.
+//
+// Stage 18 update: replaced the real-newline-in-source workaround
+// (which clox's scanner used to require for embedded newlines) with
+// the natural "\n" escape sequence.
 
 var input = "csv-input.txt";
 var output = "csv-output.txt";
 
 if (!io_file_exists(input)) {
-    io_eprint("csv-roundtrip: missing " + input + "
-");
+    io_eprint("csv-roundtrip: missing " + input + "\n");
     io_exit(1);
 }
 
