@@ -1624,6 +1624,378 @@ static void test_io_file_gc_stress(void) {
     unlink(path);
 }
 
+/* --- Stage 16 tests: io_read_lines / io_write_lines ---
+ *
+ * The streaming I/O pattern: read a file as an array of lines, or
+ * write an array of lines to a file. The new natives compose with
+ * the existing string and array operations to make file handling
+ * a first-class clox idiom.
+ *
+ * The tests use fixed /tmp paths and clean up after themselves, same
+ * pattern as the Stage 14 file I/O tests. */
+
+static void test_io_read_lines_basic(void) {
+    /* 3-line file with trailing newline. The trailing empty piece
+     * is dropped (lines are content, not separators). Result: 3
+     * elements: "alpha", "beta", "gamma". */
+    char path[256];
+    buildTmpPath(path, sizeof(path), "read_lines_basic.txt");
+    if (writeFileToDisk(path, "alpha\nbeta\ngamma\n") != 0) {
+        fail("stdlib/io-read-lines-basic: could not seed test file");
+        return;
+    }
+    char script[1024];
+    snprintf(script, sizeof(script),
+        "var lines = io_read_lines(\"%s\");\n"
+        "print(array_length(lines));\n"
+        "print(lines[0]);\n"
+        "print(lines[1]);\n"
+        "print(lines[2]);\n",
+        path);
+    int exitCode;
+    char *out = runClox(script, &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/io-read-lines-basic: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "3\n") || !contains(out, "alpha\n") ||
+               !contains(out, "beta\n") || !contains(out, "gamma\n")) {
+        fail("stdlib/io-read-lines-basic: expected 3, alpha, beta, gamma in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+    unlink(path);
+}
+
+static void test_io_read_lines_no_trailing_newline(void) {
+    /* File without trailing newline. Should still return all 3 lines. */
+    char path[256];
+    buildTmpPath(path, sizeof(path), "read_lines_no_trail.txt");
+    if (writeFileToDisk(path, "first\nsecond\nthird") != 0) {
+        fail("stdlib/io-read-lines-no-trail: could not seed test file");
+        return;
+    }
+    char script[1024];
+    snprintf(script, sizeof(script),
+        "var lines = io_read_lines(\"%s\");\n"
+        "print(array_length(lines));\n"
+        "print(lines[0]);\n"
+        "print(lines[2]);\n",
+        path);
+    int exitCode;
+    char *out = runClox(script, &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/io-read-lines-no-trail: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "3\n") || !contains(out, "first\n") ||
+               !contains(out, "third\n")) {
+        fail("stdlib/io-read-lines-no-trail: expected 3, first, third in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+    unlink(path);
+}
+
+static void test_io_read_lines_empty_file(void) {
+    /* Empty file -> empty array. */
+    char path[256];
+    buildTmpPath(path, sizeof(path), "read_lines_empty.txt");
+    if (writeFileToDisk(path, "") != 0) {
+        fail("stdlib/io-read-lines-empty: could not seed test file");
+        return;
+    }
+    char script[1024];
+    snprintf(script, sizeof(script),
+        "var lines = io_read_lines(\"%s\");\n"
+        "print(array_length(lines));\n",
+        path);
+    int exitCode;
+    char *out = runClox(script, &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/io-read-lines-empty: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "0\n")) {
+        fail("stdlib/io-read-lines-empty: expected 0 in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+    unlink(path);
+}
+
+static void test_io_read_lines_nonexistent(void) {
+    /* File doesn't exist -> nil. */
+    int exitCode;
+    char *out = runClox(
+        "var lines = io_read_lines(\"/tmp/clox_s16_does_not_exist_xyz_99999.txt\");\n"
+        "if (lines == nil) {\n"
+        "  print \"absent\";\n"
+        "} else {\n"
+        "  print \"unexpectedly got lines\";\n"
+        "}\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/io-read-lines-nonexistent: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "absent\n")) {
+        fail("stdlib/io-read-lines-nonexistent: expected 'absent' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_io_read_lines_single_line(void) {
+    /* Single line, no newline. Result: array of 1. */
+    char path[256];
+    buildTmpPath(path, sizeof(path), "read_lines_single.txt");
+    if (writeFileToDisk(path, "just one line") != 0) {
+        fail("stdlib/io-read-lines-single: could not seed test file");
+        return;
+    }
+    char script[1024];
+    snprintf(script, sizeof(script),
+        "var lines = io_read_lines(\"%s\");\n"
+        "print(array_length(lines));\n"
+        "print(lines[0]);\n",
+        path);
+    int exitCode;
+    char *out = runClox(script, &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/io-read-lines-single: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "1\n") || !contains(out, "just one line\n")) {
+        fail("stdlib/io-read-lines-single: expected 1 and 'just one line' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+    unlink(path);
+}
+
+static void test_io_read_lines_wrong_args(void) {
+    /* Arity error. */
+    int exitCode;
+    char *out = runClox("io_read_lines();\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/io-read-lines-wrong-args: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_io_read_lines_wrong_type(void) {
+    /* Type error: path must be string. */
+    int exitCode;
+    char *out = runClox("io_read_lines(42);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/io-read-lines-wrong-type: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_io_write_lines_new(void) {
+    /* Write a new file from an array of lines. Then read it back
+     * via io_read_file and verify the content. */
+    char path[256];
+    buildTmpPath(path, sizeof(path), "write_lines_new.txt");
+    unlink(path);
+    char script[1024];
+    snprintf(script, sizeof(script),
+        "io_write_lines(\"%s\", [\"first\", \"second\", \"third\"]);\n"
+        "print(io_read_file(\"%s\"));\n",
+        path, path);
+    int exitCode;
+    char *out = runClox(script, &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/io-write-lines-new: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "first\nsecond\nthird\n")) {
+        fail("stdlib/io-write-lines-new: expected 'first\\nsecond\\nthird\\n' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+    unlink(path);
+}
+
+static void test_io_write_lines_overwrite(void) {
+    /* Pre-seed with old content, overwrite with new lines, verify. */
+    char path[256];
+    buildTmpPath(path, sizeof(path), "write_lines_overwrite.txt");
+    if (writeFileToDisk(path, "OLD OLD OLD") != 0) {
+        fail("stdlib/io-write-lines-overwrite: could not seed test file");
+        return;
+    }
+    char script[1024];
+    snprintf(script, sizeof(script),
+        "io_write_lines(\"%s\", [\"new1\", \"new2\"]);\n"
+        "print(io_read_file(\"%s\"));\n",
+        path, path);
+    int exitCode;
+    char *out = runClox(script, &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/io-write-lines-overwrite: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "new1\nnew2\n") || contains(out, "OLD")) {
+        fail("stdlib/io-write-lines-overwrite: expected new content without OLD, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+    unlink(path);
+}
+
+static void test_io_write_lines_empty_array(void) {
+    /* Empty array -> empty file. */
+    char path[256];
+    buildTmpPath(path, sizeof(path), "write_lines_empty.txt");
+    unlink(path);
+    char script[1024];
+    snprintf(script, sizeof(script),
+        "io_write_lines(\"%s\", []);\n"
+        "if (io_file_exists(\"%s\")) {\n"
+        "  var c = io_read_file(\"%s\");\n"
+        "  print(\"empty:\");\n"
+        "  print string_length(c);\n"
+        "} else {\n"
+        "  print \"missing\";\n"
+        "}\n",
+        path, path, path);
+    int exitCode;
+    char *out = runClox(script, &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/io-write-lines-empty: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "empty:\n0\n")) {
+        fail("stdlib/io-write-lines-empty: expected 'empty:\\n0' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+    unlink(path);
+}
+
+static void test_io_write_lines_single_element(void) {
+    /* Single-element array -> file with that line and a trailing newline. */
+    char path[256];
+    buildTmpPath(path, sizeof(path), "write_lines_single.txt");
+    unlink(path);
+    char script[1024];
+    snprintf(script, sizeof(script),
+        "io_write_lines(\"%s\", [\"alone\"]);\n"
+        "print(io_read_file(\"%s\"));\n",
+        path, path);
+    int exitCode;
+    char *out = runClox(script, &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/io-write-lines-single: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "alone\n")) {
+        fail("stdlib/io-write-lines-single: expected 'alone\\n' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+    unlink(path);
+}
+
+static void test_io_write_lines_wrong_args(void) {
+    /* Arity error. */
+    int exitCode;
+    char *out = runClox("io_write_lines(\"/tmp/x\");\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/io-write-lines-wrong-args: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_io_write_lines_wrong_type(void) {
+    /* Type error: path must be string, arr must be array. */
+    int exitCode;
+    char *out = runClox("io_write_lines(42, []);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/io-write-lines-wrong-type-path: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+
+    exitCode = -1;
+    out = runClox("io_write_lines(\"/tmp/x\", \"not an array\");\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/io-write-lines-wrong-type-arr: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_io_read_write_lines_round_trip(void) {
+    /* Write an array of lines, read it back as lines, verify
+     * identity (modulo the trailing newline behavior). */
+    char path[256];
+    buildTmpPath(path, sizeof(path), "round_trip.txt");
+    unlink(path);
+    char script[2048];
+    snprintf(script, sizeof(script),
+        "var original = [\"one\", \"two\", \"three\", \"four\"];\n"
+        "io_write_lines(\"%s\", original);\n"
+        "var readback = io_read_lines(\"%s\");\n"
+        "print(array_length(readback));\n"
+        "print(readback[0]);\n"
+        "print(readback[3]);\n"
+        "print(readback[0] == original[0]);\n"
+        "print(readback[3] == original[3]);\n",
+        path, path);
+    int exitCode;
+    char *out = runClox(script, &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/io-round-trip: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "4\n") || !contains(out, "one\n") || !contains(out, "four\n") ||
+               !contains(out, "true\n")) {
+        fail("stdlib/io-round-trip: expected 4, one, four, true in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+    unlink(path);
+}
+
+static void test_io_lines_gc_stress(void) {
+    /* 200 iterations of read_lines on a file with 3 lines. The
+     * returned array grows across iterations, forcing collection.
+     * Valgrind must verify all allocs balance. */
+    char path[256];
+    buildTmpPath(path, sizeof(path), "lines_gc_stress.txt");
+    if (writeFileToDisk(path, "line1\nline2\nline3\n") != 0) {
+        fail("stdlib/io-lines-gc-stress: could not seed test file");
+        return;
+    }
+    char script[2048];
+    snprintf(script, sizeof(script),
+        "var path = \"%s\";\n"
+        "var sink = [];\n"
+        "var i = 0;\n"
+        "while (i < 200) {\n"
+        "  var lines = io_read_lines(path);\n"
+        "  array_push(sink, lines);\n"
+        "  i = i + 1;\n"
+        "}\n"
+        "print(array_length(sink));\n"
+        "print(array_length(sink[0]));\n"
+        "print(sink[0][0]);\n",
+        path);
+    int exitCode;
+    char *out = runClox(script, &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/io-lines-gc-stress: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "200\n") || !contains(out, "3\n") || !contains(out, "line1\n")) {
+        fail("stdlib/io-lines-gc-stress: expected 200, 3, line1 in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+    unlink(path);
+}
+
 int main(void) {
     test_clock_exists();
     test_number_abs();
@@ -1713,6 +2085,23 @@ int main(void) {
     test_io_file_exists_wrong_args();
     test_io_file_exists_wrong_type();
     test_io_file_gc_stress();
+
+    /* Stage 16: streaming I/O natives. */
+    test_io_read_lines_basic();
+    test_io_read_lines_no_trailing_newline();
+    test_io_read_lines_empty_file();
+    test_io_read_lines_nonexistent();
+    test_io_read_lines_single_line();
+    test_io_read_lines_wrong_args();
+    test_io_read_lines_wrong_type();
+    test_io_write_lines_new();
+    test_io_write_lines_overwrite();
+    test_io_write_lines_empty_array();
+    test_io_write_lines_single_element();
+    test_io_write_lines_wrong_args();
+    test_io_write_lines_wrong_type();
+    test_io_read_write_lines_round_trip();
+    test_io_lines_gc_stress();
 
     printf("%d passed, %d failed\n", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;

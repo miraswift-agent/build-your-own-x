@@ -1,0 +1,14 @@
+// line-count.lox — count lines in a file.
+// Demonstrates: io_read_lines, array_length, the "lines as a
+// first-class clox type" pattern.
+
+var path = "line-count-input.txt";
+
+if (!io_file_exists(path)) {
+    io_eprint("line-count: missing " + path + "
+");
+    io_exit(1);
+}
+
+var lines = io_read_lines(path);
+print(array_length(lines));

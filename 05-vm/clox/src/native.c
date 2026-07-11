@@ -638,6 +638,183 @@ static Value ioFileExistsNative(int argCount, Value *args) {
     return BOOL_VAL(S_ISREG(st.st_mode));
 }
 
+/* --- Stage 16: streaming I/O. The new natives are:
+ *   - io_read_lines(path) -> ObjArray | nil
+ *   - io_write_lines(path, arr) -> nil
+ *
+ * These compose the file I/O from Stage 14 with the array
+ * primitives from Stage 12/13. A file is an array of lines;
+ * an array of lines is a file. This is the natural extension
+ * of "host boundary expansion" from Stage 14: not just files,
+ * but *structured* files.
+ *
+ * The implementation reuses the Stage 14 io_read_file and
+ * io_write_file natives' machinery where possible. The new
+ * work is the line-splitting and line-joining. */
+
+#include <string.h>  /* memcpy, memchr */
+
+/* Helper: find the next '\n' in `buf` starting at `start`. Returns
+ * the index of the newline, or `len` if no newline is found. */
+static int findNewline(const char *buf, int start, int len) {
+    for (int i = start; i < len; i++) {
+        if (buf[i] == '\n') return i;
+    }
+    return len;
+}
+
+/* io_read_lines(path) -> ObjArray | nil.
+ * Reads the file at `path` and splits its contents on '\n' into
+ * an array of strings. The trailing empty piece (from a trailing
+ * newline) is dropped — `io_read_lines` returns *lines*, not
+ * *newlines*. So a file "a\nb\nc\n" becomes ["a", "b", "c"],
+ * matching `wc -l` semantics.
+ *
+ * If the file can't be read (nonexistent, permission denied,
+ * too large), returns nil (consistent with io_read_file). */
+static Value ioReadLinesNative(int argCount, Value *args) {
+    if (argCount != 1) {
+        runtimeError("io_read_lines() takes 1 argument (%d given).", argCount);
+        return NIL_VAL;
+    }
+    if (!IS_STRING(args[0])) {
+        runtimeError("io_read_lines() argument must be a string.");
+        return NIL_VAL;
+    }
+    ObjString *path = AS_STRING(args[0]);
+
+    char *pathC = malloc(path->length + 1);
+    if (pathC == NULL) return NIL_VAL;
+    memcpy(pathC, path->chars, path->length);
+    pathC[path->length] = '\0';
+
+    FILE *f = fopen(pathC, "rb");
+    free(pathC);
+    if (f == NULL) return NIL_VAL;  /* file not found, permission denied, etc. */
+
+    if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return NIL_VAL; }
+    long size = ftell(f);
+    if (size < 0 || size > IO_READ_FILE_MAX_BYTES) { fclose(f); return NIL_VAL; }
+    rewind(f);
+
+    char stackBuf[8192];
+    char *buf = (size <= (long)sizeof(stackBuf)) ? stackBuf : malloc((size_t)size);
+    if (buf == NULL) { fclose(f); return NIL_VAL; }
+
+    size_t n = fread(buf, 1, (size_t)size, f);
+    fclose(f);
+    if (n != (size_t)size) {
+        if (buf != stackBuf) free(buf);
+        return NIL_VAL;
+    }
+
+    /* Worst case: every byte is a newline, so size+1 pieces. Plus
+     * one for the trailing piece (which we'll drop). */
+    ObjArray *array = newArray((int)n + 1);
+    push(OBJ_VAL(array));  /* GC protection during fill */
+
+    int start = 0;
+    int i = 0;
+    while (start < (int)n) {
+        i = findNewline(buf, start, (int)n);
+        /* Copy buf[start..i] (exclusive of the newline). */
+        ObjString *line = copyString(buf + start, i - start);
+        arrayPush(array, OBJ_VAL(line));
+        start = i + 1;  /* skip the newline */
+    }
+    /* If the file ended at a newline, the last "line" would be
+     * empty. Drop it. The file "a\nb\nc\n" -> 3 lines, not 4. */
+    if (array->count > 0) {
+        Value last = arrayRead(array, array->count - 1);
+        if (AS_STRING(last)->length == 0) {
+            array->count--;  /* drop trailing empty */
+        }
+    }
+
+    pop();  /* release GC protection */
+    if (buf != stackBuf) free(buf);
+    return OBJ_VAL(array);
+}
+
+/* io_write_lines(path, arr) -> nil.
+ * Writes the array of strings to `path`, one per line, joined by
+ * '\n'. The output always has a trailing newline. Empty array
+ * produces an empty file. Non-string elements are a runtime
+ * error (consistent with string_join's behavior). */
+static Value ioWriteLinesNative(int argCount, Value *args) {
+    if (argCount != 2) {
+        runtimeError("io_write_lines() takes 2 arguments (%d given).", argCount);
+        return NIL_VAL;
+    }
+    if (!IS_STRING(args[0]) || !IS_ARRAY(args[1])) {
+        runtimeError("io_write_lines() arguments must be (string, array).");
+        return NIL_VAL;
+    }
+    ObjString *path = AS_STRING(args[0]);
+    ObjArray  *arr  = AS_ARRAY(args[1]);
+
+    /* Build the output by string_joining the array on '\n', then
+     * appending a trailing '\n'. The "+ '\n'" makes empty arrays
+     * produce empty files (not files with a single newline) and
+     * makes non-empty arrays end with a newline. */
+    if (arr->count == 0) {
+        /* Empty array: write nothing. */
+        char *pathC = malloc(path->length + 1);
+        if (pathC == NULL) return NIL_VAL;
+        memcpy(pathC, path->chars, path->length);
+        pathC[path->length] = '\0';
+        FILE *f = fopen(pathC, "wb");
+        free(pathC);
+        if (f == NULL) return NIL_VAL;
+        fclose(f);
+        return NIL_VAL;
+    }
+
+    /* Compute the total output size. */
+    int total = 0;
+    for (int i = 0; i < arr->count; i++) {
+        Value element = arrayRead(arr, i);
+        if (!IS_STRING(element)) {
+            runtimeError("io_write_lines() array element %d is not a string.", i);
+            return NIL_VAL;
+        }
+        total += AS_STRING(element)->length;
+    }
+    total += (arr->count - 1);  /* (n-1) newline separators */
+    total += 1;                 /* trailing newline */
+
+    char *out = ALLOCATE(char, total + 1);
+    char *p = out;
+    for (int i = 0; i < arr->count; i++) {
+        Value element = arrayRead(arr, i);
+        ObjString *s = AS_STRING(element);
+        memcpy(p, s->chars, s->length);
+        p += s->length;
+        if (i < arr->count - 1) {
+            *p++ = '\n';
+        } else {
+            *p++ = '\n';  /* trailing newline */
+        }
+    }
+    *p = '\0';
+
+    /* Write the buffer to the file. */
+    char *pathC = malloc(path->length + 1);
+    if (pathC == NULL) { FREE_ARRAY(char, out, total + 1); return NIL_VAL; }
+    memcpy(pathC, path->chars, path->length);
+    pathC[path->length] = '\0';
+
+    FILE *f = fopen(pathC, "wb");
+    free(pathC);
+    if (f == NULL) { FREE_ARRAY(char, out, total + 1); return NIL_VAL; }
+
+    size_t written = fwrite(out, 1, (size_t)total, f);
+    fclose(f);
+    FREE_ARRAY(char, out, total + 1);
+    if (written != (size_t)total) return NIL_VAL;
+    return NIL_VAL;
+}
+
 /* --- Stage 12a: array value type via natives. The value type
  *   (ObjArray) is in object.h; the GC mark/sweep is in gc.c. The
  *   natives below are the only way a Lox program can create or
@@ -1042,6 +1219,17 @@ void defineNatives(void) {
     name = copyString("io_file_exists", (int)strlen("io_file_exists"));
     push(OBJ_VAL(name));
     tableSet(&vm.globals, name, OBJ_VAL(newNative(ioFileExistsNative)));
+    pop();
+
+    /* Stage 16: streaming I/O. */
+    name = copyString("io_read_lines", (int)strlen("io_read_lines"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(ioReadLinesNative)));
+    pop();
+
+    name = copyString("io_write_lines", (int)strlen("io_write_lines"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(ioWriteLinesNative)));
     pop();
 
     /* Stage 12a: array value type via natives. */

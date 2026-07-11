@@ -109,6 +109,11 @@ examples: $(TARGET)
 				./$(TARGET) $$ex; \
 				rm -f lines-input.txt lines-output.txt; \
 				;; \
+			*line-count*) \
+				printf "first\nsecond\nthird\n" > line-count-input.txt; \
+				./$(TARGET) $$ex; \
+				rm -f line-count-input.txt; \
+				;; \
 			*) \
 				./$(TARGET) $$ex || status=$$?; \
 				;; \
