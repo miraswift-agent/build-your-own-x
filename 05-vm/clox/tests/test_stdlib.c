@@ -2471,6 +2471,84 @@ static void test_array_push_chained_returns(void) {
     free(out);
 }
 
+/* --- Stage 21 tests: string_repeat --- */
+
+static void test_string_repeat_basic(void) {
+    /* string_repeat(s, n) -> string. Concatenate s with itself n times. */
+    int exitCode;
+    char *out = runClox(
+        "print string_repeat(\"ha\", 3);\n"          /* "hahaha" */
+        "print string_repeat(\"x\", 5);\n"           /* "xxxxx" */
+        "print string_repeat(\"abc\", 1);\n"         /* "abc" */
+        "print string_repeat(\"hello\", 0);\n",      /* "" */
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/repeat: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "hahaha\n")
+            || !contains(out, "xxxxx\n")
+            || !contains(out, "abc\n")) {
+        fail("stdlib/repeat: expected 'hahaha', 'xxxxx', 'abc' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_repeat_zero(void) {
+    /* n = 0 -> empty string. The "repeat zero times" idiom. */
+    int exitCode;
+    char *out = runClox(
+        "var r = string_repeat(\"anything\", 0);\n"
+        "print string_length(r);\n"
+        "print(r);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/repeat-zero: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "0\n")) {
+        fail("stdlib/repeat-zero: expected '0\\n' (empty length) in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_repeat_negative_errors(void) {
+    /* Negative n -> runtime error. Matches string_substring's discipline:
+     * bad numeric input is a runtime error, not silent. */
+    int exitCode;
+    char *out = runClox("print string_repeat(\"x\", -1);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/repeat-negative: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_repeat_wrong_type(void) {
+    /* Non-string first arg -> runtime error. */
+    int exitCode;
+    char *out = runClox("print string_repeat(42, 3);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/repeat-wrong-type: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_repeat_wrong_arg_count(void) {
+    /* Wrong arity (0 args) -> runtime error. */
+    int exitCode;
+    char *out = runClox("print string_repeat();\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/repeat-wrong-arg-count: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
 int main(void) {
     test_clock_exists();
     test_number_abs();
@@ -2607,6 +2685,13 @@ int main(void) {
     test_array_push_returns_length_growing();
     test_array_push_return_value_is_number();
     test_array_push_chained_returns();
+
+    /* Stage 21: string_repeat. */
+    test_string_repeat_basic();
+    test_string_repeat_zero();
+    test_string_repeat_negative_errors();
+    test_string_repeat_wrong_type();
+    test_string_repeat_wrong_arg_count();
 
     printf("%d passed, %d failed\n", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;

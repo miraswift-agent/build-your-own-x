@@ -1,0 +1,7 @@
+// Stage 21: string_repeat — print a horizontal divider of repeated '='.
+// Demonstrates the natural use case: cheap repetition of a short token.
+var width = 40;
+var divider = string_repeat("=", width);
+print(divider);
+print("Stage 21: string_repeat shipped.");
+print(divider);

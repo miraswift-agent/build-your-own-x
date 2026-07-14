@@ -23,6 +23,7 @@
  */
 
 #include <ctype.h>
+#include <limits.h>
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -363,6 +364,68 @@ static Value stringTrimNative(int argCount, Value *args) {
         return OBJ_VAL(result);
     }
     ObjString *result = copyString(s->chars + start, end - start);
+    return OBJ_VAL(result);
+}
+
+/* --- Stage 21: string_repeat --- */
+/* string_repeat(s, n) -> string. Concatenate s with itself n times.
+ * n = 0 -> empty string (the "repeat zero times" idiom). Negative n
+ * is a runtime error (a negative count is nonsensical; matches
+ * string_substring's discipline of rejecting bad numeric input).
+ * Non-integer n is truncated to int (matches string_substring's
+ * (int) cast). The function allocates one buffer of size
+ * s->length * n and copies in n passes; no intermediate ObjStrings,
+ * no GC pressure. The product is checked for overflow — a
+ * hypothetical user asking for billions of copies of a long string
+ * gets a clear runtime error rather than a silent truncation. */
+static Value stringRepeatNative(int argCount, Value *args) {
+    if (argCount != 2) {
+        runtimeError("string_repeat() takes 2 arguments (%d given).", argCount);
+        return NIL_VAL;
+    }
+    if (!IS_STRING(args[0])) {
+        runtimeError("string_repeat() argument 0 must be a string.");
+        return NIL_VAL;
+    }
+    if (!IS_NUMBER(args[1])) {
+        runtimeError("string_repeat() argument 1 must be a number.");
+        return NIL_VAL;
+    }
+    ObjString *s = AS_STRING(args[0]);
+    double nD = AS_NUMBER(args[1]);
+    /* Truncate toward zero to match string_substring. Negative -> error. */
+    int n = (int)nD;
+    if ((double)n != nD) {
+        /* nD had a fractional part; truncation is fine, no error. */
+    }
+    if (nD < 0) {
+        runtimeError("string_repeat() argument 1 must be non-negative.");
+        return NIL_VAL;
+    }
+    if (n == 0 || s->length == 0) {
+        /* Either "zero repeats" or "any number of empty strings" -> "". */
+        ObjString *result = copyString("", 0);
+        return OBJ_VAL(result);
+    }
+    /* Overflow guard: a s->length * n that overflows int is a
+     * runtime error, not a silent wrap. 2 GiB of string is well
+     * beyond any realistic Lox use case. */
+    if ((long long)s->length * (long long)n > INT_MAX) {
+        runtimeError("string_repeat() result size exceeds maximum.");
+        return NIL_VAL;
+    }
+    int outLen = s->length * n;
+    char *buf = ALLOCATE(char, outLen + 1);
+    /* n passes, each copying s->length bytes. The output buffer is
+     * GC-managed via the ALLOCATE / FREE_ARRAY pattern; copyString
+     * interns the result so repeated calls with the same input
+     * return the same ObjString pointer. */
+    for (int i = 0; i < n; i++) {
+        memcpy(buf + i * s->length, s->chars, s->length);
+    }
+    buf[outLen] = '\0';
+    ObjString *result = copyString(buf, outLen);
+    FREE_ARRAY(char, buf, outLen + 1);
     return OBJ_VAL(result);
 }
 
@@ -1225,6 +1288,12 @@ void defineNatives(void) {
     name = copyString("string_trim", (int)strlen("string_trim"));
     push(OBJ_VAL(name));
     tableSet(&vm.globals, name, OBJ_VAL(newNative(stringTrimNative)));
+    pop();
+
+    /* Stage 21: string_repeat. */
+    name = copyString("string_repeat", (int)strlen("string_repeat"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(stringRepeatNative)));
     pop();
 
     /* Stage 13: string_split / string_join — compose the new array
