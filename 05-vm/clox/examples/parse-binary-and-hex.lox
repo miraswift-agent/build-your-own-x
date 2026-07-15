@@ -1,0 +1,49 @@
+// Stage 25 example: parse-binary-and-hex.lox
+// Composes Stage 24's string_to_number(s) and Stage 25's
+// string_to_number(s, base) to demonstrate parsing numbers in
+// multiple bases. Real-world use cases: parsing config files
+// that have hex color codes, binary flags, octal permissions,
+// etc.
+
+print "=== base 10 (decimal) ===";
+print string_to_number("42", 10);         // 42
+print string_to_number("42");             // 42 (1-arg form, same as Stage 24)
+
+print "=== base 2 (binary) ===";
+print string_to_number("1010", 2);        // 10
+print string_to_number("11111111", 2);    // 255
+print string_to_number("0", 2);           // 0
+// The 'parse a binary flag byte' idiom:
+var flag_byte = string_to_number("10110010", 2);
+print "flag byte = " + string(flag_byte); // 178
+
+print "=== base 16 (hex) ===";
+print string_to_number("ff", 16);         // 255
+print string_to_number("DEAD", 16);       // 57005
+print string_to_number("0x10", 16);       // 16 (0x prefix allowed)
+// print string_to_number("#FF8800", 16); // errors: '#' is not hex
+// The 'parse a hex color' idiom (without the #):
+var r = string_to_number("FF", 16);
+var g = string_to_number("88", 16);
+var b = string_to_number("00", 16);
+print "color = rgb(" + string(r) + "," + string(g) + "," + string(b) + ")";
+
+print "=== base 8 (octal) ===";
+print string_to_number("755", 8);         // 493 (7*64+5*8+5)
+// Unix file permissions idiom:
+var mode = string_to_number("755", 8);
+print "mode = " + string(mode);            // 493
+
+print "=== base 0 (auto-detect) ===";
+print string_to_number("0x10", 0);        // 16 (hex prefix)
+print string_to_number("010", 0);         // 8 (octal prefix)
+print string_to_number("42", 0);          // 42 (decimal)
+
+print "=== errors ===";
+// Uncommenting any of the next lines would error at runtime:
+//   string_to_number("42", 1);       // base < 2
+//   string_to_number("42", 37);      // base > 36
+//   string_to_number("3.14", 10);    // strtol stops at '.'
+//   string_to_number("abc", 16);     // no hex digits
+//   string_to_number("");            // empty string
+// The strict-error contract is loud, not silent.

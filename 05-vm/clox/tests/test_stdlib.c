@@ -2981,6 +2981,136 @@ static void test_string_to_number_wrong_arg_count(void) {
     free(out);
 }
 
+/* --- Stage 25: string_to_number(s, base) --- */
+/* The multi-base variant of Stage 24. Accepts base in [2, 36] or
+ * 0 (auto-detect: '0x' prefix -> hex, '0' prefix -> octal, else
+ * decimal). Matches C's strtol / Python's int() with base argument.
+ * Same strict-error-on-failure contract: no NaN, no Infinity on
+ * overflow, errors on empty input, non-numeric input, no chars
+ * consumed, and base out of [2, 36] and not 0. The 1-arg form
+ * string_to_number(s) still works (base defaults to 10). */
+
+static void test_string_to_number_base_decimal(void) {
+    /* "42" with explicit base 10 — same as 1-arg form. */
+    int exitCode;
+    char *out = runClox(
+        "print string_to_number(\"42\", 10);\n"
+        "print string_to_number(\"-7\", 10);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/to-number-base-decimal: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "42\n")
+            || !contains(out, "-7\n")) {
+        fail("stdlib/to-number-base-decimal: expected '42' and '-7' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_to_number_base_binary(void) {
+    /* "1010" in base 2 -> 10. The classic 'binary string' idiom. */
+    int exitCode;
+    char *out = runClox(
+        "print string_to_number(\"1010\", 2);\n"
+        "print string_to_number(\"11111111\", 2);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/to-number-base-binary: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "10\n")
+            || !contains(out, "255\n")) {
+        fail("stdlib/to-number-base-binary: expected '10' and '255' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_to_number_base_hex(void) {
+    /* "ff" in base 16 -> 255. The classic 'hex string' idiom. */
+    int exitCode;
+    char *out = runClox(
+        "print string_to_number(\"ff\", 16);\n"
+        "print string_to_number(\"DEAD\", 16);\n"
+        "print string_to_number(\"0x10\", 16);\n",  /* '0x' prefix allowed */
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/to-number-base-hex: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "255\n")
+            || !contains(out, "57005\n")
+            || !contains(out, "16\n")) {
+        fail("stdlib/to-number-base-hex: expected '255', '57005', '16' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_to_number_base_auto(void) {
+    /* base 0 -> auto-detect: '0x' prefix -> hex, '0' prefix ->
+     * octal, else decimal. C strtol / Python int convention. */
+    int exitCode;
+    char *out = runClox(
+        "print string_to_number(\"0x10\", 0);\n"    /* hex -> 16 */
+        "print string_to_number(\"010\", 0);\n"     /* octal -> 8 */
+        "print string_to_number(\"42\", 0);\n",     /* decimal -> 42 */
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/to-number-base-auto: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "16\n")
+            || !contains(out, "8\n")
+            || !contains(out, "42\n")) {
+        fail("stdlib/to-number-base-auto: expected '16', '8', '42' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_to_number_base_invalid(void) {
+    /* base < 2 (and != 0) -> runtime error. base > 36 -> error. */
+    int exitCode;
+    char *out = runClox("print string_to_number(\"42\", 1);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/to-number-base-too-low: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+
+    out = runClox("print string_to_number(\"42\", 37);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/to-number-base-too-high: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_to_number_base_wrong_type(void) {
+    /* base arg is not a number -> runtime error. */
+    int exitCode;
+    char *out = runClox("print string_to_number(\"42\", \"10\");\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/to-number-base-wrong-type: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_to_number_base_wrong_arg_count(void) {
+    /* 3 args -> runtime error. */
+    int exitCode;
+    char *out = runClox("print string_to_number(\"42\", 10, 0);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/to-number-base-wrong-arg-count: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
 int main(void) {
     test_clock_exists();
     test_number_abs();
@@ -3154,6 +3284,14 @@ int main(void) {
     test_string_to_number_overflow_errors();
     test_string_to_number_wrong_type();
     test_string_to_number_wrong_arg_count();
+    /* Stage 25: string_to_number with base. */
+    test_string_to_number_base_decimal();
+    test_string_to_number_base_binary();
+    test_string_to_number_base_hex();
+    test_string_to_number_base_auto();
+    test_string_to_number_base_invalid();
+    test_string_to_number_base_wrong_type();
+    test_string_to_number_base_wrong_arg_count();
 
     printf("%d passed, %d failed\n", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;

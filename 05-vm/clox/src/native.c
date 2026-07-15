@@ -143,41 +143,78 @@ static Value stringFromNumberNative(int argCount, Value *args) {
  * snprintf("%.14g", n), and it handles all the edge cases the
  * string(n) impl cares about). NaN is never returned — we error
  * on any condition strtod considers "no number parsed" or "out
- * of range." */
+ * of range."
+ *
+ * --- Stage 25: string_to_number(s, base) --- */
+/* Extended with an optional base argument. 1-arg form (Stage 24)
+ * uses strtod (decimal + exponent). 2-arg form (Stage 25) uses
+ * strtol with the given base. base in [2, 36] or 0 (auto-detect
+ * from prefix: '0x' -> hex, '0' -> octal, else decimal — C strtol
+ * / Python int() convention). Same strict-error contract: empty
+ * input, no chars consumed, base out of [2, 36] and not 0, and
+ * overflow to LONG_MIN / LONG_MAX all error.
+ *
+ * Both forms share the same error message text and the same
+ * "no NaN, no Infinity" guarantee. The 2-arg form's strtol path
+ * does not support fractional input ("3.14" with base 10 errors,
+ * because strtol stops at the '.') — this is the C / Python
+ * integer-parse convention. For decimal floats, use the 1-arg
+ * form. No allocation: strtod/strtol return primitives directly. */
 static Value stringToNumberNative(int argCount, Value *args) {
-    if (argCount != 1) {
-        runtimeError("string_to_number() takes 1 argument (%d given).", argCount);
+    if (argCount != 1 && argCount != 2) {
+        runtimeError("string_to_number() takes 1 or 2 arguments (%d given).", argCount);
         return NIL_VAL;
     }
     if (!IS_STRING(args[0])) {
-        runtimeError("string_to_number() argument must be a string.");
+        runtimeError("string_to_number() argument 0 must be a string.");
         return NIL_VAL;
     }
     ObjString *s = AS_STRING(args[0]);
-    /* strtod's contract: endptr points to the first character NOT
-     * consumed. If endptr == startptr, no number was parsed (empty
-     * input, or input started with non-numeric). If endptr points
-     * mid-string (e.g. "1.5abc"), we still accept the prefix — the
-     * canonical JS parseFloat behavior. We check endptr == startptr
-     * to catch the empty and pure-non-numeric cases. */
-    char *endptr;
-    errno = 0;
-    double result = strtod(s->chars, &endptr);
-    if (endptr == s->chars) {
-        /* No characters consumed: empty string or "abc" / "  ". */
-        runtimeError("string_to_number() could not parse a number from the input.");
-        return NIL_VAL;
+    if (argCount == 1) {
+        /* 1-arg form: strtod, decimal + exponent, JS parseFloat
+         * semantics. */
+        char *endptr;
+        errno = 0;
+        double result = strtod(s->chars, &endptr);
+        if (endptr == s->chars) {
+            runtimeError("string_to_number() could not parse a number from the input.");
+            return NIL_VAL;
+        }
+        if (errno == ERANGE) {
+            runtimeError("string_to_number() input is out of range (overflow).");
+            return NIL_VAL;
+        }
+        return NUMBER_VAL(result);
+    } else {
+        /* 2-arg form: strtol with base. base must be 0 (auto-detect)
+         * or in [2, 36]. */
+        if (!IS_NUMBER(args[1])) {
+            runtimeError("string_to_number() argument 1 must be a number.");
+            return NIL_VAL;
+        }
+        double baseD = AS_NUMBER(args[1]);
+        if (baseD != (int)baseD) {
+            runtimeError("string_to_number() argument 1 must be an integer.");
+            return NIL_VAL;
+        }
+        int base = (int)baseD;
+        if (base != 0 && (base < 2 || base > 36)) {
+            runtimeError("string_to_number() base must be 0 or in [2, 36] (got %d).", base);
+            return NIL_VAL;
+        }
+        char *endptr;
+        errno = 0;
+        long result = strtol(s->chars, &endptr, base);
+        if (endptr == s->chars) {
+            runtimeError("string_to_number() could not parse a number from the input.");
+            return NIL_VAL;
+        }
+        if (errno == ERANGE) {
+            runtimeError("string_to_number() input is out of range (overflow).");
+            return NIL_VAL;
+        }
+        return NUMBER_VAL((double)result);
     }
-    if (errno == ERANGE) {
-        /* Overflow to +/-HUGE_VAL (= +/-Infinity). We treat this as
-         * a runtime error rather than returning Infinity, because
-         * returning Infinity would be silently wrong for any user
-         * arithmetic that doesn't expect it. The "1e1000" test is
-         * the case that hits this branch. */
-        runtimeError("string_to_number() input is out of range (overflow).");
-        return NIL_VAL;
-    }
-    return NUMBER_VAL(result);
 }
 
 static Value stringUpperNative(int argCount, Value *args) {
