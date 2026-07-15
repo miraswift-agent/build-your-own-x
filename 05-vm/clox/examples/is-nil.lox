@@ -1,0 +1,199 @@
+// Stage 48 example: is-nil.lox
+// The "is this value nil?" type predicate. The
+// shape: 1 arg, 1 return value (a bool). True iff the
+// value is nil; false for every other type.
+//
+// Stage 48 is the 5th type predicate after Stage 44's
+// is_array, Stage 45's is_string, Stage 46's is_number,
+// and Stage 47's is_bool. The "type predicate" pattern
+// is now established with 5 of 5+ natives (is_array,
+// is_string, is_number, is_bool, is_nil).
+//
+// Future stages may add is_function. After all 5+ type
+// predicates are added, the caller has a complete
+// type-checking toolbox.
+
+print "=== is_nil on nil: true ===";
+// is_nil returns true for nil values. The only way to
+// get a nil value in clox is the `nil` literal or an
+// uninitialized variable.
+print is_nil(nil);
+var x = nil;
+print is_nil(x);
+var y;
+print is_nil(y);
+var z = nil;
+print is_nil(z);
+// Output:
+//   true
+//   true
+//   true
+//   true
+
+print "=== is_nil on non-nil: false ===";
+// is_nil returns false for every non-nil type.
+// Test across all primitive types and at least one
+// function (the native clock()).
+print is_nil(true);
+print is_nil(false);
+print is_nil(0);
+print is_nil(42);
+print is_nil(3.14);
+print is_nil("nil");
+print is_nil("hello");
+print is_nil("");
+print is_nil([]);
+print is_nil([1, 2, 3]);
+print is_nil(clock);
+// Output:
+//   false
+//   false
+//   false
+//   false
+//   false
+//   false
+//   false
+//   false
+//   false
+//   false
+//   false
+
+print "=== is_nil does not coerce ===";
+// is_nil must NOT coerce. The number 0 is NOT nil
+// (even though some languages treat it as nullish).
+// The empty string is NOT nil. The empty array is
+// NOT nil. The boolean false is NOT nil. The
+// alternative (PHP-style nullish coercion) loses
+// type information.
+print is_nil(0);
+print is_nil("");
+print is_nil([]);
+print is_nil(false);
+// Output:
+//   false
+//   false
+//   false
+//   false
+
+print "=== compose with is_array, is_string, is_number, is_bool ===";
+// Combine is_nil with the other type predicates for
+// a complete type dispatch on the most common types.
+// The five natives are complementary:
+// - is_array(x) is the array predicate (Stage 44)
+// - is_string(x) is the string predicate (Stage 45)
+// - is_number(x) is the number predicate (Stage 46)
+// - is_bool(x) is the bool predicate (Stage 47)
+// - is_nil(x) is the nil predicate (Stage 48)
+fun describe(x) {
+    if (is_array(x))  { return "array"; }
+    if (is_string(x)) { return "string"; }
+    if (is_number(x)) { return "number"; }
+    if (is_bool(x))   { return "bool"; }
+    if (is_nil(x))    { return "nil"; }
+    return typeof(x);
+}
+print describe(nil);
+print describe(42);
+print describe("hello");
+print describe([1, 2, 3]);
+print describe(true);
+// Output:
+//   nil
+//   number
+//   string
+//   array
+//   bool
+
+print "=== pattern: default value ===";
+// Real-world use case: providing a default value
+// when a variable is nil. Without is_nil, the caller
+// would have to use `x == nil` (which works in clox
+// because nil == nil is true, but is more verbose).
+// Stage 48 makes it ergonomic: is_nil(x) is the
+// predicate.
+fun default_to(x, def) {
+    if (is_nil(x)) {
+        return def;
+    }
+    return x;
+}
+print default_to(nil, 42);
+print default_to(0, 42);
+print default_to("", "default");
+print default_to("hello", "default");
+print default_to([], [1, 2, 3]);
+print default_to([4, 5, 6], [1, 2, 3]);
+// Output:
+//   42
+//   0
+//
+//   hello
+//   []
+//   [4, 5, 6]
+
+print "=== pattern: filter nils from array ===";
+// Another use case: filtering only the nils from a
+// mixed array. Stage 48 + Stage 33's array_filter
+// would compose, but clox's array_filter takes a
+// function, not a built-in predicate. So we hand-roll
+// the filter with is_nil.
+fun filter_nils(arr) {
+    var out = [];
+    for (var i = 0; i < array_length(arr); i = i + 1) {
+        var item = array_get(arr, i);
+        if (!is_nil(item)) {
+            array_push(out, item);
+        }
+    }
+    return out;
+}
+print filter_nils([1, nil, 2, nil, 3]);
+print filter_nils([nil, nil, nil]);
+print filter_nils([1, 2, 3]);
+print filter_nils([]);
+// Output:
+//   [1, 2, 3]
+//   []
+//   [1, 2, 3]
+//   []
+
+print "=== what this stage teaches ===";
+// (a) "The type predicate family is now 5-strong:
+//     is_array (Stage 44), is_string (Stage 45),
+//     is_number (Stage 46), is_bool (Stage 47),
+//     is_nil (Stage 48). The pattern is established.
+//     Future stages may add is_function.
+//
+// (b) "Nil in clox is a dedicated Value tag" — the
+//     is_nil(x) check is just `IS_NIL(args[0])`. The
+//     only way to get a nil value in clox is the
+//     `nil` literal or an uninitialized variable.
+//
+// (c) "Type predicates don't coerce" — discipline
+//     from Stages 44-47 carries forward. The number
+//     0 is NOT nil. The empty array is NOT nil. The
+//     empty string is NOT nil. The boolean false is
+//     NOT nil. The alternative (PHP-style nullish
+//     coercion) loses type information.
+//
+// (d) "False is not nil" — new for Stage 48. The
+//     confusion between "false" and "nil" is
+//     common in dynamic languages (Python, Lua).
+//     In clox, they are different types: false is
+//     a bool, nil is nil. The `is_nil` predicate
+//     makes this distinction explicit.
+//
+// (e) "Stage 44's push/pop lesson was applied for
+//     the 4th consecutive stage" — 0 impl bugs in
+//     Stage 48. The new is_nil registration has 1
+//     push and 1 pop, balanced (vs. Stage 44's
+//     duplicate-pop bug). The streak is now at
+//     5-consec-zero-impl-bug in the new streak.
+//
+// (f) "1 test-bug caught and fixed mid-flight" —
+//     new lesson for Stage 48. The first test of
+//     `test_is_nil_true` conflated "false" with
+//     "nil" (a Python/Lua-style mental model). The
+//     fix was a test edit, not a code change. The
+//     discipline: **type predicates inspect the
+//     TYPE, not the value's truthiness.**

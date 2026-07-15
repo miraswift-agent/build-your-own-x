@@ -2761,6 +2761,27 @@ static Value isBoolNative(int argCount, Value *args) {
     return BOOL_VAL(false);
 }
 
+static Value isNilNative(int argCount, Value *args) {
+    if (argCount != 1) {
+        runtimeError("is_nil() takes 1 argument (%d given).", argCount);
+        return NIL_VAL;
+    }
+    /* The "type predicate" pattern (Stage 48, after
+     * Stage 44's is_array, Stage 45's is_string,
+     * Stage 46's is_number, and Stage 47's is_bool).
+     * Inspect the Value's type tag directly. For
+     * clox, nil is a dedicated Value tag (VAL_NIL).
+     * The alternative is a separate "is_nil" VM
+     * opcode, but a native keeps the VM unchanged
+     * and is consistent with typeof() and is_array()
+     * and is_string() and is_number() and is_bool().
+     * Returns a bool (BOOL_VAL, not OBJ_VAL). */
+    if (IS_NIL(args[0])) {
+        return BOOL_VAL(true);
+    }
+    return BOOL_VAL(false);
+}
+
 void defineNatives(void) {
     /* Existing from stage 05. */
     ObjString *name = copyString("clock", (int)strlen("clock"));
@@ -3242,5 +3263,20 @@ void defineNatives(void) {
     name = copyString("is_bool", (int)strlen("is_bool"));
     push(OBJ_VAL(name));
     tableSet(&vm.globals, name, OBJ_VAL(newNative(isBoolNative)));
+    pop();
+
+    /* Stage 48: type predicate. is_nil(value)
+     * returns true iff the value is nil. The 5th
+     * type predicate after Stage 44's is_array,
+     * Stage 45's is_string, Stage 46's is_number,
+     * and Stage 47's is_bool. Closes a gap (the
+     * caller had to use typeof(x) == "nil" to
+     * determine nil-ness). ~10 lines, no new
+     * architecture, no user-code dispatch. The
+     * push/pop count is balanced: 1 push for the
+     * name, 1 pop after tableSet. */
+    name = copyString("is_nil", (int)strlen("is_nil"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(isNilNative)));
     pop();
 }

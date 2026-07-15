@@ -4685,6 +4685,112 @@ static void test_is_bool_wrong_arg_count(void) {
     free(out2);
 }
 
+static void test_is_nil_true(void) {
+    /* Stage 48: is_nil(value) -> bool. Returns
+     * true iff the value is nil. The 5th type
+     * predicate (after is_array in Stage 44,
+     * is_string in Stage 45, is_number in Stage 46,
+     * is_bool in Stage 47). Complements typeof:
+     * the caller doesn't have to compare a string
+     * to determine nil-ness.
+     *
+     * Note: `false` is NOT nil in clox (it's a
+     * boolean). `1 == 2` returns false (a boolean,
+     * not nil). `!true` returns false (a boolean,
+     * not nil). The "type predicate" is about the
+     * TYPE, not the value's truthiness. The only
+     * way to get a nil value is the `nil` literal
+     * or an uninitialized variable. */
+    int exitCode;
+    char *out = runClox(
+        "print is_nil(nil);\n"
+        "var x = nil; print is_nil(x);\n"
+        "var y; print is_nil(y);\n"
+        "var z = nil; print is_nil(z);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/is-nil-true: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "true\ntrue\ntrue\ntrue\n")) {
+        fail("stdlib/is-nil-true: expected 'true' 4 times, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_is_nil_false(void) {
+    /* is_nil() returns false for every non-nil
+     * type. The "type predicate" should be exhaustive:
+     * true for nil, false for everything else. */
+    int exitCode;
+    char *out = runClox(
+        "print is_nil(true);\n"
+        "print is_nil(false);\n"
+        "print is_nil(0);\n"
+        "print is_nil(42);\n"
+        "print is_nil(3.14);\n"
+        "print is_nil(\"nil\");\n"
+        "print is_nil(\"hello\");\n"
+        "print is_nil(\"\");\n"
+        "print is_nil([]);\n"
+        "print is_nil([1, 2, 3]);\n"
+        "print is_nil(clock);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/is-nil-false: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "false\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\n")) {
+        fail("stdlib/is-nil-false: expected 'false' 11 times, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_is_nil_does_not_coerce(void) {
+    /* is_nil() must NOT coerce. The number 0 is
+     * NOT nil (even though some languages treat it
+     * as nullish). The empty string is NOT nil. The
+     * empty array is NOT nil. The boolean false is
+     * NOT nil. The alternative (PHP-style nullish
+     * coercion) loses type information. */
+    int exitCode;
+    char *out = runClox(
+        "print is_nil(0);\n"
+        "print is_nil(\"\");\n"
+        "print is_nil([]);\n"
+        "print is_nil(false);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/is-nil-does-not-coerce: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "false\nfalse\nfalse\nfalse\n")) {
+        fail("stdlib/is-nil-does-not-coerce: expected 'false' 4 times, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_is_nil_wrong_arg_count(void) {
+    /* Defensive: native function should handle wrong
+     * arg count. 0 args, 2 args both error. */
+    int exitCode;
+    char *out1 = runClox("print is_nil();\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/is-nil-wrong-arg-count-0: expected non-zero exit for 0 args");
+    } else {
+        pass();
+    }
+    free(out1);
+
+    char *out2 = runClox("print is_nil(nil, nil);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/is-nil-wrong-arg-count-2: expected non-zero exit for 2 args");
+    } else {
+        pass();
+    }
+    free(out2);
+}
+
 static void test_array_group_by_three_groups(void) {
     /* Three distinct keys, in the order they first appear.
      * Numbers by signum: keyFn(x) = x > 0 (positive vs.
@@ -7315,6 +7421,10 @@ int main(void) {
     test_is_bool_false();
     test_is_bool_does_not_coerce();
     test_is_bool_wrong_arg_count();
+    test_is_nil_true();
+    test_is_nil_false();
+    test_is_nil_does_not_coerce();
+    test_is_nil_wrong_arg_count();
     /* Stage 29: string_split with limit. */
     test_string_split_with_limit();
     test_string_split_limit_zero();
