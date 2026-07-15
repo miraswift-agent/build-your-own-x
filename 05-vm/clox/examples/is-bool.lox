@@ -1,0 +1,184 @@
+// Stage 47 example: is-bool.lox
+// The "is this value a boolean?" type predicate. The
+// shape: 1 arg, 1 return value (a bool). True iff the
+// value is a boolean; false for every other type.
+//
+// Stage 47 is the 4th type predicate after Stage 44's
+// is_array, Stage 45's is_string, and Stage 46's
+// is_number. The "type predicate" pattern is now
+// established with 4 of 5+ natives (is_array,
+// is_string, is_number, is_bool).
+//
+// Future stages will add is_nil, is_function. After
+// all 5+ type predicates are added, the caller has a
+// complete type-checking toolbox.
+
+print "=== is_bool on booleans: true ===";
+// is_bool returns true for boolean values (true,
+// false, comparisons, !-operations, etc.).
+print is_bool(true);
+print is_bool(false);
+print is_bool(1 == 1);
+print is_bool(1 == 2);
+print is_bool(!nil);
+// Output:
+//   true
+//   true
+//   true
+//   true
+//   true
+
+print "=== is_bool on non-booleans: false ===";
+// is_bool returns false for every non-boolean type.
+// Test across all primitive types and at least one
+// function (the native clock()).
+print is_bool(nil);
+print is_bool(0);
+print is_bool(42);
+print is_bool(3.14);
+print is_bool("true");
+print is_bool("hello");
+print is_bool("");
+print is_bool([]);
+print is_bool([true, false]);
+print is_bool(clock);
+// Output:
+//   false
+//   false
+//   false
+//   false
+//   false
+//   false
+//   false
+//   false
+//   false
+//   false
+
+print "=== is_bool does not coerce ===";
+// is_bool must NOT coerce. The number 0 is NOT
+// false (even though C and Python treat it as
+// falsy). The number 1 is NOT true. The empty array
+// is NOT false (even though JS treats it as truthy).
+// The empty string is NOT false. The alternative
+// (JS-style falsy coercion) loses type information.
+print is_bool(0);
+print is_bool(1);
+print is_bool("");
+print is_bool([]);
+print is_bool(nil);
+// Output:
+//   false
+//   false
+//   false
+//   false
+//   false
+
+print "=== compose with is_array, is_string, is_number ===";
+// Combine is_bool with the other type predicates for
+// a complete type dispatch on the most common types.
+// The four natives are complementary:
+// - is_array(x) is the array predicate (Stage 44)
+// - is_string(x) is the string predicate (Stage 45)
+// - is_number(x) is the number predicate (Stage 46)
+// - is_bool(x) is the bool predicate (Stage 47)
+fun describe(x) {
+    if (is_array(x))  { return "array"; }
+    if (is_string(x)) { return "string"; }
+    if (is_number(x)) { return "number"; }
+    if (is_bool(x))   { return "bool"; }
+    return typeof(x);
+}
+print describe(true);
+print describe(42);
+print describe("hello");
+print describe([1, 2, 3]);
+print describe(nil);
+// Output:
+//   bool
+//   number
+//   string
+//   array
+//   nil
+
+print "=== pattern: count booleans in an array ===";
+// Real-world use case: counting the booleans in a
+// mixed array. Without is_bool, the caller would
+// have to use typeof(x) == "bool" which is verbose.
+// Stage 47 makes it ergonomic: is_bool(x) is the
+// predicate.
+fun count_bools(arr) {
+    var count = 0;
+    for (var i = 0; i < array_length(arr); i = i + 1) {
+        if (is_bool(array_get(arr, i))) {
+            count = count + 1;
+        }
+    }
+    return count;
+}
+print count_bools([true, false, true, true, false]);
+print count_bools([true, "true", 1, false, nil]);
+print count_bools([]);
+print count_bools(["a", "b", "c"]);
+// Output:
+//   5
+//   2
+//   0
+//   0
+
+print "=== pattern: filter booleans from array ===";
+// Another use case: filtering only the booleans from
+// a mixed array. Stage 47 + Stage 33's array_filter
+// would compose, but clox's array_filter takes a
+// function, not a built-in predicate. So we hand-roll
+// the filter with is_bool.
+fun filter_bools(arr) {
+    var out = [];
+    for (var i = 0; i < array_length(arr); i = i + 1) {
+        var item = array_get(arr, i);
+        if (is_bool(item)) {
+            array_push(out, item);
+        }
+    }
+    return out;
+}
+print filter_bools([true, "false", 1, false, "true"]);
+print filter_bools([1, 2, 3]);
+print filter_bools([]);
+// Output:
+//   [true, false]
+//   []
+//   []
+
+print "=== what this stage teaches ===";
+// (a) "The type predicate family is now 4-strong:
+//     is_array (Stage 44), is_string (Stage 45),
+//     is_number (Stage 46), is_bool (Stage 47). The
+//     pattern is established. Future stages will add
+//     is_nil, is_function.
+//
+// (b) "Booleans in clox are a dedicated Value tag" —
+//     the is_bool(x) check is `IS_BOOL(args[0])`.
+//     The alternative is to check for == true or ==
+//     false, but that doesn't tell you the TYPE of
+//     the value.
+//
+// (c) "Type predicates don't coerce" — discipline
+//     from Stages 44/45/46 carries forward. The
+//     number 0 is NOT false. The empty array is NOT
+//     false. The empty string is NOT false. The
+//     alternative (JS-style falsy coercion) loses
+//     type information.
+//
+// (d) "Stage 44's push/pop lesson was applied for
+//     the 3rd consecutive stage" — 0 bugs in Stage
+//     47. The new is_bool registration has 1 push
+//     and 1 pop, balanced (vs. Stage 44's
+//     duplicate-pop bug that broke 221 tests). The
+//     streak is now at 4-consec-zero-bug in the new
+//     streak.
+//
+// (e) "Type predicates compose with control flow" —
+//     the canonical use case is "guard against
+//     non-bool input before a boolean operation".
+//     Stage 47 makes it ergonomic: is_bool(x) is the
+//     predicate.

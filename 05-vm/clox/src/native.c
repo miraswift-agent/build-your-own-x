@@ -2740,6 +2740,27 @@ static Value isNumberNative(int argCount, Value *args) {
     return BOOL_VAL(false);
 }
 
+static Value isBoolNative(int argCount, Value *args) {
+    if (argCount != 1) {
+        runtimeError("is_bool() takes 1 argument (%d given).", argCount);
+        return NIL_VAL;
+    }
+    /* The "type predicate" pattern (Stage 47, after
+     * Stage 44's is_array, Stage 45's is_string, and
+     * Stage 46's is_number). Inspect the Value's
+     * type tag directly. For clox, a bool is a
+     * dedicated Value tag (VAL_BOOL). The alternative
+     * is a separate "is_bool" VM opcode, but a native
+     * keeps the VM unchanged and is consistent with
+     * typeof() and is_array() and is_string() and
+     * is_number(). Returns a bool (BOOL_VAL, not
+     * OBJ_VAL). */
+    if (IS_BOOL(args[0])) {
+        return BOOL_VAL(true);
+    }
+    return BOOL_VAL(false);
+}
+
 void defineNatives(void) {
     /* Existing from stage 05. */
     ObjString *name = copyString("clock", (int)strlen("clock"));
@@ -3206,5 +3227,20 @@ void defineNatives(void) {
     name = copyString("is_number", (int)strlen("is_number"));
     push(OBJ_VAL(name));
     tableSet(&vm.globals, name, OBJ_VAL(newNative(isNumberNative)));
+    pop();
+
+    /* Stage 47: type predicate. is_bool(value)
+     * returns true iff the value is a boolean. The
+     * 4th type predicate after Stage 44's is_array,
+     * Stage 45's is_string, and Stage 46's
+     * is_number. Closes a gap (the caller had to
+     * use typeof(x) == "bool" to determine
+     * bool-ness). ~10 lines, no new architecture,
+     * no user-code dispatch. The push/pop count
+     * is balanced: 1 push for the name, 1 pop
+     * after tableSet. */
+    name = copyString("is_bool", (int)strlen("is_bool"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(isBoolNative)));
     pop();
 }

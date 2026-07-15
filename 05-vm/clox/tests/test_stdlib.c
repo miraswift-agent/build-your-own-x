@@ -4586,6 +4586,105 @@ static void test_is_number_wrong_arg_count(void) {
     free(out2);
 }
 
+static void test_is_bool_true(void) {
+    /* Stage 47: is_bool(value) -> bool. Returns
+     * true iff the value is a boolean. The 4th type
+     * predicate (after is_array in Stage 44,
+     * is_string in Stage 45, is_number in Stage 46).
+     * Complements typeof: the caller doesn't have
+     * to compare a string to determine bool-ness. */
+    int exitCode;
+    char *out = runClox(
+        "print is_bool(true);\n"
+        "print is_bool(false);\n"
+        "print is_bool(1 == 1);\n"
+        "print is_bool(1 == 2);\n"
+        "print is_bool(!nil);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/is-bool-true: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "true\ntrue\ntrue\ntrue\ntrue\n")) {
+        fail("stdlib/is-bool-true: expected 'true' 5 times, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_is_bool_false(void) {
+    /* is_bool() returns false for every non-boolean
+     * type. The "type predicate" should be exhaustive:
+     * true for booleans, false for everything else. */
+    int exitCode;
+    char *out = runClox(
+        "print is_bool(nil);\n"
+        "print is_bool(0);\n"
+        "print is_bool(42);\n"
+        "print is_bool(3.14);\n"
+        "print is_bool(\"true\");\n"
+        "print is_bool(\"hello\");\n"
+        "print is_bool(\"\");\n"
+        "print is_bool([]);\n"
+        "print is_bool([true, false]);\n"
+        "print is_bool(clock);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/is-bool-false: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "false\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\n")) {
+        fail("stdlib/is-bool-false: expected 'false' 10 times, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_is_bool_does_not_coerce(void) {
+    /* is_bool() must NOT coerce. The number 0 is
+     * NOT false (even though C and Python treat it
+     * as falsy). The number 1 is NOT true. The
+     * empty array is NOT false (even though JS
+     * treats it as truthy). The empty string is
+     * NOT false. The alternative (JS-style falsy
+     * coercion) loses type information. */
+    int exitCode;
+    char *out = runClox(
+        "print is_bool(0);\n"
+        "print is_bool(1);\n"
+        "print is_bool(\"\");\n"
+        "print is_bool([]);\n"
+        "print is_bool(nil);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/is-bool-does-not-coerce: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "false\nfalse\nfalse\nfalse\nfalse\n")) {
+        fail("stdlib/is-bool-does-not-coerce: expected 'false' 5 times, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_is_bool_wrong_arg_count(void) {
+    /* Defensive: native function should handle wrong
+     * arg count. 0 args, 2 args both error. */
+    int exitCode;
+    char *out1 = runClox("print is_bool();\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/is-bool-wrong-arg-count-0: expected non-zero exit for 0 args");
+    } else {
+        pass();
+    }
+    free(out1);
+
+    char *out2 = runClox("print is_bool(true, false);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/is-bool-wrong-arg-count-2: expected non-zero exit for 2 args");
+    } else {
+        pass();
+    }
+    free(out2);
+}
+
 static void test_array_group_by_three_groups(void) {
     /* Three distinct keys, in the order they first appear.
      * Numbers by signum: keyFn(x) = x > 0 (positive vs.
@@ -7212,6 +7311,10 @@ int main(void) {
     test_is_number_false();
     test_is_number_does_not_coerce();
     test_is_number_wrong_arg_count();
+    test_is_bool_true();
+    test_is_bool_false();
+    test_is_bool_does_not_coerce();
+    test_is_bool_wrong_arg_count();
     /* Stage 29: string_split with limit. */
     test_string_split_with_limit();
     test_string_split_limit_zero();
