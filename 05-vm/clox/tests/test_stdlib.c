@@ -3453,6 +3453,159 @@ static void test_string_trim_compose(void) {
     free(out);
 }
 
+static void test_array_unique_basic(void) {
+    /* [1, 2, 2, 3, 1] -> [1, 2, 3]. */
+    int exitCode;
+    char *out = runClox(
+        "var a = [1, 2, 2, 3, 1];\n"
+        "var b = array_unique(a);\n"
+        "print array_length(b);\n"
+        "print b[0];\n"
+        "print b[1];\n"
+        "print b[2];\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-unique-basic: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "3\n1\n2\n3\n")) {
+        fail("stdlib/array-unique-basic: expected '3\\n1\\n2\\n3\\n' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_unique_strings(void) {
+    /* Interned string literals collapse; duplicates by content kept. */
+    int exitCode;
+    char *out = runClox(
+        "var a = [\"a\", \"b\", \"a\", \"c\", \"b\"];\n"
+        "var b = array_unique(a);\n"
+        "print array_length(b);\n"
+        "print b[0];\n"
+        "print b[1];\n"
+        "print b[2];\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-unique-strings: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "3\na\nb\nc\n")) {
+        fail("stdlib/array-unique-strings: expected '3\\na\\nb\\nc\\n' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_unique_preserves_input(void) {
+    /* array_unique does not mutate its argument. */
+    int exitCode;
+    char *out = runClox(
+        "var a = [1, 1, 2];\n"
+        "var b = array_unique(a);\n"
+        "print array_length(a);\n"
+        "print a[0];\n"
+        "print a[1];\n"
+        "print array_length(b);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-unique-preserves-input: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "3\n1\n1\n2\n")) {
+        fail("stdlib/array-unique-preserves-input: expected input preserved in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_unique_empty(void) {
+    /* [] -> []. */
+    int exitCode;
+    char *out = runClox(
+        "var a = [];\n"
+        "var b = array_unique(a);\n"
+        "print array_length(b);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-unique-empty: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "0\n")) {
+        fail("stdlib/array-unique-empty: expected '0\\n' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_unique_single(void) {
+    /* [42] -> [42]. */
+    int exitCode;
+    char *out = runClox(
+        "var a = [42];\n"
+        "var b = array_unique(a);\n"
+        "print array_length(b);\n"
+        "print b[0];\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-unique-single: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "1\n42\n")) {
+        fail("stdlib/array-unique-single: expected '1\\n42\\n' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_unique_mixed_types(void) {
+    /* 1, true, \"1\" are distinct values. */
+    int exitCode;
+    char *out = runClox(
+        "var a = [1, true, \"1\", 1, true];\n"
+        "var b = array_unique(a);\n"
+        "print array_length(b);\n"
+        "print b[0];\n"
+        "print b[1];\n"
+        "print b[2];\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-unique-mixed-types: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "3\n1\ntrue\n1\n")) {
+        fail("stdlib/array-unique-mixed-types: expected '3\\n1\\ntrue\\n1\\n' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_unique_wrong_arg_count(void) {
+    /* array_unique() with wrong arity is a runtime error. */
+    int exitCode;
+    char *out = runClox("array_unique();\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-unique-wrong-arg-count-zero: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+
+    out = runClox("array_unique([1], [2]);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-unique-wrong-arg-count-two: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_unique_wrong_type(void) {
+    /* array_unique on a non-array is a runtime error. */
+    int exitCode;
+    char *out = runClox("array_unique(\"hello\");\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-unique-wrong-type: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
 int main(void) {
     test_clock_exists();
     test_number_abs();
@@ -3655,6 +3808,16 @@ int main(void) {
     test_string_trim_end_wrong_type();
     test_string_trim_end_wrong_arg_count();
     test_string_trim_compose();
+
+    /* Stage 28: array_unique. */
+    test_array_unique_basic();
+    test_array_unique_strings();
+    test_array_unique_preserves_input();
+    test_array_unique_empty();
+    test_array_unique_single();
+    test_array_unique_mixed_types();
+    test_array_unique_wrong_arg_count();
+    test_array_unique_wrong_type();
 
     printf("%d passed, %d failed\n", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;

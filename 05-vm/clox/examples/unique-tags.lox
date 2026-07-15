@@ -1,0 +1,52 @@
+// Stage 28 example: unique-tags.lox
+// Composes Stage 13's string_split with Stage 28's array_unique.
+// Demonstrates the "deduplicate a list" idiom: first occurrence
+// kept, later duplicates dropped, input not mutated.
+
+print "=== basic deduplication ===";
+var nums = [1, 2, 2, 3, 1, 4, 3, 5];
+var uniq_nums = array_unique(nums);
+print array_length(uniq_nums);   // 5
+var i = 0;
+while (i < array_length(uniq_nums)) {
+    print uniq_nums[i];          // 1, 2, 3, 4, 5
+    i = i + 1;
+}
+
+print "=== strings collapse by content ===";
+var tags = ["rust", "c", "rust", "agent", "c", "llm"];
+var uniq_tags = array_unique(tags);
+print array_length(uniq_tags);   // 4
+i = 0;
+while (i < array_length(uniq_tags)) {
+    print uniq_tags[i];          // rust, c, agent, llm
+    i = i + 1;
+}
+
+print "=== input is preserved ===";
+print array_length(nums);        // 8 (still has duplicates)
+print array_length(tags);        // 6 (still has duplicates)
+
+print "=== first-occurrence order matters ===";
+var order = ["b", "a", "b", "c", "a"];
+var uniq_order = array_unique(order);
+i = 0;
+while (i < array_length(uniq_order)) {
+    print uniq_order[i];         // b, a, c
+    i = i + 1;
+}
+
+print "=== deduplicate CSV tags ===";
+var csv = "rust,c,agent,llm,rust,agent";
+var raw_tags = string_split(csv, ",");
+var clean_tags = array_unique(raw_tags);
+print array_length(clean_tags);  // 4
+i = 0;
+while (i < array_length(clean_tags)) {
+    print clean_tags[i];         // rust, c, agent, llm
+    i = i + 1;
+}
+
+print "=== empty and single ===";
+print array_length(array_unique([]));     // 0
+print array_length(array_unique([42]));   // 1

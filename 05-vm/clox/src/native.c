@@ -1563,6 +1563,47 @@ static Value arrayReverseNative(int argCount, Value *args) {
     return args[0];
 }
 
+/* Stage 28: array_unique(arr) -> array
+ *
+ * Returns a new array containing only the first occurrence of each
+ * distinct value, preserving input order. Uses clox's valuesEqual()
+ * semantics (type-sensitive; object identity for objects, which for
+ * interned strings means content-equal literals collapse).
+ *
+ * Implementation: walk the input once; for each element, scan the
+ * result built so far and append only if not already present. Worst
+ * case O(n^2) comparisons, acceptable for the "hand-rolled dedup"
+ * lesson stage. Allocates one new ObjArray with capacity = input
+ * count; actual count may be smaller. */
+static Value arrayUniqueNative(int argCount, Value *args) {
+    if (argCount != 1) {
+        runtimeError("array_unique() takes 1 argument (%d given).", argCount);
+        return NIL_VAL;
+    }
+    if (!IS_ARRAY(args[0])) {
+        runtimeError("array_unique() argument must be an array.");
+        return NIL_VAL;
+    }
+    ObjArray *input = AS_ARRAY(args[0]);
+    ObjArray *result = newArray(input->count);
+    push(OBJ_VAL(result));  /* GC: keep alive while filling */
+    for (int i = 0; i < input->count; i++) {
+        Value candidate = input->elements[i];
+        bool found = false;
+        for (int j = 0; j < result->count; j++) {
+            if (valuesEqual(candidate, result->elements[j])) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            arrayPush(result, candidate);
+        }
+    }
+    pop();
+    return OBJ_VAL(result);
+}
+
 static Value typeofNative(int argCount, Value *args) {
     if (argCount != 1) {
         runtimeError("typeof() takes 1 argument (%d given).", argCount);
@@ -1838,6 +1879,12 @@ void defineNatives(void) {
     name = copyString("array_reverse", (int)strlen("array_reverse"));
     push(OBJ_VAL(name));
     tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayReverseNative)));
+    pop();
+
+    /* Stage 28: array_unique. */
+    name = copyString("array_unique", (int)strlen("array_unique"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayUniqueNative)));
     pop();
 
     /* Stage 7: type predicate. */
