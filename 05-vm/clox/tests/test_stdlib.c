@@ -4184,6 +4184,201 @@ static void test_array_map_wrong_type(void) {
     free(out);
 }
 
+/* Stage 32: array_reduce(arr, reducer, initial) -> value.
+ * Mirror of Stage 31's array_map. Takes an array, a 2-arg
+ * Lox closure (the reducer: (acc, elem) -> newAcc), and an
+ * initial value. Returns the final accumulator. Uses the same
+ * user-code-dispatch architecture as Stages 30-31
+ * (callClosureFromNative with argCount=2). clox doesn't
+ * support anonymous function expressions; we use the form
+ * `fun name(args) { body }`. */
+
+static void test_array_reduce_sum(void) {
+    /* Sum [1, 2, 3, 4, 5] with initial 0. */
+    int exitCode;
+    char *out = runClox(
+        "fun add(acc, x) { return acc + x; }\n"
+        "var total = array_reduce([1, 2, 3, 4, 5], add, 0);\n"
+        "print total;\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-reduce-sum: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "15\n")) {
+        fail("stdlib/array-reduce-sum: expected '15' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_reduce_product(void) {
+    /* Product [1, 2, 3, 4] with initial 1. */
+    int exitCode;
+    char *out = runClox(
+        "fun mul(acc, x) { return acc * x; }\n"
+        "var p = array_reduce([1, 2, 3, 4], mul, 1);\n"
+        "print p;\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-reduce-product: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "24\n")) {
+        fail("stdlib/array-reduce-product: expected '24' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_reduce_string_concat(void) {
+    /* Concatenate strings with empty-string initial. */
+    int exitCode;
+    char *out = runClox(
+        "fun cat(acc, s) { return acc + s; }\n"
+        "var joined = array_reduce([\"a\", \"b\", \"c\"], cat, \"\");\n"
+        "print joined;\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-reduce-string-concat: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "abc\n")) {
+        fail("stdlib/array-reduce-string-concat: expected 'abc' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_reduce_empty_array(void) {
+    /* Empty array: returns the initial as-is. */
+    int exitCode;
+    char *out = runClox(
+        "fun add(acc, x) { return acc + x; }\n"
+        "var total = array_reduce([], add, 42);\n"
+        "print total;\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-reduce-empty-array: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "42\n")) {
+        fail("stdlib/array-reduce-empty-array: expected '42' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_reduce_type_change(void) {
+    /* Reducer can return a different type than the initial.
+     * Here the reducer returns a bool (string_length > 0);
+     * the final accumulator is the last value the reducer
+     * returned. clox's truthy rule: false and nil are falsy;
+     * the result `true` is truthy, so `print total` prints
+     * 'true'. The discipline: array_reduce doesn't constrain
+     * the reducer's return type, so the test is verifying
+     * the natural propagation, not a specific number. */
+    int exitCode;
+    char *out = runClox(
+        "fun nonEmpty(acc, s) { return string_length(s) > 0; }\n"
+        "var total = array_reduce([\"a\", \"\", \"b\"], nonEmpty, 0);\n"
+        "print total;\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-reduce-type-change: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "true\n")) {
+        fail("stdlib/array-reduce-type-change: expected 'true' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_reduce_composes_with_map(void) {
+    /* Compose with Stage 31: map then reduce. */
+    int exitCode;
+    char *out = runClox(
+        "fun dbl(x) { return x * 2; }\n"
+        "fun add(acc, x) { return acc + x; }\n"
+        "var doubled = array_map([1, 2, 3, 4], dbl);\n"
+        "var total = array_reduce(doubled, add, 0);\n"
+        "print total;\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-reduce-composes-with-map: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "20\n")) {
+        fail("stdlib/array-reduce-composes-with-map: expected '20' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_reduce_wrong_arg_count(void) {
+    /* 1 arg (no reducer, no initial) errors. 2 args errors. 4 args errors. */
+    int exitCode;
+    char *out = runClox("print array_reduce([1,2,3]);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-reduce-wrong-arg-count-one: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+
+    out = runClox(
+        "fun add(acc, x) { return acc + x; }\n"
+        "print array_reduce([1,2,3], add);\n",
+        &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-reduce-wrong-arg-count-two: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+
+    out = runClox(
+        "fun add(acc, x) { return acc + x; }\n"
+        "print array_reduce([1,2,3], add, 0, 99);\n",
+        &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-reduce-wrong-arg-count-four: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_reduce_wrong_type(void) {
+    /* Source must be array. Reducer must be a 2-arg function. */
+    int exitCode;
+    char *out = runClox(
+        "fun add(acc, x) { return acc + x; }\n"
+        "print array_reduce(\"not an array\", add, 0);\n",
+        &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-reduce-wrong-type-arr: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+
+    out = runClox("print array_reduce([1,2,3], 42, 0);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-reduce-wrong-type-fn: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+
+    /* Reducer arity must be 2. */
+    out = runClox(
+        "fun oneArg(x) { return x; }\n"
+        "print array_reduce([1,2,3], oneArg, 0);\n",
+        &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-reduce-wrong-type-arity: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
 int main(void) {
     test_clock_exists();
     test_number_abs();
@@ -4423,6 +4618,16 @@ int main(void) {
     test_array_map_composes_with_filter();
     test_array_map_wrong_arg_count();
     test_array_map_wrong_type();
+
+    /* Stage 32: array_reduce. */
+    test_array_reduce_sum();
+    test_array_reduce_product();
+    test_array_reduce_string_concat();
+    test_array_reduce_empty_array();
+    test_array_reduce_type_change();
+    test_array_reduce_composes_with_map();
+    test_array_reduce_wrong_arg_count();
+    test_array_reduce_wrong_type();
 
     /* Stage 28: array_unique. (the duplicate block — was added by an
      * earlier session along with the Stage 29 ones; keeping it in place

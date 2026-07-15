@@ -1759,6 +1759,56 @@ static Value arrayFilterNative(int argCount, Value *args) {
     return OBJ_VAL(result);
 }
 
+static Value arrayReduceNative(int argCount, Value *args) {
+    if (argCount != 3) {
+        runtimeError("array_reduce() takes 3 arguments (%d given).", argCount);
+        return NIL_VAL;
+    }
+    if (!IS_ARRAY(args[0])) {
+        runtimeError("array_reduce() argument 0 must be an array.");
+        return NIL_VAL;
+    }
+    if (!IS_CLOSURE(args[1])) {
+        runtimeError("array_reduce() argument 1 must be a function.");
+        return NIL_VAL;
+    }
+    ObjArray *src = AS_ARRAY(args[0]);
+    ObjClosure *reducer = AS_CLOSURE(args[1]);
+    if (reducer->function->arity != 2) {
+        runtimeError("array_reduce() reducer must take 2 arguments (got %d).",
+                     reducer->function->arity);
+        return NIL_VAL;
+    }
+
+    /* The accumulator starts as the initial value. args[2]
+     * is on the native's stack; we copy it into a local
+     * Value so the accumulator is a tracked C variable.
+     * The rest of the native's stack is: [..., src, reducer].
+     * The src and reducer are still pinned on the stack by
+     * callValue's frame; we just need to manage the
+     * accumulator ourselves. */
+    Value acc = args[2];
+
+    /* Empty array with no iterations: return the initial as-is. */
+    for (int i = 0; i < src->count; i++) {
+        /* Stack layout for callClosure: [callee, arg1, ..., argN].
+         * We push the reducer (callee), then the accumulator
+         * (arg 1), then the element (arg 2). The reducer's
+         * bytecode accesses its args at slots[1] (acc) and
+         * slots[2] (element). */
+        push(OBJ_VAL(reducer));   /* callee */
+        push(acc);                /* arg 1: accumulator */
+        push(src->elements[i]);   /* arg 2: element */
+        acc = callClosureFromNative(reducer, 2);
+    }
+
+    /* Return the final accumulator. No output array to GC-protect:
+     * the result is a single Value (number, string, bool, nil, or
+     * an object reference), and the native's frame already
+     * pins the necessary objects (the reducer, the source). */
+    return acc;
+}
+
 static Value arrayMapNative(int argCount, Value *args) {
     if (argCount != 2) {
         runtimeError("array_map() takes 2 arguments (%d given).", argCount);
@@ -2005,6 +2055,19 @@ void defineNatives(void) {
     name = copyString("array_map", (int)strlen("array_map"));
     push(OBJ_VAL(name));
     tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayMapNative)));
+    pop();
+
+    /* Stage 32: array_reduce. Takes an array, a 2-arg Lox
+     * closure (the reducer: (accumulator, element) -> newAcc),
+     * and an initial value. Returns a single value (the final
+     * accumulator). The natural mirror of Stage 31's array_map.
+     * The new wrinkle: the reducer is 2-arg, not 1-arg. The
+     * architecture already supports N-arg closures
+     * (callClosureFromNative takes an argCount); Stage 32 just
+     * exercises that with argCount=2. */
+    name = copyString("array_reduce", (int)strlen("array_reduce"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayReduceNative)));
     pop();
 
     /* Stage 10: more number operations. */
