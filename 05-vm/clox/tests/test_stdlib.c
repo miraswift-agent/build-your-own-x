@@ -3606,6 +3606,159 @@ static void test_array_unique_wrong_type(void) {
     free(out);
 }
 
+/* --- Stage 29: string_split(s, delim, limit) --- */
+/* Extends Stage 13's string_split with a max-split-count
+ * parameter. The shape: 2 args (Stage 13) splits on every
+ * occurrence of delim; 3 args (Stage 29) splits at most `limit`
+ * times, leaving the rest of the string as the final element.
+ * JS reference: String.prototype.split(s, limit) — limit is
+ * optional, default is "split on every occurrence." Python
+ * reference: str.split(sep, maxsplit) — maxsplit is optional,
+ * default is -1 (no limit). The natural small-mirror's mirror
+ * is "add one parameter to an existing function" rather than
+ * "new conceptual native."
+ *
+ * Edge cases for limit:
+ *   limit = 0  -> [s] (no splits; whole string is one element)
+ *   limit < 0  -> runtime error (negative limits are nonsense)
+ *   limit = 1  -> split at most once -> 2 elements max
+ *   limit > #  -> full split (no limit reached)
+ *   limit non-int -> runtime error (must be a whole number) */
+
+static void test_string_split_with_limit(void) {
+    /* "a,b,c,d" split on "," with limit 2 -> ["a", "b", "c,d"]
+     * (split at most 2 times; the rest is the final element). */
+    int exitCode;
+    char *out = runClox(
+        "var parts = string_split(\"a,b,c,d\", \",\", 2);\n"
+        "print array_length(parts);\n"
+        "print array_get(parts, 0);\n"
+        "print array_get(parts, 1);\n"
+        "print array_get(parts, 2);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/split-with-limit: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "3\n")
+            || !contains(out, "a\n")
+            || !contains(out, "b\n")
+            || !contains(out, "c,d\n")) {
+        fail("stdlib/split-with-limit: expected '3', 'a', 'b', 'c,d' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_split_limit_zero(void) {
+    /* limit = 0 -> [s] (no splits; whole string is one element). */
+    int exitCode;
+    char *out = runClox(
+        "var parts = string_split(\"a,b,c\", \",\", 0);\n"
+        "print array_length(parts);\n"
+        "print array_get(parts, 0);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/split-limit-zero: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "1\n")
+            || !contains(out, "a,b,c\n")) {
+        fail("stdlib/split-limit-zero: expected '1' and 'a,b,c' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_split_limit_one(void) {
+    /* limit = 1 -> split at most once -> 2 elements max. */
+    int exitCode;
+    char *out = runClox(
+        "var parts = string_split(\"a,b,c,d\", \",\", 1);\n"
+        "print array_length(parts);\n"
+        "print array_get(parts, 0);\n"
+        "print array_get(parts, 1);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/split-limit-one: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "2\n")
+            || !contains(out, "a\n")
+            || !contains(out, "b,c,d\n")) {
+        fail("stdlib/split-limit-one: expected '2', 'a', 'b,c,d' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_split_limit_larger(void) {
+    /* limit larger than the number of splits -> full split
+     * (no limit reached). "a,b,c" with limit 10 -> ["a","b","c"]
+     * (3 elements, same as no limit). */
+    int exitCode;
+    char *out = runClox(
+        "var parts = string_split(\"a,b,c\", \",\", 10);\n"
+        "print array_length(parts);\n"
+        "print array_get(parts, 0);\n"
+        "print array_get(parts, 1);\n"
+        "print array_get(parts, 2);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/split-limit-larger: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "3\n")
+            || !contains(out, "a\n")
+            || !contains(out, "b\n")
+            || !contains(out, "c\n")) {
+        fail("stdlib/split-limit-larger: expected '3', 'a', 'b', 'c' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_split_limit_negative(void) {
+    /* Negative limit -> runtime error. */
+    int exitCode;
+    char *out = runClox("print string_split(\"a,b,c\", \",\", -1);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/split-limit-negative: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_split_limit_wrong_type(void) {
+    /* Non-number limit -> runtime error. */
+    int exitCode;
+    char *out = runClox("print string_split(\"a,b,c\", \",\", \"2\");\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/split-limit-wrong-type: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_split_wrong_arg_count(void) {
+    /* 4 args -> runtime error. 1 arg -> error (string_split
+     * requires at least 2 args). */
+    int exitCode;
+    char *out = runClox("print string_split(\"a,b,c\", \",\", 2, 0);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/split-wrong-arg-count-four: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+
+    out = runClox("print string_split(\"a,b,c\");\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/split-wrong-arg-count-one: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
 int main(void) {
     test_clock_exists();
     test_number_abs();
@@ -3808,6 +3961,23 @@ int main(void) {
     test_string_trim_end_wrong_type();
     test_string_trim_end_wrong_arg_count();
     test_string_trim_compose();
+    /* Stage 28: array_unique. */
+    test_array_unique_basic();
+    test_array_unique_strings();
+    test_array_unique_preserves_input();
+    test_array_unique_empty();
+    test_array_unique_single();
+    test_array_unique_mixed_types();
+    test_array_unique_wrong_arg_count();
+    test_array_unique_wrong_type();
+    /* Stage 29: string_split with limit. */
+    test_string_split_with_limit();
+    test_string_split_limit_zero();
+    test_string_split_limit_one();
+    test_string_split_limit_larger();
+    test_string_split_limit_negative();
+    test_string_split_limit_wrong_type();
+    test_string_split_wrong_arg_count();
 
     /* Stage 28: array_unique. */
     test_array_unique_basic();

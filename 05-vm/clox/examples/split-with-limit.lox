@@ -1,0 +1,78 @@
+// Stage 29 example: split-with-limit.lox
+// Composes Stage 13's string_split with Stage 29's limit
+// parameter. Demonstrates the 'split at most N times' idiom and
+// the difference between limit=0 (no splits), limit=1 (split
+// once), limit=2, and the full-split default (no limit). Real-
+// world use cases: parsing key=value pairs (split at most once),
+// processing the first N CSV columns (split at most N-1 times),
+// log line splitting with a max (split at most 5 times on tabs).
+
+print "=== basic limit (split at most 2 times) ===";
+// "a,b,c,d" split on "," with limit 2 -> ["a", "b", "c,d"]
+// (split at most 2 times; the rest is the final element)
+var parts1 = string_split("a,b,c,d", ",", 2);
+print array_length(parts1);  // 3
+print array_get(parts1, 0);  // a
+print array_get(parts1, 1);  // b
+print array_get(parts1, 2);  // c,d
+
+print "=== limit = 0 (no splits) ===";
+// limit = 0 -> [s] (whole string is one element)
+var parts2 = string_split("a,b,c", ",", 0);
+print array_length(parts2);  // 1
+print array_get(parts2, 0);  // a,b,c
+
+print "=== limit = 1 (split at most once) ===";
+// limit = 1 -> ["a", "b,c,d"] (split once, rest is final element)
+// Real-world: parsing "key=value" pairs.
+var kv = string_split("name=Mira", "=", 1);
+print array_length(kv);       // 2
+print array_get(kv, 0);       // name
+print array_get(kv, 1);       // Mira (the '=' is consumed as part of the delim)
+
+print "=== limit larger than # of splits (full split) ===";
+// limit 10 on a 3-element input -> ["a", "b", "c"] (3 elements,
+// same as no limit). The limit is a max, not a target.
+var parts3 = string_split("a,b,c", ",", 10);
+print array_length(parts3);  // 3
+print array_get(parts3, 0);  // a
+print array_get(parts3, 1);  // b
+print array_get(parts3, 2);  // c
+
+print "=== no limit (Stage 13 2-arg form) ===";
+// The 2-arg form (no limit) splits on every occurrence. Same as
+// limit = a very large number.
+var parts4 = string_split("a,b,c,d", ",");
+print array_length(parts4);  // 4
+
+print "=== compose: process first N columns ===";
+// CSV with 5 columns; we want the first 2 columns only.
+// string_split with limit=2 splits "a,b,c,d,e" into
+// ["a", "b", "c,d,e"]. The first 2 elements are the columns
+// we want; the rest is one big string we discard.
+var csv = "alpha,beta,gamma,delta,epsilon";
+var cols = string_split(csv, ",", 2);
+print array_get(cols, 0);  // alpha
+print array_get(cols, 1);  // beta
+
+print "=== strict-error contract ===";
+// Uncommenting any of the next lines would error at runtime:
+//   string_split("a,b,c", ",", -1)   // negative limit
+//   string_split("a,b,c", ",", 1.5)  // fractional limit
+//   string_split("a,b,c", ",", "2")  // non-number limit
+//   string_split("a,b,c", ",", 2, 0) // 4 args
+//   string_split("a,b,c")            // 1 arg (need at least 2)
+//   string_split(42, ",")            // wrong type
+// The discipline: limit is strict on type (must be number),
+// strict on sign (must be non-negative), strict on being an
+// integer. Same as string_repeat's count parameter.
+
+print "=== compose with other stdlib ===";
+// Compose string_split + limit + string_length + Stage 9's
+// string_trim. The 'parse a config line, take the first N
+// fields' idiom.
+var line = "  alpha, beta, gamma, delta  ";
+var trimmed = string_trim(line);
+var fields = string_split(trimmed, ",", 2);
+print array_get(fields, 0);  // alpha (no leading space; the line's leading '  ' was trimmed)
+print string_trim_start(array_get(fields, 0));  // alpha (no change; already trimmed)

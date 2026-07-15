@@ -1319,14 +1319,54 @@ static Value stringSplitNative(int argCount, Value *args) {
      *   string_split("a", ",") -> ["a"]     (no delim found)
      *   string_split("a,", ",") -> ["a", ""]  (trailing empty)
      *   string_split(",", ",") -> ["", ""]  (empty before, empty after)
-     *   string_split("a", "")  -> ["a"]     (empty delim = whole string) */
-    if (argCount != 2) {
-        runtimeError("string_split() takes 2 arguments (%d given).", argCount);
+     *   string_split("a", "")  -> ["a"]     (empty delim = whole string)
+     *
+     * --- Stage 29: string_split(s, delim, limit) --- */
+    /* Extends Stage 13 with a max-split-count parameter. 2 args
+     * (Stage 13) splits on every occurrence of delim; 3 args
+     * (Stage 29) splits at most `limit` times, leaving the rest
+     * of the string as the final element. JS reference:
+     * String.prototype.split(s, limit) — limit is optional,
+     * default is "split on every occurrence." Python reference:
+     * str.split(sep, maxsplit) — maxsplit is optional, default
+     * is -1 (no limit). The natural small-mirror's mirror is
+     * "add one parameter to an existing function" rather than
+     * "new conceptual native."
+     *
+     * Edge cases for limit:
+     *   limit = 0  -> [s] (no splits; whole string is one element)
+     *   limit < 0  -> runtime error
+     *   limit = 1  -> split at most once -> 2 elements max
+     *   limit > #  -> full split (no limit reached) */
+    if (argCount != 2 && argCount != 3) {
+        runtimeError("string_split() takes 2 or 3 arguments (%d given).", argCount);
         return NIL_VAL;
     }
     if (!IS_STRING(args[0]) || !IS_STRING(args[1])) {
-        runtimeError("string_split() arguments must be strings.");
+        runtimeError("string_split() arguments 0 and 1 must be strings.");
         return NIL_VAL;
+    }
+    int limit = -1;  /* -1 = no limit (Stage 13 default behavior) */
+    if (argCount == 3) {
+        if (!IS_NUMBER(args[2])) {
+            runtimeError("string_split() argument 2 must be a number.");
+            return NIL_VAL;
+        }
+        double limitD = AS_NUMBER(args[2]);
+        int limitI = (int)limitD;
+        if ((double)limitI != limitD) {
+            /* Fractional limit: not an integer. Error per the
+             * 'strict on numeric input' discipline (matches
+             * string_repeat's discipline of rejecting fractional
+             * counts). */
+            runtimeError("string_split() argument 2 must be an integer.");
+            return NIL_VAL;
+        }
+        if (limitI < 0) {
+            runtimeError("string_split() argument 2 must be non-negative.");
+            return NIL_VAL;
+        }
+        limit = limitI;
     }
     ObjString *s     = AS_STRING(args[0]);
     ObjString *delim = AS_STRING(args[1]);
@@ -1356,7 +1396,11 @@ static Value stringSplitNative(int argCount, Value *args) {
 
     int prev = 0;
     int i = 0;
+    int splitsDone = 0;
     while (i <= s->length - delim->length) {
+        /* If limit is set and we've reached it, stop. The remaining
+         * text (from prev to s->length) is the final element. */
+        if (limit >= 0 && splitsDone >= limit) break;
         bool match = true;
         for (int j = 0; j < delim->length; j++) {
             if (s->chars[i + j] != delim->chars[j]) {
@@ -1371,12 +1415,14 @@ static Value stringSplitNative(int argCount, Value *args) {
             arrayPush(array, OBJ_VAL(part));
             i += delim->length;
             prev = i;
+            splitsDone++;
         } else {
             i++;
         }
     }
     /* Push the tail s[prev..s->length]. This is empty if the string
-     * ended at a delim boundary (trailing empty). */
+     * ended at a delim boundary (trailing empty), or contains the
+     * remaining text if the limit was reached. */
     {
         int tailLen = s->length - prev;
         ObjString *tail = copyString(s->chars + prev, tailLen);
