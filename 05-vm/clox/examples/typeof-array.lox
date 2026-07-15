@@ -1,0 +1,81 @@
+// Stage 39 example: typeof-array.lox
+// The "patch" stage: 1-line fix to typeofNative to
+// recognize OBJ_ARRAY. Before this patch, typeof(<array>)
+// returned "object" (the default in the switch). After
+// this patch, typeof(<array>) returns "array" (matches
+// the mental model and the JS-ish convention).
+// Demonstrates: empty array, populated array, nested
+// array, the full type table.
+
+print "=== basic: typeof(<array>) returns 'array' ===";
+// The fix. Before Stage 39, this printed "object".
+// After Stage 39, this prints "array". The 1-line
+// change is in src/native.c:typeofNative — added
+// 'case OBJ_ARRAY: name = "array"; break;' to the
+// switch.
+print typeof([1, 2, 3]);
+// Output: array
+
+print "=== empty array: typeof([]) returns 'array' ===";
+// Empty array is still an array. The type doesn't
+// depend on the contents; it depends on the
+// Value's type tag (OBJ_ARRAY).
+print typeof([]);
+// Output: array
+
+print "=== nested array: typeof([[1,2],[3,4]]) returns 'array' ===";
+// Nested arrays: the *outer* array is an array. The
+// inner arrays are elements of the outer array; they
+// don't change the outer's type.
+print typeof([[1, 2], [3, 4]]);
+// Output: array
+
+print "=== full type table: typeof() for every primitive + array ===";
+// The full type table after the patch:
+//   typeof(true)   -> "bool"
+//   typeof(nil)    -> "nil"
+//   typeof(42)     -> "number"
+//   typeof(3.14)   -> "number"
+//   typeof("hi")   -> "string"
+//   typeof([1,2])  -> "array"  (NEW in Stage 39)
+//   typeof(fun(){}) -> "function"
+//   typeof(MyClass) -> "class"
+//
+// Before Stage 39, typeof([1,2]) returned "object" —
+// which was inconsistent with the mental model and
+// made array-type detection in user code awkward
+// (had to use IS_ARRAY via VM internals, or check
+// by other means).
+print typeof(true);
+print typeof(nil);
+print typeof(42);
+print typeof(3.14);
+print typeof("hi");
+print typeof([1, 2]);
+// Output:
+//   bool
+//   nil
+//   number
+//   number
+//   string
+//   array
+
+print "=== what this stage closes ===";
+// Stage 38's test-bug #2 surfaced the latent issue:
+// test_array_flatten_does_not_recurse used
+// 'string(typeof(inner) == \"array\")' which would
+// have worked if typeof() recognized OBJ_ARRAY. But
+// typeof() returned "object", so the test author had
+// to use a different verification approach
+// (array_length(inner) returning 2).
+//
+// After Stage 39, the same test could be written as:
+//   print typeof(inner) == "array";  // would print "true"
+//
+// The fix closes a 27-stage-old gap (OBJ_ARRAY was
+// added in Stage 12, but the typeof switch was never
+// updated to enumerate it). The discipline: **when
+// adding a new value type to clox, update the typeof
+// switch too.** The "every value type is represented
+// in this switch" comment in typeofNative is the
+// reminder; the patch is the enforcement.

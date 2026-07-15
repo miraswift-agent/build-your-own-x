@@ -2287,6 +2287,13 @@ static Value typeofNative(int argCount, Value *args) {
             case OBJ_INSTANCE:     name = "instance"; break;
             case OBJ_BOUND_METHOD: name = "method";   break;
             case OBJ_UPVALUE:      name = "upvalue";  break;
+            /* Stage 39: added OBJ_ARRAY case. Before this
+             * patch, typeof(<array>) returned "object" (the
+             * default), which was a latent issue surfaced by
+             * Stage 38's test-bug #2. After this patch,
+             * typeof([1, 2, 3]) returns "array" (matches the
+             * mental model and the JS-ish convention). */
+            case OBJ_ARRAY:        name = "array";   break;
             default:               name = "object";   break;
         }
     } else {

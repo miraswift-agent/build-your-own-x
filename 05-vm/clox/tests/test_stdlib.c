@@ -206,6 +206,34 @@ static void test_type_predicate(void) {
     free(out);
 }
 
+static void test_typeof_array(void) {
+    /* Stage 39: typeof(<array>) returns "array" (not
+     * "object"). Before this patch, typeofNative's switch
+     * didn't enumerate OBJ_ARRAY, so the default "object"
+     * was returned. The fix adds 1 case to the switch.
+     *
+     * Test cases:
+     * - empty array: typeof([]) == "array"
+     * - populated array: typeof([1, 2, 3]) == "array"
+     * - nested array: typeof([[1, 2], [3, 4]]) == "array"
+     *   (the outer array is still an array; the inner
+     *   arrays don't change the outer's type) */
+    int exitCode;
+    char *out = runClox(
+        "print typeof([]);\n"
+        "print typeof([1, 2, 3]);\n"
+        "print typeof([[1, 2], [3, 4]]);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/typeof-array: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "array\narray\narray\n")) {
+        fail("stdlib/typeof-array: expected 'array' 3 times, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
 static void test_type_wrong_arg_count(void) {
     /* Defensive: native function should handle wrong arg count. */
     int exitCode;
@@ -5653,6 +5681,7 @@ int main(void) {
     test_string_length();
     test_string_upper_lower();
     test_type_predicate();
+    test_typeof_array();
     test_type_wrong_arg_count();
     /* Stage 8: more string operations. */
     test_string_substring();
