@@ -1,0 +1,79 @@
+// Stage 31 example: array-map.lox
+// The natural mirror of Stage 30's array_filter. The second
+// clox native that invokes user-defined Lox code from C.
+// Demonstrates the "transform a list element-by-element" idiom.
+// Real-world use cases: convert types, scale values, extract
+// fields, format strings, encode/decode.
+
+print "=== basic: double every element ===";
+// Transform each number by multiplying by 2.
+fun dbl(x) { return x * 2; }
+var doubled = array_map([1, 2, 3, 4], dbl);
+print array_length(doubled);  // 4
+print array_get(doubled, 0);  // 2
+print array_get(doubled, 1);  // 4
+print array_get(doubled, 2);  // 6
+print array_get(doubled, 3);  // 8
+
+print "=== type change: number -> string ===";
+// array_map doesn't constrain the transform's return type.
+// Here we convert numbers to their string representation.
+// (The transform is a closure that calls Stage 17's string(n);
+// a native can't be passed directly because array_map's
+// transform must be a 1-arg Lox closure, not a native.)
+fun toString(x) { return string(x); }
+var strs = array_map([1, 2, 3], toString);
+print array_length(strs);  // 3
+print array_get(strs, 0);  // 1
+print array_get(strs, 1);  // 2
+print array_get(strs, 2);  // 3
+
+print "=== empty input: empty result ===";
+// Empty input -> empty output (no iteration).
+fun id(x) { return x; }
+var empty = array_map([], id);
+print array_length(empty);  // 0
+
+print "=== strings: uppercase via a transform ===";
+// Demonstrate composing array_map with the existing
+// string_upper native (Stage 7). Same closure-wrapper pattern.
+fun upper(s) { return string_upper(s); }
+var loud = array_map(["hello", "world"], upper);
+print array_length(loud);  // 2
+print array_get(loud, 0);  // HELLO
+print array_get(loud, 1);  // WORLD
+
+print "=== compose with array_filter (Stage 30 + Stage 31) ===";
+// Real-world: filter to keep only the values > 2, then map
+// to double. The output array has the same length as the
+// filtered array (3 elements: 3, 4, 5 -> 6, 8, 10).
+fun gt2(x) { return x > 2; }
+fun dbl2(x) { return x * 2; }
+var big = array_filter([1, 2, 3, 4, 5], gt2);
+var doubledBig = array_map(big, dbl2);
+print array_length(doubledBig);  // 3
+print array_get(doubledBig, 0);  // 6
+print array_get(doubledBig, 1);  // 8
+print array_get(doubledBig, 2);  // 10
+
+print "=== does not mutate the source ===";
+// array_map returns a new array; the source is unchanged.
+var nums = [10, 20, 30];
+fun add1(x) { return x + 1; }
+var bumped = array_map(nums, add1);
+print array_length(nums);     // 3 (unchanged)
+print array_get(nums, 0);     // 10
+print array_length(bumped);   // 3
+print array_get(bumped, 0);   // 11
+
+print "=== strict-error contract ===";
+// Uncommenting any of the next lines would error at runtime:
+//   array_map()                   // no arguments
+//   array_map([1,2,3])            // missing transform
+//   array_map([1,2,3], 42)        // non-function transform
+//   array_map("not array", f)     // non-array source
+//   array_map([1,2,3], fun(x, y) { return x; })  // 2-arg transform
+// The discipline: array_map is strict on arg count, on
+// the source being an array, on the transform being a
+// 1-arg Lox closure, and on the transform's arity being
+// exactly 1.

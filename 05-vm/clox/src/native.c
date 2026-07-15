@@ -1759,6 +1759,62 @@ static Value arrayFilterNative(int argCount, Value *args) {
     return OBJ_VAL(result);
 }
 
+static Value arrayMapNative(int argCount, Value *args) {
+    if (argCount != 2) {
+        runtimeError("array_map() takes 2 arguments (%d given).", argCount);
+        return NIL_VAL;
+    }
+    if (!IS_ARRAY(args[0])) {
+        runtimeError("array_map() argument 0 must be an array.");
+        return NIL_VAL;
+    }
+    if (!IS_CLOSURE(args[1])) {
+        runtimeError("array_map() argument 1 must be a function.");
+        return NIL_VAL;
+    }
+    ObjArray *src = AS_ARRAY(args[0]);
+    ObjClosure *transform = AS_CLOSURE(args[1]);
+    if (transform->function->arity != 1) {
+        runtimeError("array_map() transform must take 1 argument (got %d).",
+                     transform->function->arity);
+        return NIL_VAL;
+    }
+
+    /* Allocate the result. map always returns one element per input
+     * element, so capacity is exactly src->count. */
+    ObjArray *result = newArray(src->count);
+    push(OBJ_VAL(result));  /* GC: keep alive while filling */
+
+    for (int i = 0; i < src->count; i++) {
+        /* Stack layout for callClosure: [callee, arg1, ...].
+         * The transform is already on the stack (it's args[1] of
+         * the native call), but we need to push it as the callee
+         * for the transform call. We do that by pushing the
+         * transform, then the element. The result_array stays on
+         * the stack (under everything) for GC protection.
+         *
+         * Stack before: [..., src, transform, result_array]
+         * Stack after:  [..., src, transform, result_array, transform, element]
+         *
+         * callClosure(transform, 1) sets frame->slots to the transform
+         * position (stackTop - 2), so slots[0] = transform, slots[1] = element.
+         * The transform's bytecode accesses its arg at slots[1]. */
+        push(OBJ_VAL(transform));  /* callee */
+        push(src->elements[i]);    /* arg 1 */
+        Value mapped = callClosureFromNative(transform, 1);
+        /* Push the transform's return value to the result. The
+         * GC is safe: the result array is on the stack below the
+         * native's frames, and any allocations the transform made
+         * are handled by its own frame's GC checkpoints. */
+        arrayPush(result, mapped);
+    }
+
+    pop();  /* pop the result array (it stays on the stack until
+             * the function returns; the VM will handle pushing
+             * the return value) */
+    return OBJ_VAL(result);
+}
+
 static Value typeofNative(int argCount, Value *args) {
     if (argCount != 1) {
         runtimeError("typeof() takes 1 argument (%d given).", argCount);
@@ -1938,6 +1994,17 @@ void defineNatives(void) {
     name = copyString("array_filter", (int)strlen("array_filter"));
     push(OBJ_VAL(name));
     tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayFilterNative)));
+    pop();
+
+    /* Stage 31: array_map. Takes an array and a 1-arg Lox
+     * closure (the transform). Returns a new array where each
+     * element is `transform(element)`. The natural mirror of
+     * Stage 30's array_filter. Uses the same user-code dispatch
+     * architecture (callClosureFromNative + OP_RETURN target
+     * check). */
+    name = copyString("array_map", (int)strlen("array_map"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayMapNative)));
     pop();
 
     /* Stage 10: more number operations. */

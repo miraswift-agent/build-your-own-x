@@ -3966,6 +3966,224 @@ static void test_array_filter_wrong_type(void) {
     free(out);
 }
 
+/* Stage 31: array_map(arr, transform) -> array.
+ * Mirror of Stage 30's array_filter. Takes an array and a 1-arg
+ * Lox closure (the transform). Returns a new array where each
+ * element is `transform(element)`. Uses the same user-code dispatch
+ * architecture as Stage 30 (callClosureFromNative + OP_RETURN target
+ * check). clox doesn't support anonymous function expressions as
+ * function args; we use the form `fun name(args) { body }`. We use
+ * that form throughout the Stage 31 tests.
+ * clox also doesn't support `%` (modulo) — we use `==` with
+ * specific values for parity tests. */
+
+static void test_array_map_basic(void) {
+    /* [1, 2, 3, 4] mapped by double -> [2, 4, 6, 8]. */
+    int exitCode;
+    char *out = runClox(
+        "fun dbl(x) { return x * 2; }\n"
+        "var out = array_map([1, 2, 3, 4], dbl);\n"
+        "print array_length(out);\n"
+        "print array_get(out, 0);\n"
+        "print array_get(out, 1);\n"
+        "print array_get(out, 2);\n"
+        "print array_get(out, 3);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-map-basic: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "4\n")
+            || !contains(out, "2\n")
+            || !contains(out, "4\n")
+            || !contains(out, "6\n")
+            || !contains(out, "8\n")) {
+        fail("stdlib/array-map-basic: expected '4','2','4','6','8' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_map_type_change(void) {
+    /* [1, 2, 3] mapped by string(n) -> ["1", "2", "3"].
+     * Composes Stage 17's string(n) inside a wrapper closure.
+     * The transform's return type can be different from the
+     * source type; array_map doesn't constrain it. The closure
+     * wrapper is needed because array_map requires a 1-arg Lox
+     * closure, not a native (e.g., the `string` native itself). */
+    int exitCode;
+    char *out = runClox(
+        "fun toString(x) { return string(x); }\n"
+        "var out = array_map([1, 2, 3], toString);\n"
+        "print array_length(out);\n"
+        "print array_get(out, 0);\n"
+        "print array_get(out, 1);\n"
+        "print array_get(out, 2);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-map-type-change: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "3\n")
+            || !contains(out, "1\n")
+            || !contains(out, "2\n")
+            || !contains(out, "3\n")) {
+        fail("stdlib/array-map-type-change: expected '3','1','2','3' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_map_preserves_order(void) {
+    /* [3, 1, 4, 1, 5, 9, 2, 6] mapped by x + 10 ->
+     * [13, 11, 14, 11, 15, 19, 12, 16]. Order preserved. */
+    int exitCode;
+    char *out = runClox(
+        "fun add10(x) { return x + 10; }\n"
+        "var out = array_map([3, 1, 4, 1, 5, 9, 2, 6], add10);\n"
+        "print array_length(out);\n"
+        "print array_get(out, 0);\n"
+        "print array_get(out, 1);\n"
+        "print array_get(out, 2);\n"
+        "print array_get(out, 3);\n"
+        "print array_get(out, 4);\n"
+        "print array_get(out, 5);\n"
+        "print array_get(out, 6);\n"
+        "print array_get(out, 7);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-map-preserves-order: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "8\n")
+            || !contains(out, "13\n")
+            || !contains(out, "11\n")
+            || !contains(out, "14\n")
+            || !contains(out, "15\n")
+            || !contains(out, "19\n")
+            || !contains(out, "12\n")
+            || !contains(out, "16\n")) {
+        fail("stdlib/array-map-preserves-order: expected '8','13','11','14','15','19','12','16' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_map_empty(void) {
+    /* Empty input -> empty result. */
+    int exitCode;
+    char *out = runClox(
+        "fun id(x) { return x; }\n"
+        "var out = array_map([], id);\n"
+        "print array_length(out);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-map-empty: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "0\n")) {
+        fail("stdlib/array-map-empty: expected '0' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_map_does_not_mutate(void) {
+    /* The original array must not be mutated. */
+    int exitCode;
+    char *out = runClox(
+        "fun dbl(x) { return x * 2; }\n"
+        "var nums = [1, 2, 3, 4];\n"
+        "var out = array_map(nums, dbl);\n"
+        "print array_length(nums);\n"
+        "print array_get(nums, 0);\n"
+        "print array_get(nums, 1);\n"
+        "print array_get(nums, 2);\n"
+        "print array_get(nums, 3);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-map-does-not-mutate: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "4\n")
+            || !contains(out, "1\n")
+            || !contains(out, "2\n")
+            || !contains(out, "3\n")
+            || !contains(out, "4\n")) {
+        fail("stdlib/array-map-does-not-mutate: expected '4','1','2','3','4' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_map_composes_with_filter(void) {
+    /* Real-world: filter to keep only the values > 2, then map
+     * to double. (Stage 30 + Stage 31 composition.) */
+    int exitCode;
+    char *out = runClox(
+        "fun gt2(x) { return x > 2; }\n"
+        "fun dbl(x) { return x * 2; }\n"
+        "var big = array_filter([1, 2, 3, 4, 5], gt2);\n"
+        "var doubled = array_map(big, dbl);\n"
+        "print array_length(doubled);\n"
+        "print array_get(doubled, 0);\n"
+        "print array_get(doubled, 1);\n"
+        "print array_get(doubled, 2);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-map-composes-with-filter: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "3\n")
+            || !contains(out, "6\n")
+            || !contains(out, "8\n")
+            || !contains(out, "10\n")) {
+        fail("stdlib/array-map-composes-with-filter: expected '3','6','8','10' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_map_wrong_arg_count(void) {
+    /* 1 arg (no transform) errors. 3 args errors. */
+    int exitCode;
+    char *out = runClox("print array_map([1,2,3]);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-map-wrong-arg-count-one: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+
+    out = runClox(
+        "fun id(x) { return x; }\n"
+        "print array_map([1,2,3], id, 0);\n",
+        &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-map-wrong-arg-count-three: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_map_wrong_type(void) {
+    /* First arg must be array. Second arg must be a function. */
+    int exitCode;
+    char *out = runClox(
+        "fun id(x) { return x; }\n"
+        "print array_map(\"not an array\", id);\n",
+        &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-map-wrong-type-arr: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+
+    out = runClox("print array_map([1,2,3], 42);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-map-wrong-type-fn: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
 int main(void) {
     test_clock_exists();
     test_number_abs();
@@ -4195,6 +4413,16 @@ int main(void) {
     test_array_filter_does_not_mutate();
     test_array_filter_wrong_arg_count();
     test_array_filter_wrong_type();
+
+    /* Stage 31: array_map. */
+    test_array_map_basic();
+    test_array_map_type_change();
+    test_array_map_preserves_order();
+    test_array_map_empty();
+    test_array_map_does_not_mutate();
+    test_array_map_composes_with_filter();
+    test_array_map_wrong_arg_count();
+    test_array_map_wrong_type();
 
     /* Stage 28: array_unique. (the duplicate block — was added by an
      * earlier session along with the Stage 29 ones; keeping it in place
