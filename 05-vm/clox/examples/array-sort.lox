@@ -1,0 +1,206 @@
+// Stage 43 example: array-sort.lox
+// The "sort an array, returning a new sorted array"
+// native. The input is not mutated. The shape: 1 or
+// 2 args:
+// - 1 arg: default < for numbers, lexicographic for
+//   strings. Mixed types error at the first comparison.
+// - 2 args, keyFn: sorts by keyFn(element) (1-arg
+//   Lox closure). Matches Python's sorted(arr, key=fn).
+// - 2 args, comparator: sorts using a 2-arg
+//   comparator closure. Returns negative if a < b,
+//   0 if equal, positive if a > b. Matches Java's
+//   Collections.sort, Python's cmp_to_key.
+//
+// Stable sort: preserves first-occurrence order for
+// equal elements. Algorithm: insertion sort (O(N^2)
+// worst case but simple and stable). For very large
+// arrays, a future stage could add a quicksort/
+// mergesort/timsort variant.
+
+print "=== basic: default < for numbers ===";
+// [3, 1, 4, 1, 5, 9, 2, 6] with default comparator
+// -> [1, 1, 2, 3, 4, 5, 6, 9] (sorted ascending)
+var nums = [3, 1, 4, 1, 5, 9, 2, 6];
+var sorted_nums = array_sort(nums);
+print array_length(sorted_nums);
+print array_get(sorted_nums, 0);
+print array_get(sorted_nums, 1);
+print array_get(sorted_nums, 2);
+print array_get(sorted_nums, 3);
+print array_get(sorted_nums, 4);
+print array_get(sorted_nums, 5);
+print array_get(sorted_nums, 6);
+print array_get(sorted_nums, 7);
+// Output:
+//   8
+//   1
+//   1
+//   2
+//   3
+//   4
+//   5
+//   6
+//   9
+
+print "=== lexicographic for strings ===";
+// ["banana", "apple", "cherry"] with default
+// -> ["apple", "banana", "cherry"]
+var words = ["banana", "apple", "cherry"];
+var sorted_words = array_sort(words);
+print array_length(sorted_words);
+print array_get(sorted_words, 0);
+print array_get(sorted_words, 1);
+print array_get(sorted_words, 2);
+// Output:
+//   3
+//   apple
+//   banana
+//   cherry
+
+print "=== with keyFn: sort by keyFn(element) ===";
+// Sort by negation = descending. [3, 1, 4, 1, 5]
+// with keyFn(x) = 0 - x -> [5, 4, 3, 1, 1].
+// The "sort by key" pattern matches Python's
+// sorted(arr, key=fn) and Rust's sort_by_key.
+fun negate(x) { return 0 - x; }
+var arr2 = [3, 1, 4, 1, 5];
+var sorted_by_neg = array_sort(arr2, negate);
+print array_length(sorted_by_neg);
+print array_get(sorted_by_neg, 0);
+print array_get(sorted_by_neg, 1);
+print array_get(sorted_by_neg, 2);
+print array_get(sorted_by_neg, 3);
+print array_get(sorted_by_neg, 4);
+// Output:
+//   5
+//   5
+//   4
+//   3
+//   1
+//   1
+
+print "=== with comparator: 2-arg comparator returns int ===";
+// comparator(a, b) = b - a (descending). [3, 1, 4, 1, 5]
+// with comparator -> [5, 4, 3, 1, 1].
+// The "comparator returns int" pattern matches
+// Java's Collections.sort, Python's cmp_to_key.
+fun descending(a, b) { return b - a; }
+var arr3 = [3, 1, 4, 1, 5];
+var sorted_desc = array_sort(arr3, descending);
+print array_length(sorted_desc);
+print array_get(sorted_desc, 0);
+print array_get(sorted_desc, 1);
+print array_get(sorted_desc, 2);
+print array_get(sorted_desc, 3);
+print array_get(sorted_desc, 4);
+// Output:
+//   5
+//   5
+//   4
+//   3
+//   1
+//   1
+
+print "=== empty input: empty output ===";
+// [] with default -> []
+var empty_sorted = array_sort([]);
+print array_length(empty_sorted);
+// Output: 0
+
+print "=== single element: single element ===";
+// [42] with default -> [42]
+var single = array_sort([42]);
+print array_length(single);
+print array_get(single, 0);
+// Output:
+//   1
+//   42
+
+print "=== does not mutate the source ===";
+// array_sort returns a new array; the source is
+// unchanged. Same "non-mutating" pattern as Stages
+// 38, 40, 41, 42.
+var src = [3, 1, 2];
+var sorted_src = array_sort(src);
+print array_length(src);
+print array_get(src, 0);
+print array_get(src, 1);
+print array_get(src, 2);
+print array_length(sorted_src);
+print array_get(sorted_src, 0);
+// Output:
+//   3
+//   3
+//   1
+//   2
+//   3
+//   1
+
+print "=== stable: equal elements preserve first-occurrence order ===";
+// [[1, "a"], [1, "b"], [2, "c"], [1, "d"]] sorted by
+// the first element (the key). The equal-key elements
+// (1, 1, 1) preserve their original order: a, b, d.
+// The key=2 element (c) goes last. Expected: [a, b, d, c].
+// This is the "stable sort" property. A non-stable
+// sort (e.g., classic quicksort) would not guarantee
+// this — a non-stable sort of the same input could
+// produce [a, d, b, c] or [d, a, b, c].
+var records = [[1, "a"], [1, "b"], [2, "c"], [1, "d"]];
+fun keyFn(x) { return array_get(x, 0); }
+var sorted_records = array_sort(records, keyFn);
+print array_length(sorted_records);
+print array_get(array_get(sorted_records, 0), 1);
+print array_get(array_get(sorted_records, 1), 1);
+print array_get(array_get(sorted_records, 2), 1);
+print array_get(array_get(sorted_records, 3), 1);
+// Output:
+//   4
+//   a
+//   b
+//   d
+//   c
+
+print "=== what this stage teaches ===";
+// (a) "Sort with optional comparator" is the canonical
+//     primitive. Three forms: 1-arg (default), 2-arg
+//     keyFn (1-arg closure), 2-arg comparator (2-arg
+//     closure). Disambiguated by the closure's arity.
+//
+// (b) "Stable is the right default." Preserves first-
+//     occurrence order for equal elements. Matches
+//     the convention from Stage 40 (array_unique_by)
+//     and Stage 42 (array_group_by).
+//
+// (c) "Insertion sort is the simplest correct sort."
+//     O(N^2) worst case but stable, simple, and
+//     correct. For very large arrays, a future stage
+//     could add a quicksort/mergesort/timsort
+//     variant. The discipline: **start simple, add
+//     complexity only when needed.** The sort
+//     algorithm itself is mechanical; the comparator
+//     dispatch and stability are the real design
+//     decisions.
+//
+// (d) "Non-mutating returns new array" matches the
+//     pattern from Stages 38, 40, 41, 42. The
+//     alternative (in-place sort, matches JS's
+//     Array.prototype.sort) is a different primitive
+//     (would be array_sort_in_place or similar) —
+//     not part of this stage.
+//
+// (e) "Closure arity disambiguates keyFn vs comparator."
+//     The 1-arg closure is treated as keyFn (sort by
+//     keyFn(element)); the 2-arg closure is treated
+//     as comparator (returns int). This matches
+//     Python's sorted() and Rust's sort_by_key vs
+//     sort_by. The discipline: **use closure arity
+//     to disambiguate when the same position accepts
+//     different closure shapes.**
+//
+// (f) "Mixed-type comparison errors at runtime."
+//     Sorting [1, "hello"] with default comparator
+//     errors at the first comparison (1 vs "hello").
+//     The alternative (coerce to string) is JS-style
+//     but adds complexity. The discipline: **error
+//     early** — the caller should know the input
+//     is homogeneous.

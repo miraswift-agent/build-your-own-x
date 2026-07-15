@@ -4338,6 +4338,286 @@ static void test_array_group_by_three_groups(void) {
     free(out);
 }
 
+/* --- Stage 43: array_sort(arr, comparator?) -> array --- */
+/* Sorts an array, returning a new sorted array. The
+ * input is not mutated. The shape: 1-3 args:
+ * - 1 arg (array only): default < for numbers,
+ *   lexicographic for strings. Mixed types error at
+ *   the first comparison.
+ * - 2 args (array, keyFn): sorts by keyFn(element)
+ *   (1-arg Lox closure). The comparator is < on keys.
+ *   Matches Python's sorted(arr, key=fn).
+ * - 2 args (array, comparator): sorts using a 2-arg
+ *   comparator closure. Returns negative if a < b,
+ *   0 if equal, positive if a > b. Matches
+ *   Java's Collections.sort, Python's cmp_to_key.
+ *
+ * Stable sort: preserves first-occurrence order for
+ * equal elements. Algorithm: insertion sort (O(N^2)
+ * worst case, but simple and stable). For very large
+ * arrays, a future stage could add a quicksort/
+ * mergesort/timsort variant. */
+static void test_array_sort_basic(void) {
+    /* Default < for numbers. */
+    int exitCode;
+    char *out = runClox(
+        "var arr = [3, 1, 4, 1, 5, 9, 2, 6];\n"
+        "var sorted = array_sort(arr);\n"
+        "print array_length(sorted);\n"
+        "print array_get(sorted, 0);\n"
+        "print array_get(sorted, 1);\n"
+        "print array_get(sorted, 2);\n"
+        "print array_get(sorted, 3);\n"
+        "print array_get(sorted, 4);\n"
+        "print array_get(sorted, 5);\n"
+        "print array_get(sorted, 6);\n"
+        "print array_get(sorted, 7);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-sort-basic: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "8\n1\n1\n2\n3\n4\n5\n6\n9\n")) {
+        fail("stdlib/array-sort-basic: expected [1,1,2,3,4,5,6,9], got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_sort_already_sorted(void) {
+    /* Already-sorted input returns the same order. */
+    int exitCode;
+    char *out = runClox(
+        "var sorted = array_sort([1, 2, 3, 4, 5]);\n"
+        "print array_length(sorted);\n"
+        "print array_get(sorted, 0);\n"
+        "print array_get(sorted, 4);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-sort-already-sorted: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "5\n1\n5\n")) {
+        fail("stdlib/array-sort-already-sorted: expected [1..5], got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_sort_reverse(void) {
+    /* Reverse-sorted input returns the reversed order. */
+    int exitCode;
+    char *out = runClox(
+        "var sorted = array_sort([5, 4, 3, 2, 1]);\n"
+        "print array_length(sorted);\n"
+        "print array_get(sorted, 0);\n"
+        "print array_get(sorted, 4);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-sort-reverse: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "5\n1\n5\n")) {
+        fail("stdlib/array-sort-reverse: expected [1..5], got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_sort_empty(void) {
+    /* Empty input returns empty array. */
+    int exitCode;
+    char *out = runClox(
+        "var sorted = array_sort([]);\n"
+        "print array_length(sorted);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-sort-empty: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "0\n")) {
+        fail("stdlib/array-sort-empty: expected 0 length, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_sort_single(void) {
+    /* Single element returns single element. */
+    int exitCode;
+    char *out = runClox(
+        "var sorted = array_sort([42]);\n"
+        "print array_length(sorted);\n"
+        "print array_get(sorted, 0);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-sort-single: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "1\n42\n")) {
+        fail("stdlib/array-sort-single: expected [42], got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_sort_strings(void) {
+    /* Lexicographic sort for strings. */
+    int exitCode;
+    char *out = runClox(
+        "var sorted = array_sort([\"banana\", \"apple\", \"cherry\"]);\n"
+        "print array_length(sorted);\n"
+        "print array_get(sorted, 0);\n"
+        "print array_get(sorted, 1);\n"
+        "print array_get(sorted, 2);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-sort-strings: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "3\napple\nbanana\ncherry\n")) {
+        fail("stdlib/array-sort-strings: expected [apple,banana,cherry], got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_sort_with_keyfn(void) {
+    /* 1-arg keyFn: sort by keyFn(element). Sort by
+     * negation = descending. */
+    int exitCode;
+    char *out = runClox(
+        "var arr = [3, 1, 4, 1, 5];\n"
+        "fun keyFn(x) { return 0 - x; }\n"
+        "var sorted = array_sort(arr, keyFn);\n"
+        "print array_length(sorted);\n"
+        "print array_get(sorted, 0);\n"
+        "print array_get(sorted, 1);\n"
+        "print array_get(sorted, 2);\n"
+        "print array_get(sorted, 3);\n"
+        "print array_get(sorted, 4);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-sort-with-keyfn: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "5\n5\n4\n3\n1\n1\n")) {
+        fail("stdlib/array-sort-with-keyfn: expected [5,4,3,1,1], got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_sort_with_comparator(void) {
+    /* 2-arg comparator: returns negative if a < b, 0
+     * if equal, positive if a > b. Sort by
+     * comparator(a, b) = b - a = descending. */
+    int exitCode;
+    char *out = runClox(
+        "var arr = [3, 1, 4, 1, 5];\n"
+        "fun comparator(a, b) { return b - a; }\n"
+        "var sorted = array_sort(arr, comparator);\n"
+        "print array_length(sorted);\n"
+        "print array_get(sorted, 0);\n"
+        "print array_get(sorted, 1);\n"
+        "print array_get(sorted, 2);\n"
+        "print array_get(sorted, 3);\n"
+        "print array_get(sorted, 4);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-sort-with-comparator: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "5\n5\n4\n3\n1\n1\n")) {
+        fail("stdlib/array-sort-with-comparator: expected [5,4,3,1,1], got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_sort_does_not_mutate(void) {
+    /* The source array is unchanged. */
+    int exitCode;
+    char *out = runClox(
+        "var arr = [3, 1, 2];\n"
+        "array_sort(arr);\n"
+        "print array_length(arr);\n"
+        "print array_get(arr, 0);\n"
+        "print array_get(arr, 2);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-sort-does-not-mutate: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "3\n3\n2\n")) {
+        fail("stdlib/array-sort-does-not-mutate: expected source unchanged [3,1,2], got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_sort_stable(void) {
+    /* Stable sort: preserves first-occurrence order for
+     * equal elements. Use a 2D array [[1, 'a'], [1, 'b'],
+     * [2, 'c'], [1, 'd']] sorted by the first element
+     * (the key) — the equal-key elements (1, 1, 1) should
+     * preserve their original relative order: a, b, d.
+     * The key=2 element (c) goes last. Expected output:
+     * [a, b, d, c]. */
+    int exitCode;
+    char *out = runClox(
+        "var arr = [[1, \"a\"], [1, \"b\"], [2, \"c\"], [1, \"d\"]];\n"
+        "fun keyFn(x) { return array_get(x, 0); }\n"
+        "var sorted = array_sort(arr, keyFn);\n"
+        "print array_length(sorted);\n"
+        "print array_get(array_get(sorted, 0), 1);\n"
+        "print array_get(array_get(sorted, 1), 1);\n"
+        "print array_get(array_get(sorted, 2), 1);\n"
+        "print array_get(array_get(sorted, 3), 1);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-sort-stable: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "4\na\nb\nd\nc\n")) {
+        fail("stdlib/array-sort-stable: expected [a,b,d,c] (stable), got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_sort_wrong_arg_count(void) {
+    /* array_sort takes 1-2 args. 0, 3 args error. */
+    int exitCode;
+    char *out;
+    out = runClox("array_sort();\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-sort-wrong-arg-count/0: expected nonzero exit, got 0 (output: %s)", out);
+        free(out);
+        return;
+    }
+    free(out);
+    out = runClox("array_sort([1,2,3], fun(x) { return x; }, 99);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-sort-wrong-arg-count/3: expected nonzero exit, got 0 (output: %s)", out);
+        free(out);
+        return;
+    }
+    free(out);
+    pass();
+}
+
+static void test_array_sort_wrong_type(void) {
+    /* Non-array first arg, non-closure second arg. */
+    int exitCode;
+    char *out;
+    out = runClox("array_sort(\"hello\");\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-sort-wrong-type/non-array: expected nonzero exit, got 0 (output: %s)", out);
+        free(out);
+        return;
+    }
+    free(out);
+    out = runClox("array_sort([1,2,3], 42);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-sort-wrong-type/non-closure: expected nonzero exit, got 0 (output: %s)", out);
+        free(out);
+        return;
+    }
+    free(out);
+    pass();
+}
+
 /* --- Stage 29: string_split(s, delim, limit) --- */
 /* Extends Stage 13's string_split with a max-split-count
  * parameter. The shape: 2 args (Stage 13) splits on every
@@ -6622,6 +6902,19 @@ int main(void) {
     test_array_group_by_wrong_arg_count();
     test_array_group_by_wrong_type();
     test_array_group_by_three_groups();
+    /* Stage 43: array_sort. */
+    test_array_sort_basic();
+    test_array_sort_already_sorted();
+    test_array_sort_reverse();
+    test_array_sort_empty();
+    test_array_sort_single();
+    test_array_sort_strings();
+    test_array_sort_with_keyfn();
+    test_array_sort_with_comparator();
+    test_array_sort_does_not_mutate();
+    test_array_sort_stable();
+    test_array_sort_wrong_arg_count();
+    test_array_sort_wrong_type();
     /* Stage 29: string_split with limit. */
     test_string_split_with_limit();
     test_string_split_limit_zero();

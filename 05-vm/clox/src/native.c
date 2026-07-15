@@ -2490,6 +2490,158 @@ static Value arrayGroupByNative(int argCount, Value *args) {
     return OBJ_VAL(result);
 }
 
+/* Stage 43: array_sort(arr, comparator?) -> array.
+ * Sorts an array, returning a new sorted array. The
+ * input is not mutated. The shape: 1 or 2 args.
+ * - 1 arg: default < for numbers, lexicographic for
+ *   strings. Mixed types error at the first comparison.
+ * - 2 args, keyFn: sorts by keyFn(element) (1-arg
+ *   Lox closure). The comparator is < on keys.
+ * - 2 args, comparator: sorts using a 2-arg
+ *   comparator closure. Returns negative if a < b,
+ *   0 if equal, positive if a > b.
+ *
+ * Stable sort: insertion sort. O(N^2) worst case but
+ * simple, stable, and correct. For very large arrays,
+ * a future stage could add a quicksort/mergesort/
+ * timsort variant. The discipline: **stable is the
+ * right default** — preserves first-occurrence order
+ * for equal elements, matches the "first-occurrence"
+ * convention used in Stage 40 (array_unique_by) and
+ * Stage 42 (array_group_by).
+ *
+ * Architecture: reuses Stage 30's callClosureFromNative
+ * (argCount=1 for keyFn, argCount=2 for comparator).
+ * Stack layout for closure call: [callee, arg1, ..., argN].
+ * Returns Value from the comparator (negative = a < b,
+ * 0 = equal, positive = a > b).
+ *
+ * JS reference: Array.prototype.sort(comparator) (in-place;
+ * clox returns a new array to match the non-mutating pattern
+ * of Stages 38, 40, 41, 42)
+ * Python reference: sorted(iterable, key=fn, reverse=bool)
+ * Rust reference: slice::sort_by(cmp)
+ * The canonical convention: stable sort, comparator
+ * returns negative/zero/positive (not boolean).
+ */
+/* Forward declaration: sortCompareValues is defined
+ * below arraySortNative but called from inside it. */
+static int sortCompareValues(Value a, Value b,
+                             bool hasKeyFn, ObjClosure *keyFn,
+                             bool hasComparator, ObjClosure *comparator);
+static Value arraySortNative(int argCount, Value *args) {
+    if (argCount < 1 || argCount > 2) {
+        runtimeError("array_sort() takes 1 or 2 arguments (%d given).", argCount);
+        return NIL_VAL;
+    }
+    if (!IS_ARRAY(args[0])) {
+        runtimeError("array_sort() argument must be an array.");
+        return NIL_VAL;
+    }
+    /* If 2 args, the second must be a closure (keyFn or comparator). */
+    bool hasKeyFn = false;
+    bool hasComparator = false;
+    ObjClosure *keyFn = NULL;
+    ObjClosure *comparator = NULL;
+    if (argCount == 2) {
+        if (!IS_CLOSURE(args[1])) {
+            runtimeError("array_sort() second argument must be a function.");
+            return NIL_VAL;
+        }
+        /* Disambiguate keyFn (1-arg) vs comparator (2-arg) by arity
+         * of the closure. clox closures have arity stored in the
+         * function object. */
+        int arity = AS_CLOSURE(args[1])->function->arity;
+        if (arity == 1) {
+            hasKeyFn = true;
+            keyFn = AS_CLOSURE(args[1]);
+        } else if (arity == 2) {
+            hasComparator = true;
+            comparator = AS_CLOSURE(args[1]);
+        } else {
+            runtimeError("array_sort() keyFn/comparator must take 1 or 2 arguments (got %d).", arity);
+            return NIL_VAL;
+        }
+    }
+    ObjArray *input = AS_ARRAY(args[0]);
+    /* Allocate the result array with the same capacity. */
+    ObjArray *result = newArray(input->count);
+    push(OBJ_VAL(result));  /* GC: keep alive while filling and sorting */
+    for (int i = 0; i < input->count; i++) {
+        arrayPush(result, input->elements[i]);
+    }
+    /* Insertion sort: for each element from index 1 to N-1,
+     * shift it left until it's in the right position. Stable
+     * because we use strict < (not <=) — equal elements
+     * don't swap. */
+    for (int i = 1; i < result->count; i++) {
+        Value current = result->elements[i];
+        int j = i;
+        while (j > 0) {
+            Value prev = result->elements[j - 1];
+            if (sortCompareValues(prev, current, hasKeyFn, keyFn, hasComparator, comparator) <= 0) {
+                break;
+            }
+            result->elements[j] = prev;
+            j--;
+        }
+        result->elements[j] = current;
+    }
+    pop();  /* result */
+    return OBJ_VAL(result);
+}
+
+static int sortCompareValues(Value a, Value b,
+                             bool hasKeyFn, ObjClosure *keyFn,
+                             bool hasComparator, ObjClosure *comparator) {
+    if (hasComparator) {
+        /* Call comparator(a, b) and return the result as int. */
+        push(OBJ_VAL(comparator));
+        push(a);
+        push(b);
+        Value cmp = callClosureFromNative(comparator, 2);
+        if (!IS_NUMBER(cmp)) {
+            runtimeError("array_sort() comparator must return a number.");
+            return 0;
+        }
+        return (int)AS_NUMBER(cmp);
+    }
+    if (hasKeyFn) {
+        /* Compute keyA and keyB, then compare with default <. */
+        push(OBJ_VAL(keyFn));
+        push(a);
+        Value keyA = callClosureFromNative(keyFn, 1);
+        push(OBJ_VAL(keyFn));
+        push(b);
+        Value keyB = callClosureFromNative(keyFn, 1);
+        a = keyA;
+        b = keyB;
+    }
+    /* Default <: numbers use <, strings use lexicographic
+     * (compare character by character). */
+    if (IS_NUMBER(a) && IS_NUMBER(b)) {
+        double na = AS_NUMBER(a);
+        double nb = AS_NUMBER(b);
+        if (na < nb) return -1;
+        if (na > nb) return 1;
+        return 0;
+    }
+    if (IS_STRING(a) && IS_STRING(b)) {
+        ObjString *sa = AS_STRING(a);
+        ObjString *sb = AS_STRING(b);
+        int minLen = sa->length < sb->length ? sa->length : sb->length;
+        for (int i = 0; i < minLen; i++) {
+            if (sa->chars[i] < sb->chars[i]) return -1;
+            if (sa->chars[i] > sb->chars[i]) return 1;
+        }
+        if (sa->length < sb->length) return -1;
+        if (sa->length > sb->length) return 1;
+        return 0;
+    }
+    runtimeError("array_sort() cannot compare values of different types.");
+    return 0;
+}
+
 static Value typeofNative(int argCount, Value *args) {
     if (argCount != 1) {
         runtimeError("typeof() takes 1 argument (%d given).", argCount);
@@ -2818,6 +2970,17 @@ void defineNatives(void) {
     name = copyString("array_group_by", (int)strlen("array_group_by"));
     push(OBJ_VAL(name));
     tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayGroupByNative)));
+    pop();
+
+    /* Stage 43: array_sort. Takes an array and an
+     * optional keyFn (1-arg) or comparator (2-arg)
+     * closure; returns a new sorted array. Default
+     * < for numbers, lexicographic for strings. Stable
+     * sort (insertion sort) preserves first-occurrence
+     * order for equal elements. */
+    name = copyString("array_sort", (int)strlen("array_sort"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(arraySortNative)));
     pop();
 
     /* Stage 10: more number operations. */
