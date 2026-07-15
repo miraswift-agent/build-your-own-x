@@ -4379,6 +4379,222 @@ static void test_array_reduce_wrong_type(void) {
     free(out);
 }
 
+static void test_array_any_finds_match(void) {
+    /* Basic case: array with a truthy element returns true.
+     * clox's truthy rule: only false and nil are falsy. So
+     * any non-bool non-nil value is truthy. The predicate
+     * checks for membership in {1, 3, 5}, so [2, 4, 5, 6]
+     * finds 5 and returns true. */
+    int exitCode;
+    char *out = runClox(
+        "fun isOdd(x) { return x == 1 or x == 3 or x == 5; }\n"
+        "var found = array_any([2, 4, 5, 6], isOdd);\n"
+        "print found;\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-any-finds-match: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "true\n")) {
+        fail("stdlib/array-any-finds-match: expected 'true' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_any_no_match(void) {
+    /* No element matches the predicate -> false. */
+    int exitCode;
+    char *out = runClox(
+        "fun isNegative(x) { return x < 0; }\n"
+        "var found = array_any([1, 2, 3, 4, 5], isNegative);\n"
+        "print found;\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-any-no-match: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "false\n")) {
+        fail("stdlib/array-any-no-match: expected 'false' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_any_empty(void) {
+    /* Empty array -> false without ever calling the predicate.
+     * Matches JS Array.prototype.some and Python's any. */
+    int exitCode;
+    char *out = runClox(
+        "fun isPositive(x) { return x > 0; }\n"
+        "var found = array_any([], isPositive);\n"
+        "print found;\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-any-empty: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "false\n")) {
+        fail("stdlib/array-any-empty: expected 'false' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_any_short_circuits(void) {
+    /* Short-circuit: once a truthy element is found, the
+     * rest of the array is not iterated. We test this by
+     * using a predicate with a side effect (printing the
+     * element). If short-circuit works, only the elements
+     * before the first match are printed. Then we print
+     * the result on its own line. */
+    int exitCode;
+    char *out = runClox(
+        "fun trace(x) { print \"visit:\" + string(x); return x == 3; }\n"
+        "var found = array_any([1, 2, 3, 4, 5], trace);\n"
+        "print found;\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-any-short-circuits: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "visit:1\n") || !contains(out, "visit:2\n")
+            || !contains(out, "visit:3\n") || contains(out, "visit:4\n")) {
+        fail("stdlib/array-any-short-circuits: expected short-circuit (no visit:4), got '%s'", out);
+    } else if (!contains(out, "true\n")) {
+        fail("stdlib/array-any-short-circuits: expected 'true', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_any_single_element_truthy(void) {
+    /* Single-element array where the element is truthy. */
+    int exitCode;
+    char *out = runClox(
+        "fun isTruthy(x) { return x; }\n"
+        "var found = array_any([42], isTruthy);\n"
+        "print found;\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-any-single-truthy: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "true\n")) {
+        fail("stdlib/array-any-single-truthy: expected 'true' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_any_single_element_falsy(void) {
+    /* Single-element array where the predicate returns false.
+     * Uses isZero (a manual check for 0) — clox treats 0 as
+     * truthy, so the literal 0 needs an explicit comparison. */
+    int exitCode;
+    char *out = runClox(
+        "fun isZero(x) { return x == 0; }\n"
+        "var found = array_any([0], isZero);\n"
+        "print found;\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-any-single-falsy: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "true\n")) {
+        fail("stdlib/array-any-single-falsy: expected 'true' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_any_does_not_mutate(void) {
+    /* The source array is not mutated. */
+    int exitCode;
+    char *out = runClox(
+        "var src = [10, 20, 30];\n"
+        "fun isTwenty(x) { return x == 20; }\n"
+        "var found = array_any(src, isTwenty);\n"
+        "print \"len:\" + string(array_length(src));\n"
+        "print \"0:\" + string(array_get(src, 0));\n"
+        "print \"1:\" + string(array_get(src, 1));\n"
+        "print \"2:\" + string(array_get(src, 2));\n"
+        "print found;\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-any-does-not-mutate: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "len:3\n") || !contains(out, "0:10\n")
+            || !contains(out, "1:20\n") || !contains(out, "2:30\n")
+            || !contains(out, "true\n")) {
+        fail("stdlib/array-any-does-not-mutate: expected src unchanged + true, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_any_wrong_arg_count(void) {
+    /* 1 arg, 3 args, 0 args. */
+    int exitCode;
+    char *out = runClox(
+        "fun isPositive(x) { return x > 0; }\n"
+        "print array_any([1,2,3]);\n",
+        &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-any-wrong-arg-count-one: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+
+    out = runClox(
+        "fun isPositive(x) { return x > 0; }\n"
+        "print array_any([1,2,3], isPositive, 99);\n",
+        &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-any-wrong-arg-count-three: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+
+    out = runClox("print array_any();\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-any-wrong-arg-count-zero: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_any_wrong_type(void) {
+    /* Source must be array; predicate must be a 1-arg function. */
+    int exitCode;
+    char *out = runClox(
+        "fun isPositive(x) { return x > 0; }\n"
+        "print array_any(\"not an array\", isPositive);\n",
+        &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-any-wrong-type-arr: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+
+    out = runClox("print array_any([1,2,3], 42);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-any-wrong-type-fn: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+
+    out = runClox(
+        "fun zeroArg() { return true; }\n"
+        "print array_any([1,2,3], zeroArg);\n",
+        &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-any-wrong-type-arity: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
 int main(void) {
     test_clock_exists();
     test_number_abs();
@@ -4628,6 +4844,16 @@ int main(void) {
     test_array_reduce_composes_with_map();
     test_array_reduce_wrong_arg_count();
     test_array_reduce_wrong_type();
+    /* Stage 33: array_any. */
+    test_array_any_finds_match();
+    test_array_any_no_match();
+    test_array_any_empty();
+    test_array_any_short_circuits();
+    test_array_any_single_element_truthy();
+    test_array_any_single_element_falsy();
+    test_array_any_does_not_mutate();
+    test_array_any_wrong_arg_count();
+    test_array_any_wrong_type();
 
     /* Stage 28: array_unique. (the duplicate block — was added by an
      * earlier session along with the Stage 29 ones; keeping it in place

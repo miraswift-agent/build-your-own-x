@@ -1865,6 +1865,59 @@ static Value arrayMapNative(int argCount, Value *args) {
     return OBJ_VAL(result);
 }
 
+/* Stage 33: array_any(arr, predicate) -> bool.
+ * Returns true as soon as the predicate is truthy on any
+ * element (short-circuit); false if all elements are falsy.
+ * The natural mirror of Stage 30's array_filter, with the
+ * first deviation from the "iterate everything" pattern.
+ * The architecture is the same (callClosureFromNative with
+ * argCount=1); the only new thing is the early-exit return
+ * on the first truthy predicate result. The empty-array
+ * case returns false without ever calling the predicate
+ * (matches JS Array.prototype.some and Python's any).
+ *
+ * Stack layout for callClosure: [callee, arg1, ...]. */
+static Value arrayAnyNative(int argCount, Value *args) {
+    if (argCount != 2) {
+        runtimeError("array_any() takes 2 arguments (%d given).", argCount);
+        return BOOL_VAL(false);
+    }
+    if (!IS_ARRAY(args[0])) {
+        runtimeError("array_any() argument 0 must be an array.");
+        return BOOL_VAL(false);
+    }
+    if (!IS_CLOSURE(args[1])) {
+        runtimeError("array_any() argument 1 must be a function.");
+        return BOOL_VAL(false);
+    }
+    ObjArray *src = AS_ARRAY(args[0]);
+    ObjClosure *predicate = AS_CLOSURE(args[1]);
+    if (predicate->function->arity != 1) {
+        runtimeError("array_any() predicate must take 1 argument (got %d).",
+                     predicate->function->arity);
+        return BOOL_VAL(false);
+    }
+
+    for (int i = 0; i < src->count; i++) {
+        /* Same stack layout as array_map: push predicate
+         * (callee) then element (arg 1). The predicate's
+         * bytecode reads its arg at slots[1]. */
+        push(OBJ_VAL(predicate));  /* callee */
+        push(src->elements[i]);    /* arg 1 */
+        Value result = callClosureFromNative(predicate, 1);
+        /* Short-circuit: as soon as the predicate returns a
+         * truthy value, return true without iterating the
+         * rest. clox's truthy rule: only false and nil are
+         * falsy (not 0, not ""). */
+        if (!(IS_BOOL(result) && !AS_BOOL(result)) && !IS_NIL(result)) {
+            return BOOL_VAL(true);
+        }
+    }
+
+    /* No truthy predicate result found: return false. */
+    return BOOL_VAL(false);
+}
+
 static Value typeofNative(int argCount, Value *args) {
     if (argCount != 1) {
         runtimeError("typeof() takes 1 argument (%d given).", argCount);
@@ -2068,6 +2121,19 @@ void defineNatives(void) {
     name = copyString("array_reduce", (int)strlen("array_reduce"));
     push(OBJ_VAL(name));
     tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayReduceNative)));
+    pop();
+
+    /* Stage 33: array_any. Takes an array and a 1-arg Lox
+     * closure (the predicate). Returns true as soon as the
+     * predicate is truthy on any element (short-circuit),
+     * false if all elements are falsy. The natural mirror of
+     * Stage 30's array_filter, with the first deviation from
+     * the "iterate everything" pattern. The new wrinkle:
+     * early-exit return on the first truthy predicate result.
+     * Architecture is the same as Stage 30/31 (argCount=1). */
+    name = copyString("array_any", (int)strlen("array_any"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayAnyNative)));
     pop();
 
     /* Stage 10: more number operations. */

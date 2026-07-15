@@ -1,0 +1,81 @@
+// Stage 33 example: array-any.lox
+// The natural mirror of Stage 30's array_filter, with
+// short-circuit. Returns true as soon as the predicate is
+// truthy on any element. Demonstrates the "is there a match
+// in this list" idiom: any-positive, any-negative, any-string
+// matching, "contains" via array_any with `==`.
+
+print "=== basic: any positive? ===";
+// The most common array_any idiom. Returns true as soon
+// as the first positive element is found.
+fun isPositive(x) { return x > 0; }
+var hasPositive = array_any([-2, -1, 0, 1, 2, 3], isPositive);
+print hasPositive;  // true (stops at 1)
+
+print "=== none: any negative in positives? ===";
+// Returns false because no element matches.
+fun isNegative(x) { return x < 0; }
+var hasNegative = array_any([1, 2, 3, 4, 5], isNegative);
+print hasNegative;  // false (all iterated, no match)
+
+print "=== empty input: returns false without calling the predicate ===";
+// An empty array with no iterations: the predicate is
+// never called. The result is false. This is the canonical
+// "default value" for "any of zero things" — same as JS
+// Array.prototype.some and Python's any.
+fun isAnything(x) { return x; }  // would error on nil
+var empty = array_any([], isAnything);
+print empty;  // false
+
+print "=== short-circuit: only visits up to the first match ===";
+// The native returns early once a truthy predicate result
+// is found. We demonstrate this with a side-effecting
+// predicate. The trace function prints the element before
+// returning; the output shows only the elements before
+// (and including) the first match.
+fun trace(x) { print "visit:" + string(x); return x == 3; }
+var found = array_any([1, 2, 3, 4, 5], trace);
+print found;  // true (visit:1, visit:2, visit:3 — not 4 or 5)
+
+print "=== contains: use array_any with == for membership ===";
+// Real-world: "is this value in the list?" Idiomatic in
+// clox since we don't have array.includes yet. (Stage 35
+// candidate.)
+var fruits = ["apple", "banana", "cherry", "date"];
+fun isCherry(s) { return s == "cherry"; }
+var hasCherry = array_any(fruits, isCherry);
+print hasCherry;  // true
+
+// clox doesn't support inline function expressions, so we
+// declare isMango before passing it to array_any.
+fun isMango(s) { return s == "mango"; }
+var hasMango = array_any(fruits, isMango);
+print hasMango;  // false
+
+print "=== compose with array_filter (Stage 30 + Stage 33) ===";
+// Real-world: keep elements matching a predicate, then
+// check if any of the kept elements are extreme. Stages
+// 30 (filter) + 33 (any) composition.
+fun isBig(x) { return x > 100; }
+var numbers = [10, 50, 200, 30, 400, 5];
+var big = array_filter(numbers, isBig);
+// clox doesn't support inline function expressions, so
+// we declare isVeryBig before passing it to array_any.
+fun isVeryBig(x) { return x > 300; }
+var hasVeryBig = array_any(big, isVeryBig);
+print hasVeryBig;  // true (400 > 300)
+
+print "=== strict-error contract ===";
+// Uncommenting any of the next lines would error at runtime:
+//   array_any()                            // no arguments
+//   array_any([1,2,3])                     // no predicate
+//   array_any([1,2,3], f, 99)              // too many args
+//   array_any("not array", f)              // non-array source
+//   array_any([1,2,3], 42)                 // non-function predicate
+//   array_any([1,2,3], fun() { return true; })  // 0-arg predicate
+// The discipline: array_any is strict on arg count (2),
+// on the source being an array, on the predicate being a
+// 1-arg Lox closure, and on the predicate's arity being
+// exactly 1. The predicate's return type is unconstrained
+// (any truthy value counts as "found"; only false and nil
+// are falsy in clox).
