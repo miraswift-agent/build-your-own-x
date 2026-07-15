@@ -2782,6 +2782,43 @@ static Value isNilNative(int argCount, Value *args) {
     return BOOL_VAL(false);
 }
 
+static Value isFunctionNative(int argCount, Value *args) {
+    if (argCount != 1) {
+        runtimeError("is_function() takes 1 argument (%d given).", argCount);
+        return NIL_VAL;
+    }
+    /* The "type predicate" pattern (Stage 49, after
+     * Stage 44's is_array, Stage 45's is_string,
+     * Stage 46's is_number, Stage 47's is_bool, and
+     * Stage 48's is_nil). The 6th and final type
+     * predicate.
+     *
+     * The new wrinkle: function-ness in clox has
+     * TWO sub-types: ObjClosure (Lox-defined) and
+     * ObjNative (C-defined). is_function returns
+     * true for both — matches the JS/Python mental
+     * model where `typeof x == "function"` returns
+     * true for both Lox closures and built-ins.
+     * The alternative is to have separate
+     * is_closure() and is_native() predicates, but
+     * that's a finer-grained split than callers
+     * usually want.
+     *
+     * For clox, both ObjClosure and ObjNative are
+     * Obj with specific OBJ_TYPE values (OBJ_CLOSURE
+     * and OBJ_NATIVE). The check is:
+     * IS_OBJ(args[0]) && (OBJ_TYPE(args[0]) ==
+     * OBJ_CLOSURE || OBJ_TYPE(args[0]) ==
+     * OBJ_NATIVE). */
+    if (IS_OBJ(args[0])) {
+        ObjType type = OBJ_TYPE(args[0]);
+        if (type == OBJ_CLOSURE || type == OBJ_NATIVE) {
+            return BOOL_VAL(true);
+        }
+    }
+    return BOOL_VAL(false);
+}
+
 void defineNatives(void) {
     /* Existing from stage 05. */
     ObjString *name = copyString("clock", (int)strlen("clock"));
@@ -3278,5 +3315,28 @@ void defineNatives(void) {
     name = copyString("is_nil", (int)strlen("is_nil"));
     push(OBJ_VAL(name));
     tableSet(&vm.globals, name, OBJ_VAL(newNative(isNilNative)));
+    pop();
+
+    /* Stage 49: type predicate. is_function(value)
+     * returns true iff the value is a function
+     * (Lox closure OR C-defined native). The 6th
+     * and final type predicate after Stage 44's
+     * is_array, Stage 45's is_string, Stage 46's
+     * is_number, Stage 47's is_bool, and Stage 48's
+     * is_nil. Closes a gap (the caller had to use
+     * typeof(x) == "function" to determine
+     * function-ness). The new wrinkle: function-
+     * ness in clox has TWO sub-types — ObjClosure
+     * (Lox-defined) and ObjNative (C-defined).
+     * is_function returns true for both — matches
+     * the JS/Python mental model. ~15 lines, no
+     * new architecture, no user-code dispatch. The
+     * push/pop count is balanced: 1 push for the
+     * name, 1 pop after tableSet. After Stage 49,
+     * the type-predicate pattern is COMPLETE (5 of
+     * 5+ natives). */
+    name = copyString("is_function", (int)strlen("is_function"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(isFunctionNative)));
     pop();
 }

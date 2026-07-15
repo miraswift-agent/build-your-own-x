@@ -4791,6 +4791,123 @@ static void test_is_nil_wrong_arg_count(void) {
     free(out2);
 }
 
+static void test_is_function_true(void) {
+    /* Stage 49: is_function(value) -> bool. Returns
+     * true iff the value is a function (Lox closure
+     * OR C-defined native). The 6th and final type
+     * predicate (after is_array in Stage 44,
+     * is_string in Stage 45, is_number in Stage 46,
+     * is_bool in Stage 47, is_nil in Stage 48).
+     * Complements typeof: the caller doesn't have
+     * to compare a string to determine
+     * function-ness.
+     *
+     * The new wrinkle: function-ness in clox has
+     * TWO sub-types: ObjClosure (Lox-defined) and
+     * ObjNative (C-defined). is_function returns
+     * true for both — matches the JS/Python mental
+     * model where `typeof x == "function"` returns
+     * true for both Lox closures and built-ins.
+     *
+     * Note: clox doesn't support inline fun
+     * expressions (use a named function instead). */
+    int exitCode;
+    char *out = runClox(
+        "fun noop() { return 1; }\n"
+        "print is_function(noop);\n"
+        "fun inc(x) { return x + 1; }\n"
+        "print is_function(inc);\n"
+        "print is_function(clock);\n"
+        "print is_function(string);\n"
+        "print is_function(array_length);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/is-function-true: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "true\ntrue\ntrue\ntrue\ntrue\n")) {
+        fail("stdlib/is-function-true: expected 'true' 5 times, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_is_function_false(void) {
+    /* is_function() returns false for every
+     * non-function type. The "type predicate" should
+     * be exhaustive: true for functions, false for
+     * everything else. */
+    int exitCode;
+    char *out = runClox(
+        "print is_function(true);\n"
+        "print is_function(false);\n"
+        "print is_function(nil);\n"
+        "print is_function(42);\n"
+        "print is_function(3.14);\n"
+        "print is_function(\"clock\");\n"
+        "print is_function(\"hello\");\n"
+        "print is_function(\"\");\n"
+        "print is_function([]);\n"
+        "print is_function([1, 2, 3]);\n"
+        "print is_function([clock]);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/is-function-false: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "false\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\n")) {
+        fail("stdlib/is-function-false: expected 'false' 11 times, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_is_function_does_not_coerce(void) {
+    /* is_function() must NOT coerce. A string that
+     * contains the name of a function is NOT a
+     * function (just like is_array on a string is
+     * false even if the string says "function").
+     * An array containing a function is NOT a
+     * function. A number is NOT a function. The
+     * alternative (loose coercion) loses type
+     * information. */
+    int exitCode;
+    char *out = runClox(
+        "print is_function(\"clock\");\n"
+        "print is_function(\"fun\");\n"
+        "print is_function([clock]);\n"
+        "print is_function(0);\n"
+        "print is_function(false);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/is-function-does-not-coerce: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "false\nfalse\nfalse\nfalse\nfalse\n")) {
+        fail("stdlib/is-function-does-not-coerce: expected 'false' 5 times, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_is_function_wrong_arg_count(void) {
+    /* Defensive: native function should handle wrong
+     * arg count. 0 args, 2 args both error. */
+    int exitCode;
+    char *out1 = runClox("print is_function();\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/is-function-wrong-arg-count-0: expected non-zero exit for 0 args");
+    } else {
+        pass();
+    }
+    free(out1);
+
+    char *out2 = runClox("print is_function(clock, clock);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/is-function-wrong-arg-count-2: expected non-zero exit for 2 args");
+    } else {
+        pass();
+    }
+    free(out2);
+}
+
 static void test_array_group_by_three_groups(void) {
     /* Three distinct keys, in the order they first appear.
      * Numbers by signum: keyFn(x) = x > 0 (positive vs.
@@ -7425,6 +7542,10 @@ int main(void) {
     test_is_nil_false();
     test_is_nil_does_not_coerce();
     test_is_nil_wrong_arg_count();
+    test_is_function_true();
+    test_is_function_false();
+    test_is_function_does_not_coerce();
+    test_is_function_wrong_arg_count();
     /* Stage 29: string_split with limit. */
     test_string_split_with_limit();
     test_string_split_limit_zero();

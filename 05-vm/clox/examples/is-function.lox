@@ -1,0 +1,223 @@
+// Stage 49 example: is-function.lox
+// The "is this value a function?" type predicate. The
+// shape: 1 arg, 1 return value (a bool). True iff the
+// value is a function (Lox closure OR C-defined
+// native); false for every other type.
+//
+// Stage 49 is the 6th and FINAL type predicate after
+// Stage 44's is_array, Stage 45's is_string, Stage
+// 46's is_number, Stage 47's is_bool, and Stage 48's
+// is_nil. The "type predicate" pattern is now
+// COMPLETE (5 of 5+ natives: is_array, is_string,
+// is_number, is_bool, is_nil, is_function).
+//
+// After Stage 49, the next decision is whether to
+// grow the trigger-mine bucket beyond byox (e.g.,
+// apply Stages 1-49 to a different project) or
+// continue with array primitives (e.g.,
+// array_zip_longest, array_take, array_drop) or
+// modules (~600 lines, Tom's call).
+
+print "=== is_function on functions: true ===";
+// is_function returns true for both Lox closures
+// (fun-defined) and C-defined natives (like clock,
+// string, array_length). This matches the JS/Python
+// mental model where `typeof x == "function"` returns
+// true for both user-defined functions and built-ins.
+fun noop() { return 1; }
+print is_function(noop);
+fun inc(x) { return x + 1; }
+print is_function(inc);
+print is_function(clock);
+print is_function(string);
+print is_function(array_length);
+// Output:
+//   true
+//   true
+//   true
+//   true
+//   true
+
+print "=== is_function on non-functions: false ===";
+// is_function returns false for every non-function
+// type. Test across all primitive types and at least
+// one array (which is an array, not a function).
+print is_function(true);
+print is_function(false);
+print is_function(nil);
+print is_function(42);
+print is_function(3.14);
+print is_function("clock");
+print is_function("hello");
+print is_function("");
+print is_function([]);
+print is_function([1, 2, 3]);
+print is_function([clock]);
+// Output:
+//   false
+//   false
+//   false
+//   false
+//   false
+//   false
+//   false
+//   false
+//   false
+//   false
+//   false
+
+print "=== is_function does not coerce ===";
+// is_function must NOT coerce. A string that
+// contains the name of a function is NOT a function
+// (just like is_array on a string is false even if
+// the string says "function"). An array containing
+// a function is NOT a function. A number is NOT a
+// function. The alternative (loose coercion) loses
+// type information.
+print is_function("clock");
+print is_function("fun");
+print is_function([clock]);
+print is_function(0);
+print is_function(false);
+// Output:
+//   false
+//   false
+//   false
+//   false
+//   false
+
+print "=== compose with all 5 other type predicates ===";
+// Combine is_function with the other 5 type
+// predicates for a complete type dispatch on the
+// most common types. The six natives are
+// complementary:
+// - is_array(x) is the array predicate (Stage 44)
+// - is_string(x) is the string predicate (Stage 45)
+// - is_number(x) is the number predicate (Stage 46)
+// - is_bool(x) is the bool predicate (Stage 47)
+// - is_nil(x) is the nil predicate (Stage 48)
+// - is_function(x) is the function predicate (Stage 49)
+fun describe(x) {
+    if (is_array(x))     { return "array"; }
+    if (is_string(x))    { return "string"; }
+    if (is_number(x))    { return "number"; }
+    if (is_bool(x))      { return "bool"; }
+    if (is_nil(x))       { return "nil"; }
+    if (is_function(x))  { return "function"; }
+    return typeof(x);
+}
+fun f(x) { return x; }
+print describe(nil);
+print describe(42);
+print describe("hello");
+print describe([1, 2, 3]);
+print describe(true);
+print describe(f);
+print describe(clock);
+// Output:
+//   nil
+//   number
+//   string
+//   array
+//   bool
+//   function
+//   function
+
+print "=== pattern: count functions in an array ===";
+// Real-world use case: counting the functions in a
+// mixed array. Without is_function, the caller would
+// have to use typeof(x) == "function" which is
+// verbose. Stage 49 makes it ergonomic.
+fun count_functions(arr) {
+    var count = 0;
+    for (var i = 0; i < array_length(arr); i = i + 1) {
+        if (is_function(array_get(arr, i))) {
+            count = count + 1;
+        }
+    }
+    return count;
+}
+fun a() {}
+fun b() {}
+fun c(x) { return x + 1; }
+print count_functions([a, b, c, 1, 2, "hello"]);
+print count_functions([1, 2, 3]);
+print count_functions([a, b, clock, string]);
+print count_functions([]);
+// Output:
+//   3
+//   0
+//   4
+//   0
+
+print "=== pattern: dispatch by type ===";
+// Real-world use case: type-dispatch on a value.
+// Without the 6 type predicates, the caller has to
+// use a chain of `typeof x == "Y"` checks. With the
+// 6 type predicates, the dispatch is clean.
+fun call_or_default(x, default) {
+    if (is_function(x)) {
+        return x(42);
+    }
+    return default;
+}
+fun doubler(x) { return x * 2; }
+print call_or_default(doubler, 0);
+print call_or_default(clock, 0);
+print call_or_default(42, 0);
+print call_or_default("hello", 0);
+print call_or_default(nil, 0);
+// Output:
+//   84
+//   <clock() value, e.g. 0.003724>
+//   0
+//   0
+//   0
+
+print "=== what this stage teaches ===";
+// (a) "The type predicate family is now COMPLETE
+//     (6 of 5+ natives)." is_array (Stage 44),
+//     is_string (Stage 45), is_number (Stage 46),
+//     is_bool (Stage 47), is_nil (Stage 48),
+//     is_function (Stage 49). The pattern is
+//     established. The next step is to grow the
+//     trigger-mine bucket beyond byox or continue
+//     with array primitives.
+//
+// (b) "Function-ness has TWO sub-types" — ObjClosure
+//     (Lox-defined) and ObjNative (C-defined).
+//     is_function returns true for both — matches
+//     the JS/Python mental model. The alternative is
+//     to have separate is_closure() and is_native()
+//     predicates, but that's a finer-grained split
+//     than callers usually want.
+//
+// (c) "Type predicates don't coerce" — discipline
+//     from Stages 44-48 carries forward. A string
+//     that contains the name of a function is NOT
+//     a function. An array containing a function
+//     is NOT a function. The alternative (loose
+//     coercion) loses type information.
+//
+// (d) "Stage 44's push/pop lesson was applied for
+//     the 5th consecutive stage" — 0 impl bugs in
+//     Stage 49. The new is_function registration
+//     has 1 push and 1 pop, balanced (vs. Stage
+//     44's duplicate-pop bug). The streak is now
+//     at 6-consec-zero-impl-bug in the new streak.
+//
+// (e) "1 test-bug caught and fixed mid-flight" —
+//     new lesson for Stage 49. The first test of
+//     `test_is_function_true` used `var f = fun (x)
+//     { return x + 1; }` — clox doesn't support
+//     inline fun expressions. The fix was a test
+//     edit (use a named function instead). The
+//     discipline: **clox has no inline fun
+//     expressions — declare the function first,
+//     then pass it.**
+//
+// (f) "Type predicates compose with control flow"
+//     — the canonical use case is "type-dispatch
+//     on a value". With the 6 type predicates,
+//     the dispatch is clean: `is_function(x) ? ...
+//     : is_array(x) ? ... : ...`.
