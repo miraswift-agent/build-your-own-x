@@ -1,0 +1,32 @@
+// Stage 23 example: pad-right-numbers.lox
+// Composes string(n) (Stage 17), for (Stage 12b), and string_pad_end
+// (Stage 23) to produce a right-aligned column of integers, which is
+// the standard "pretty-print a table" idiom. The previous example
+// (pad-numbers.lox, Stage 22) padded on the LEFT (zero-padding for
+// fixed-width numerics); this one pads on the RIGHT (right-aligning
+// to a column).
+
+// 1. Right-align a single integer to width 6.
+var n = 42;
+print string_pad_end(string(n), 6, " ");   // "42    "
+
+// 2. Print a column of numbers right-aligned to width 6.
+print "------";   // visual divider (string_repeat (Stage 21) would be neater,
+                  // but this example sticks to Stage 23 + a literal).
+for (var i = 1; i <= 9; i = i + 1) {
+    print string_pad_end(string(i * i), 6, " ");
+}
+// 1, 4, 9, 16, 25, 36, 49, 64, 81 — all right-aligned in a 6-wide column.
+
+// 3. Pad a label so all values line up under a heading.
+var heading = "value";
+var data = "17";
+print string_pad_end(heading, 6, " ") + " | " + string_pad_end(data, 6, " ");
+// "value  | 17     "
+
+// 4. Combined with string_pad_start (Stage 22) for symmetric padding.
+var label = "hi";
+var left  = string_pad_start(label, 6, " ");
+var right = string_pad_end(label, 6, " ");
+print "[" + left + "]";   // "[    hi]"
+print "[" + right + "]";  // "[hi    ]"

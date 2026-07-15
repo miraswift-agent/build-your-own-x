@@ -2683,6 +2683,144 @@ static void test_string_pad_start_wrong_arg_count(void) {
     free(out);
 }
 
+/* --- Stage 23: string_pad_end --- */
+/* string_pad_end(s, width, fill) -> string. Mirror of string_pad_start:
+ * pad s on the RIGHT with copies of fill until the result is at least
+ * width characters. JavaScript's String.prototype.padEnd semantics
+ * (Python's str.ljust doesn't support multi-char fill, so JS is the
+ * canonical reference). Same error contract as string_pad_start:
+ * negative width and empty fill are runtime errors; s->length >=
+ * width returns s unchanged. */
+
+static void test_string_pad_end_basic(void) {
+    /* Basic case: pad to 6 with "-=", expect "abc-=-" (6 chars). The
+     * JS reference returns "abc-=-", not "abc=-=-" (7 chars). The
+     * fill is truncated to fit the target width. */
+    int exitCode;
+    char *out = runClox(
+        "var r = string_pad_end(\"abc\", 6, \"-=\");\n"
+        "print string_length(r);\n"
+        "print(r);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/pad-end-basic: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "6\n")
+            || !contains(out, "abc-=-\n")
+            || contains(out, "abc=-=-")) {
+        fail("stdlib/pad-end-basic: expected 'abc-=-' length 6, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_pad_end_already_wide(void) {
+    /* s->length >= width -> s unchanged (JS padEnd convention:
+     * never truncate, never error on "already wide enough"). */
+    int exitCode;
+    char *out = runClox(
+        "print string_pad_end(\"hello\", 3, \"0\");\n"   /* "hello" */
+        "print string_pad_end(\"abc\", 3, \"x\");\n",    /* "abc" (exact) */
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/pad-end-wide: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "hello\n")
+            || !contains(out, "abc\n")
+            || contains(out, "hello000")
+            || contains(out, "abcxxx")) {
+        fail("stdlib/pad-end-wide: expected s unchanged when wide enough, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_pad_end_empty_s(void) {
+    /* Empty s -> result is just fill repeated to width. */
+    int exitCode;
+    char *out = runClox(
+        "var r = string_pad_end(\"\", 4, \"x\");\n"
+        "print string_length(r);\n"
+        "print(r);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/pad-end-empty-s: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "4\n")
+            || !contains(out, "xxxx\n")) {
+        fail("stdlib/pad-end-empty-s: expected 'xxxx' length 4, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_pad_end_width_zero(void) {
+    /* width = 0 -> s unchanged. */
+    int exitCode;
+    char *out = runClox(
+        "var r = string_pad_end(\"hi\", 0, \"x\");\n"
+        "print(r);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/pad-end-width-zero: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "hi\n")
+            || contains(out, "hix")) {
+        fail("stdlib/pad-end-width-zero: expected 'hi' unchanged, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_pad_end_negative_errors(void) {
+    /* Negative width -> runtime error (matches string_pad_start /
+     * string_repeat / string_substring's discipline). */
+    int exitCode;
+    char *out = runClox("print string_pad_end(\"x\", -1, \"0\");\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/pad-end-negative: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_pad_end_empty_fill_errors(void) {
+    /* Empty fill -> runtime error (matches string_pad_start). */
+    int exitCode;
+    char *out = runClox("print string_pad_end(\"x\", 5, \"\");\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/pad-end-empty-fill: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_pad_end_wrong_type(void) {
+    /* Non-string first arg -> runtime error. */
+    int exitCode;
+    char *out = runClox("print string_pad_end(42, 5, \"0\");\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/pad-end-wrong-type-s: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_pad_end_wrong_arg_count(void) {
+    /* Wrong arity (1 arg) -> runtime error. */
+    int exitCode;
+    char *out = runClox("print string_pad_end(\"x\");\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/pad-end-wrong-arg-count: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
 int main(void) {
     test_clock_exists();
     test_number_abs();
@@ -2836,6 +2974,15 @@ int main(void) {
     test_string_pad_start_empty_fill_errors();
     test_string_pad_start_wrong_type();
     test_string_pad_start_wrong_arg_count();
+    /* Stage 23: string_pad_end. */
+    test_string_pad_end_basic();
+    test_string_pad_end_already_wide();
+    test_string_pad_end_empty_s();
+    test_string_pad_end_width_zero();
+    test_string_pad_end_negative_errors();
+    test_string_pad_end_empty_fill_errors();
+    test_string_pad_end_wrong_type();
+    test_string_pad_end_wrong_arg_count();
 
     printf("%d passed, %d failed\n", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;

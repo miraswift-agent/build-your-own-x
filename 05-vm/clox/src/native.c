@@ -509,6 +509,88 @@ static Value stringPadStartNative(int argCount, Value *args) {
     return OBJ_VAL(result);
 }
 
+/* --- Stage 23: string_pad_end --- */
+/* string_pad_end(s, width, fill) -> string. Mirror of string_pad_start:
+ * pad s on the RIGHT with copies of fill until the result is at
+ * least width characters. JavaScript's String.prototype.padEnd
+ * semantics (Python's str.ljust doesn't support multi-char fill,
+ * so JS is the canonical reference). If s->length >= width, returns
+ * s unchanged (JS padEnd convention: never truncate, never error
+ * on "already wide enough"). Negative width is a runtime error
+ * (matches string_pad_start / string_repeat / string_substring's
+ * discipline: bad numeric input is a runtime error, not silent).
+ * Empty fill is a runtime error: padding with nothing is
+ * nonsensical; if the caller wanted to truncate, they should use
+ * string_substring. Fractional width is truncated to int (matches
+ * string_pad_start / string_repeat / string_substring's cast).
+ * Single allocation: one output buffer of (width) bytes, filled in
+ * two passes (s copy first, then fill copies) — no intermediate
+ * ObjStrings, no GC pressure. The total output size is bounded by
+ * width (a runtime int), which is already bounded by INT_MAX. */
+static Value stringPadEndNative(int argCount, Value *args) {
+    if (argCount != 3) {
+        runtimeError("string_pad_end() takes 3 arguments (%d given).", argCount);
+        return NIL_VAL;
+    }
+    if (!IS_STRING(args[0])) {
+        runtimeError("string_pad_end() argument 0 must be a string.");
+        return NIL_VAL;
+    }
+    if (!IS_NUMBER(args[1])) {
+        runtimeError("string_pad_end() argument 1 must be a number.");
+        return NIL_VAL;
+    }
+    if (!IS_STRING(args[2])) {
+        runtimeError("string_pad_end() argument 2 must be a string.");
+        return NIL_VAL;
+    }
+    ObjString *s = AS_STRING(args[0]);
+    double wD = AS_NUMBER(args[1]);
+    ObjString *fill = AS_STRING(args[2]);
+    int width = (int)wD;
+    if (wD < 0) {
+        runtimeError("string_pad_end() argument 1 must be non-negative.");
+        return NIL_VAL;
+    }
+    if (fill->length == 0) {
+        runtimeError("string_pad_end() argument 2 must be a non-empty string.");
+        return NIL_VAL;
+    }
+    if (s->length >= width) {
+        /* Already wide enough; return s unchanged. Returning the
+         * input ObjString pointer is the same pattern string_substring
+         * / string_pad_start uses for its no-clamp-needed path. */
+        return OBJ_VAL(s);
+    }
+    /* Need to pad: total length is width, of which s->length is the
+     * head and (width - s->length) is the suffix of fill copies.
+     * (width - s->length) is positive because of the s->length >=
+     * width check above, and bounded by width (an int). */
+    int padLen = width - s->length;
+    char *buf = ALLOCATE(char, width + 1);
+    /* Copy s to the head of the buffer. */
+    memcpy(buf, s->chars, s->length);
+    /* Fill the suffix with copies of fill, starting at s->length.
+     * padLen / fill->length is the number of full copies; padLen %
+     * fill->length is the remainder (a partial fill at the end of
+     * the suffix). */
+    int fullCopies = padLen / fill->length;
+    int remainder = padLen - fullCopies * fill->length;
+    int pos = s->length;
+    for (int i = 0; i < fullCopies; i++) {
+        memcpy(buf + pos, fill->chars, fill->length);
+        pos += fill->length;
+    }
+    if (remainder > 0) {
+        memcpy(buf + pos, fill->chars, remainder);
+        pos += remainder;
+    }
+    buf[width] = '\0';
+    ObjString *result = copyString(buf, width);
+    FREE_ARRAY(char, buf, width + 1);
+    return OBJ_VAL(result);
+}
+
 static Value numberFloorNative(int argCount, Value *args) {
     if (argCount != 1) {
         runtimeError("number_floor() takes 1 argument (%d given).", argCount);
@@ -1380,6 +1462,12 @@ void defineNatives(void) {
     name = copyString("string_pad_start", (int)strlen("string_pad_start"));
     push(OBJ_VAL(name));
     tableSet(&vm.globals, name, OBJ_VAL(newNative(stringPadStartNative)));
+    pop();
+
+    /* Stage 23: string_pad_end. */
+    name = copyString("string_pad_end", (int)strlen("string_pad_end"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(stringPadEndNative)));
     pop();
 
     /* Stage 13: string_split / string_join — compose the new array
