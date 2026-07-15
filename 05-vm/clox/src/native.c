@@ -2681,6 +2681,26 @@ static Value typeofNative(int argCount, Value *args) {
     return OBJ_VAL(copyString(name, (int)strlen(name)));
 }
 
+static Value isArrayNative(int argCount, Value *args) {
+    if (argCount != 1) {
+        runtimeError("is_array() takes 1 argument (%d given).", argCount);
+        return NIL_VAL;
+    }
+    /* The "type predicate" pattern. Inspect the
+     * Value's type tag directly. For clox, an array
+     * is represented as an Obj with OBJ_ARRAY type.
+     * IS_OBJ/OBJ_TYPE are the standard macros (used
+     * by typeofNative for the same purpose). The
+     * alternative is a separate "is_array" VM opcode,
+     * but a native keeps the VM unchanged and is
+     * consistent with typeof(). Returns a bool
+     * (BOOL_VAL, not OBJ_VAL). */
+    if (IS_OBJ(args[0]) && OBJ_TYPE(args[0]) == OBJ_ARRAY) {
+        return BOOL_VAL(true);
+    }
+    return BOOL_VAL(false);
+}
+
 void defineNatives(void) {
     /* Existing from stage 05. */
     ObjString *name = copyString("clock", (int)strlen("clock"));
@@ -3108,5 +3128,17 @@ void defineNatives(void) {
     name = copyString("typeof", (int)strlen("typeof"));
     push(OBJ_VAL(name));
     tableSet(&vm.globals, name, OBJ_VAL(newNative(typeofNative)));
+    pop();
+
+    /* Stage 44: type predicate. is_array(value)
+     * returns true iff the value is an array. Closes
+     * a 27-stage-old gap (Stage 39 added typeof(<array>)
+     * returning "array" but the caller had to compare
+     * a string; is_array() is the ergonomic predicate).
+     * ~10 lines, no new architecture, no user-code
+     * dispatch. */
+    name = copyString("is_array", (int)strlen("is_array"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(isArrayNative)));
     pop();
 }

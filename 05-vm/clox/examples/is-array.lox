@@ -1,0 +1,156 @@
+// Stage 44 example: is-array.lox
+// The "is this value an array?" type predicate. The
+// shape: 1 arg, 1 return value (a bool). True iff the
+// value is an array; false for every other type.
+//
+// Stage 39 added typeof(<array>) returning "array".
+// Stage 44 is the ergonomic predicate: the caller
+// doesn't have to compare a string to determine
+// array-ness. is_array(x) is true; is_array(y) is
+// false (for non-array y).
+//
+// The "type predicate" pattern. Other type predicates
+// in the standard library (e.g., is_string, is_number)
+// would follow the same pattern. Stage 44 establishes
+// the pattern with is_array as the first type
+// predicate native.
+
+print "=== is_array on arrays: true ===";
+// is_array returns true for arrays (empty or
+// populated, nested or flat).
+print is_array([]);
+print is_array([1, 2, 3]);
+print is_array([[1, 2], [3, 4]]);
+// Output:
+//   true
+//   true
+//   true
+
+print "=== is_array on non-arrays: false ===";
+// is_array returns false for every non-array type.
+// Test across all primitive types and at least one
+// function (the native clock()).
+print is_array(true);
+print is_array(false);
+print is_array(nil);
+print is_array(42);
+print is_array(3.14);
+print is_array("hello");
+print is_array("");
+print is_array(clock);
+// Output:
+//   false
+//   false
+//   false
+//   false
+//   false
+//   false
+//   false
+//   false
+
+print "=== is_array does not coerce ===";
+// is_array must NOT coerce. The string "[]" is a
+// string, not an array. The number 0 is a number,
+// not an array. The boolean false is a boolean, not
+// an array. The alternative (truthy coerces) is
+// JS-style but loses type information.
+print is_array("[]");
+print is_array(0);
+print is_array(false);
+print is_array(nil);
+// Output:
+//   false
+//   false
+//   false
+//   false
+
+print "=== compose with typeof: exhaustive type check ===";
+// Combine is_array with typeof for a complete type
+// dispatch. The two natives are complementary:
+// - is_array(x) is the predicate (true/false)
+// - typeof(x) is the string (the type name)
+fun describe(x) {
+    if (is_array(x)) {
+        return "array";
+    }
+    return typeof(x);
+}
+print describe([1, 2, 3]);
+print describe("hello");
+print describe(42);
+print describe(true);
+print describe(nil);
+// Output:
+//   array
+//   string
+//   number
+//   bool
+//   nil
+
+print "=== pattern: filter arrays from a mixed list ===";
+// Real-world use case: a mixed list of values where
+// the caller wants to extract just the arrays. This
+// would normally require a for loop with type
+// checking, or a function. Stage 44 makes it
+// ergonomic: is_array(x) is the predicate.
+var mixed = [1, "two", [3, 4], nil, [5], "six"];
+var arrays_only = [];
+for (var i = 0; i < array_length(mixed); i = i + 1) {
+    var item = array_get(mixed, i);
+    if (is_array(item)) {
+        array_push(arrays_only, item);
+    }
+}
+print array_length(arrays_only);
+print array_length(array_get(arrays_only, 0));
+print array_length(array_get(arrays_only, 1));
+// Output:
+//   2
+//   2
+//   1
+
+print "=== what this stage teaches ===";
+// (a) "Type predicates are a separate native pattern
+//     from type strings." typeof() returns a string
+//     (the type name); is_array() returns a bool (the
+//     predicate). The two are complementary: callers
+//     that need a string use typeof(); callers that
+//     need a yes/no answer use is_*().
+//
+// (b) "Type predicates don't coerce." The string
+//     "[]" is a string, not an array. The number 0 is
+//     a number, not an array. Coercion (the JS-style
+//     "truthy coerces to bool") loses type
+//     information. The discipline: **inspect the
+//     value's type tag, don't coerce the value.**
+//     This matches typeofNative's discipline (which
+//     inspects the value's type tag).
+//
+// (c) "is_array is the first of a family of type
+//     predicate natives." Future stages could add
+//     is_string, is_number, is_bool, is_nil, is_function.
+//     Each would be ~10 lines, no new architecture.
+//     The trigger-mine bucket either grows beyond
+//     byox or we ship modules (~600 lines, Tom's
+//     call).
+//
+// (d) "Type predicates compose with array_filter for
+//     type-specific array operations." The
+//     array_filter pattern from Stage 30 + is_array
+//     = "filter arrays from a mixed list" in one
+//     line. Matches the discipline from Stages 30-43
+//     of composing small primitives.
+//
+// (e) "Bug caught: 1 duplicate pop() in
+//     defineNatives() broke 221 tests on the first
+//     run." The duplicate popped the stack one more
+//     time than it pushed, causing a stack underflow
+//     that crashed clox at runtime. The fix was a
+//     1-character edit (removing the extra pop()).
+//     The discipline: **after adding a new
+//     registration, the push/pop count must be
+//     balanced** (one push for the name, one pop
+//     after tableSet). The 5-second cost of counting
+//     is much less than the cost of a 221-test
+//     failure. The streak resets to 1 (was 17, broken
+//     by this registration error).

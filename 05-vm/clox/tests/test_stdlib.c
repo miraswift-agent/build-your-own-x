@@ -4301,6 +4301,99 @@ static void test_array_group_by_wrong_type(void) {
     pass();
 }
 
+static void test_is_array_true(void) {
+    /* Stage 44: is_array(value) -> bool. Returns true
+     * iff the value is an array. The "type predicate"
+     * pattern. Closes a 27-stage-old gap: Stage 39
+     * added typeof(<array>) returning "array", but the
+     * caller has to compare a string to determine
+     * array-ness. is_array() is the ergonomic
+     * predicate. */
+    int exitCode;
+    char *out = runClox(
+        "print is_array([]);\n"
+        "print is_array([1, 2, 3]);\n"
+        "print is_array([[1, 2], [3, 4]]);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/is-array-true: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "true\ntrue\ntrue\n")) {
+        fail("stdlib/is-array-true: expected 'true' 3 times, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_is_array_false(void) {
+    /* is_array() returns false for every non-array
+     * type. The "type predicate" should be exhaustive:
+     * true for arrays, false for everything else. */
+    int exitCode;
+    char *out = runClox(
+        "print is_array(true);\n"
+        "print is_array(false);\n"
+        "print is_array(nil);\n"
+        "print is_array(42);\n"
+        "print is_array(3.14);\n"
+        "print is_array(\"hello\");\n"
+        "print is_array(\"\");\n"
+        "print is_array(clock);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/is-array-false: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "false\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\n")) {
+        fail("stdlib/is-array-false: expected 'false' 8 times, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_is_array_does_not_coerce(void) {
+    /* is_array() must NOT coerce. The string "[]" is
+     * a string, not an array. The number 0 is a number,
+     * not an array. The boolean false is a boolean, not
+     * an array. The alternative (truthy coerces) is
+     * JS-style but loses type information. */
+    int exitCode;
+    char *out = runClox(
+        "print is_array(\"[]\");\n"
+        "print is_array(0);\n"
+        "print is_array(false);\n"
+        "print is_array(nil);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/is-array-does-not-coerce: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "false\nfalse\nfalse\nfalse\n")) {
+        fail("stdlib/is-array-does-not-coerce: expected 'false' 4 times, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_is_array_wrong_arg_count(void) {
+    /* Defensive: native function should handle wrong
+     * arg count. 0 args, 2 args both error. */
+    int exitCode;
+    char *out1 = runClox("print is_array();\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/is-array-wrong-arg-count-0: expected non-zero exit for 0 args");
+    } else {
+        pass();
+    }
+    free(out1);
+
+    char *out2 = runClox("print is_array([], []);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/is-array-wrong-arg-count-2: expected non-zero exit for 2 args");
+    } else {
+        pass();
+    }
+    free(out2);
+}
+
 static void test_array_group_by_three_groups(void) {
     /* Three distinct keys, in the order they first appear.
      * Numbers by signum: keyFn(x) = x > 0 (positive vs.
@@ -6915,6 +7008,10 @@ int main(void) {
     test_array_sort_stable();
     test_array_sort_wrong_arg_count();
     test_array_sort_wrong_type();
+    test_is_array_true();
+    test_is_array_false();
+    test_is_array_does_not_coerce();
+    test_is_array_wrong_arg_count();
     /* Stage 29: string_split with limit. */
     test_string_split_with_limit();
     test_string_split_limit_zero();
