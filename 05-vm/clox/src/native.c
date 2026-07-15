@@ -1918,6 +1918,62 @@ static Value arrayAnyNative(int argCount, Value *args) {
     return BOOL_VAL(false);
 }
 
+/* Stage 34: array_all(arr, predicate) -> bool.
+ * Returns false as soon as the predicate is falsy on any
+ * element (short-circuit); true if all elements are truthy.
+ * The natural mirror of Stage 33's array_any, with the
+ * short-circuit direction reversed: short-circuit on the
+ * *first falsy* (vs. array_any's short-circuit on the
+ * *first truthy*). The architecture is the same
+ * (callClosureFromNative with argCount=1); the only new
+ * thing is the early-exit return on the first falsy
+ * predicate result, plus the empty-array case returns
+ * true (vacuously true: "all of zero things are true"
+ * — matches JS Array.prototype.every and Python's all).
+ *
+ * Stack layout for callClosure: [callee, arg1, ...]. */
+static Value arrayAllNative(int argCount, Value *args) {
+    if (argCount != 2) {
+        runtimeError("array_all() takes 2 arguments (%d given).", argCount);
+        return BOOL_VAL(false);
+    }
+    if (!IS_ARRAY(args[0])) {
+        runtimeError("array_all() argument 0 must be an array.");
+        return BOOL_VAL(false);
+    }
+    if (!IS_CLOSURE(args[1])) {
+        runtimeError("array_all() argument 1 must be a function.");
+        return BOOL_VAL(false);
+    }
+    ObjArray *src = AS_ARRAY(args[0]);
+    ObjClosure *predicate = AS_CLOSURE(args[1]);
+    if (predicate->function->arity != 1) {
+        runtimeError("array_all() predicate must take 1 argument (got %d).",
+                     predicate->function->arity);
+        return BOOL_VAL(false);
+    }
+
+    for (int i = 0; i < src->count; i++) {
+        /* Same stack layout as array_map/array_any: push
+         * predicate (callee) then element (arg 1). */
+        push(OBJ_VAL(predicate));  /* callee */
+        push(src->elements[i]);    /* arg 1 */
+        Value result = callClosureFromNative(predicate, 1);
+        /* Short-circuit on the *first falsy*: as soon as
+         * the predicate returns a falsy value, return
+         * false without iterating the rest. clox's truthy
+         * rule: only false and nil are falsy (not 0, not ""). */
+        if ((IS_BOOL(result) && !AS_BOOL(result)) || IS_NIL(result)) {
+            return BOOL_VAL(false);
+        }
+    }
+
+    /* No falsy predicate result found: return true.
+     * (Also covers the empty-array case, where the loop
+     * never executes.) */
+    return BOOL_VAL(true);
+}
+
 static Value typeofNative(int argCount, Value *args) {
     if (argCount != 1) {
         runtimeError("typeof() takes 1 argument (%d given).", argCount);
@@ -2134,6 +2190,22 @@ void defineNatives(void) {
     name = copyString("array_any", (int)strlen("array_any"));
     push(OBJ_VAL(name));
     tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayAnyNative)));
+    pop();
+
+    /* Stage 34: array_all. Takes an array and a 1-arg Lox
+     * closure (the predicate). Returns false as soon as the
+     * predicate is falsy on any element (short-circuit),
+     * true if all elements are truthy. The natural mirror of
+     * Stage 33's array_any, with the short-circuit direction
+     * reversed. The new wrinkle: short-circuit on the *first
+     * falsy* (vs. Stage 33's short-circuit on the *first
+     * truthy*). The empty-array case returns true (vacuously
+     * true: "all of zero things are true" — matches JS
+     * Array.prototype.every and Python's all). Architecture
+     * is the same as Stage 30/31/33 (argCount=1). */
+    name = copyString("array_all", (int)strlen("array_all"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayAllNative)));
     pop();
 
     /* Stage 10: more number operations. */

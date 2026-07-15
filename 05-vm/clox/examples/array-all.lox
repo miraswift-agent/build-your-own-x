@@ -1,0 +1,82 @@
+// Stage 34 example: array-all.lox
+// The natural mirror of Stage 33's array_any, with
+// short-circuit on the first falsy. Returns true if all
+// elements are truthy, false as soon as the predicate is
+// falsy on any element. Demonstrates the "are all of these
+// X" idiom: all-positive, all-in-range, all-unique, all-
+// string-non-empty, all-match-against-a-set.
+
+print "=== basic: all positive? ===";
+// The most common array_all idiom. Returns true only if
+// every element is positive. Short-circuits on the first
+// non-positive element.
+fun isPositive(x) { return x > 0; }
+var allPos = array_all([1, 2, 3, 4, 5], isPositive);
+print allPos;  // true (every element > 0)
+
+print "=== one bad: not all positive ===";
+// A single non-positive element is enough to make the
+// result false. Short-circuits on that element without
+// visiting the rest.
+var notAllPos = array_all([1, 2, -1, 4, 5], isPositive);
+print notAllPos;  // false (stops at -1)
+
+print "=== empty input: returns true (vacuously true) ===";
+// An empty array with no iterations: the predicate is
+// never called. The result is true. This is the canonical
+// 'default value' for 'all of zero things' — same as JS
+// Array.prototype.every and Python's all.
+fun isAnything(x) { return x; }  // would error on nil
+var empty = array_all([], isAnything);
+print empty;  // true
+
+print "=== short-circuit: only visits up to the first falsy ===";
+// The native returns early once a falsy predicate result
+// is found. We demonstrate this with a side-effecting
+// predicate. The trace function prints the element before
+// returning; the output shows only the elements before
+// (and including) the first falsy.
+fun trace(x) { print "visit:" + string(x); return x != 3; }
+var found = array_all([1, 2, 3, 4, 5], trace);
+print found;  // false (visit:1, visit:2, visit:3 — not 4 or 5)
+
+print "=== all-in-range: is every element in [0, 100]? ===";
+// Real-world: bounds-checking. The predicate is the
+// conjunction of two conditions; clox doesn't have an
+// 'and' keyword, so we use nested if-else.
+fun inRange(x) { if (x < 0) return false; if (x > 100) return false; return true; }
+var grades = [85, 92, 78, 95, 88];
+var allInRange = array_all(grades, inRange);
+print allInRange;  // true (all in [0, 100])
+
+var mixed = [85, 92, 150, 78, 95];
+var notAllInRange = array_all(mixed, inRange);
+print notAllInRange;  // false (150 > 100)
+
+print "=== compose with array_filter (Stage 30 + Stage 34) ===";
+// Real-world: keep elements matching a predicate, then
+// check if all of the kept elements are extreme. Stages
+// 30 (filter) + 34 (all) composition.
+fun isEven(x) { return x == 0 or x == 2 or x == 4 or x == 6 or x == 8; }
+var numbers = [2, 4, 6, 8, 9, 10];
+var evens = array_filter(numbers, isEven);
+// clox doesn't support inline function expressions, so
+// we declare the closure before passing it to array_all.
+fun isNotTwo(x) { return x != 2; }
+var allEvensNotTwo = array_all(evens, isNotTwo);
+print allEvensNotTwo;  // false (2 is in the evens)
+
+print "=== strict-error contract ===";
+// Uncommenting any of the next lines would error at runtime:
+//   array_all()                            // no arguments
+//   array_all([1,2,3])                     // no predicate
+//   array_all([1,2,3], f, 99)              // too many args
+//   array_all("not array", f)              // non-array source
+//   array_all([1,2,3], 42)                 // non-function predicate
+//   array_all([1,2,3], fun() { return true; })  // 0-arg predicate
+// The discipline: array_all is strict on arg count (2),
+// on the source being an array, on the predicate being a
+// 1-arg Lox closure, and on the predicate's arity being
+// exactly 1. The predicate's return type is unconstrained
+// (any falsy value — only false and nil in clox — counts
+// as 'not all'; anything else counts as 'still good').
