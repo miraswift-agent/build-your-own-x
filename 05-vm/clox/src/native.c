@@ -2181,6 +2181,88 @@ static Value arrayZipNative(int argCount, Value *args) {
     return OBJ_VAL(result);
 }
 
+/* Stage 38: array_flatten(arr) -> array.
+ * Takes an array of arrays and returns a new flat array.
+ * Stops at 1 level: inner arrays' elements become
+ * top-level, but elements that are themselves arrays
+ * are pushed as-is (not recursed into). This is the
+ * "shape transform" pattern (nested -> flat) — the
+ * simplest remaining candidate. No user-code dispatch
+ * (no closure); no new architecture; just a single
+ * nested-element walk.
+ *
+ * JS reference: there is no direct equivalent; lodash's
+ *   _.flatten (not _.flattenDeep) does the same.
+ * Python reference: no direct equivalent; Python uses
+ *   itertools.chain.from_iterable(arr) for 1-level, or
+ *   list comprehensions. clox's array_flatten matches
+ *   lodash's _.flatten (1-level, stop on nested arrays).
+ * Rust reference: no direct equivalent; the idiomatic
+ *   version is .flatten() on iterators, which does
+ *   recurse (clox does NOT recurse).
+ *
+ * The "stop at 1 level" convention is the right default
+ * for a stdlib native: predictable, easy to reason
+ * about, and easy to compose. If the caller wants
+ * recursive flatten, they can chain: flatten twice
+ * (one level per call) or build a recursive user
+ * function. The new wrinkle: this is the first native
+ * that takes a "nested array" (array of arrays) and
+ * returns a flat array. */
+static Value arrayFlattenNative(int argCount, Value *args) {
+    if (argCount != 1) {
+        runtimeError("array_flatten() takes 1 argument (%d given).", argCount);
+        return NIL_VAL;  /* error sentinel */
+    }
+    if (!IS_ARRAY(args[0])) {
+        runtimeError("array_flatten() argument must be an array.");
+        return NIL_VAL;
+    }
+    ObjArray *src = AS_ARRAY(args[0]);
+
+    /* First pass: count the result size. We do this so
+     * the result array can be allocated with the right
+     * capacity up front (no resize). For each element:
+     * - if it's an array, count its elements
+     * - else, count 1
+     * The discipline: pre-size the result for O(1) push
+     * per element (no array growth). */
+    int totalCount = 0;
+    for (int i = 0; i < src->count; i++) {
+        if (IS_ARRAY(src->elements[i])) {
+            totalCount += AS_ARRAY(src->elements[i])->count;
+        } else {
+            totalCount += 1;
+        }
+    }
+
+    /* GC protection: build the result array BEFORE the
+     * fill loop, so any allocations during the fill
+     * (none expected here, but defensive) don't sweep
+     * away our partial result. */
+    ObjArray *result = newArray(totalCount);
+    push(OBJ_VAL(result));  /* GC: keep alive while filling */
+
+    /* Second pass: fill the result. For each element:
+     * - if it's an array, push its elements (1 level)
+     * - else, push the element as-is */
+    for (int i = 0; i < src->count; i++) {
+        if (IS_ARRAY(src->elements[i])) {
+            ObjArray *inner = AS_ARRAY(src->elements[i]);
+            for (int j = 0; j < inner->count; j++) {
+                arrayPush(result, inner->elements[j]);
+            }
+        } else {
+            arrayPush(result, src->elements[i]);
+        }
+    }
+
+    pop();  /* pop the result array (it stays on the stack until
+             * the function returns; the VM will handle pushing
+             * the return value) */
+    return OBJ_VAL(result);
+}
+
 static Value typeofNative(int argCount, Value *args) {
     if (argCount != 1) {
         runtimeError("typeof() takes 1 argument (%d given).", argCount);
@@ -2462,6 +2544,22 @@ void defineNatives(void) {
     name = copyString("array_zip", (int)strlen("array_zip"));
     push(OBJ_VAL(name));
     tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayZipNative)));
+    pop();
+
+    /* Stage 38: array_flatten. Takes an array (of arrays)
+     * and returns a new flat array. Stops at 1 level:
+     * inner arrays' elements become top-level, but
+     * elements that are themselves arrays are pushed
+     * as-is (not recursed into). The "shape transform"
+     * pattern (nested -> flat) — the simplest remaining
+     * candidate. No user-code dispatch (no closure);
+     * no new architecture; just a single nested-
+     * element walk. Architecture is the same as Stage
+     * 30/31/33/34/35/36/37 (no user-code; just
+     * argCount=1 array input). */
+    name = copyString("array_flatten", (int)strlen("array_flatten"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayFlattenNative)));
     pop();
 
     /* Stage 10: more number operations. */

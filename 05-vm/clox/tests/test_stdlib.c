@@ -5437,6 +5437,215 @@ static void test_array_zip_wrong_type(void) {
     free(out);
 }
 
+static void test_array_flatten_basic(void) {
+    /* Basic case: [[1, 2], [3, 4], [5, 6]] -> [1, 2, 3, 4, 5, 6].
+     * Inner arrays' elements become top-level. The "shape
+     * transform" pattern (nested -> flat). */
+    int exitCode;
+    char *out = runClox(
+        "var flat = array_flatten([[1, 2], [3, 4], [5, 6]]);\n"
+        "print \"len:\" + string(array_length(flat));\n"
+        "print \"0:\" + string(array_get(flat, 0));\n"
+        "print \"1:\" + string(array_get(flat, 1));\n"
+        "print \"2:\" + string(array_get(flat, 2));\n"
+        "print \"3:\" + string(array_get(flat, 3));\n"
+        "print \"4:\" + string(array_get(flat, 4));\n"
+        "print \"5:\" + string(array_get(flat, 5));\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-flatten-basic: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "len:6\n") || !contains(out, "0:1\n") || !contains(out, "1:2\n")
+            || !contains(out, "2:3\n") || !contains(out, "3:4\n") || !contains(out, "4:5\n")
+            || !contains(out, "5:6\n")) {
+        fail("stdlib/array-flatten-basic: expected 1-6 in order, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_flatten_empty(void) {
+    /* Empty array: returns empty array without iterating. */
+    int exitCode;
+    char *out = runClox(
+        "var flat = array_flatten([]);\n"
+        "print \"len:\" + string(array_length(flat));\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-flatten-empty: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "len:0\n")) {
+        fail("stdlib/array-flatten-empty: expected 'len:0' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+
+    /* Array containing only empty arrays: returns empty array. */
+    out = runClox(
+        "var flat = array_flatten([[], [], []]);\n"
+        "print \"len:\" + string(array_length(flat));\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-flatten-empty-empty-arrays: expected exit 0, got %d", exitCode);
+    } else if (!contains(out, "len:0\n")) {
+        fail("stdlib/array-flatten-empty-empty-arrays: expected 'len:0' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_flatten_single_element_arrays(void) {
+    /* Each inner array has exactly 1 element. Flattens
+     * to a single array of those elements. */
+    int exitCode;
+    char *out = runClox(
+        "var flat = array_flatten([[1], [2], [3], [4]]);\n"
+        "print \"len:\" + string(array_length(flat));\n"
+        "print \"0:\" + string(array_get(flat, 0));\n"
+        "print \"1:\" + string(array_get(flat, 1));\n"
+        "print \"2:\" + string(array_get(flat, 2));\n"
+        "print \"3:\" + string(array_get(flat, 3));\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-flatten-single-element: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "len:4\n") || !contains(out, "0:1\n")
+            || !contains(out, "1:2\n") || !contains(out, "2:3\n") || !contains(out, "3:4\n")) {
+        fail("stdlib/array-flatten-single-element: expected 1-4 in order, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_flatten_mixed_types(void) {
+    /* Mixed types: numbers, strings, booleans, nil, and
+     * non-array elements. Non-array elements are pushed
+     * as-is. Strings are still strings, booleans are still
+     * booleans, nil is still nil. */
+    int exitCode;
+    char *out = runClox(
+        "var flat = array_flatten([[1, \"two\"], [true, nil]]);\n"
+        "print \"len:\" + string(array_length(flat));\n"
+        "print \"0:\" + string(array_get(flat, 0));\n"
+        "print array_get(flat, 1);\n"
+        "print array_get(flat, 2);\n"
+        "print array_get(flat, 3);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-flatten-mixed-types: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "len:4\n") || !contains(out, "0:1\n")
+            || !contains(out, "two\n") || !contains(out, "true\n") || !contains(out, "nil\n")) {
+        fail("stdlib/array-flatten-mixed-types: expected 1, 'two', true, nil, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_flatten_does_not_recurse(void) {
+    /* The "stop at 1 level" convention: nested arrays
+     * (arrays inside inner arrays) are NOT recursed into;
+     * they're pushed as-is. [[1, 2], [3, [4, 5]]] flattens
+     * to [1, 2, 3, [4, 5]], NOT [1, 2, 3, 4, 5].
+     *
+     * Verification: array_length() on inner would error
+     * if inner is not an array, so the fact that
+     * inner_len:2 prints without error proves inner is
+     * an array with 2 elements. (We don't use typeof()
+     * here because typeof() doesn't yet recognize
+     * OBJ_ARRAY — it returns "object" for arrays.) */
+    int exitCode;
+    char *out = runClox(
+        "var flat = array_flatten([[1, 2], [3, [4, 5]]]);\n"
+        "print \"len:\" + string(array_length(flat));\n"
+        "var inner = array_get(flat, 3);\n"
+        "print \"inner_len:\" + string(array_length(inner));\n"
+        "print \"inner_0:\" + string(array_get(inner, 0));\n"
+        "print \"inner_1:\" + string(array_get(inner, 1));\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-flatten-no-recurse: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "len:4\n") || !contains(out, "inner_len:2\n")
+            || !contains(out, "inner_0:4\n") || !contains(out, "inner_1:5\n")) {
+        fail("stdlib/array-flatten-no-recurse: expected 4 elements with [4,5] as last, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_flatten_preserves_source(void) {
+    /* The source array is not mutated. */
+    int exitCode;
+    char *out = runClox(
+        "var src = [[1, 2], [3, 4]];\n"
+        "var flat = array_flatten(src);\n"
+        "print \"flat_len:\" + string(array_length(flat));\n"
+        "print \"src_len:\" + string(array_length(src));\n"
+        "print \"src0_len:\" + string(array_length(array_get(src, 0)));\n"
+        "print \"src0_0:\" + string(array_get(array_get(src, 0), 0));\n"
+        "print \"src1_1:\" + string(array_get(array_get(src, 1), 1));\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-flatten-preserves-source: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "flat_len:4\n") || !contains(out, "src_len:2\n")
+            || !contains(out, "src0_len:2\n") || !contains(out, "src0_0:1\n") || !contains(out, "src1_1:4\n")) {
+        fail("stdlib/array-flatten-preserves-source: expected flat=4 and src unchanged, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_flatten_wrong_arg_count(void) {
+    /* 0 args, 2 args, 3 args. */
+    int exitCode;
+    char *out = runClox("print array_flatten();\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-flatten-wrong-arg-count-zero: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+
+    out = runClox("print array_flatten([[1,2]], [[3,4]]);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-flatten-wrong-arg-count-two: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+
+    out = runClox("print array_flatten([[1,2]], [[3,4]], 99);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-flatten-wrong-arg-count-three: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_flatten_wrong_type(void) {
+    /* Source must be array. */
+    int exitCode;
+    char *out = runClox("print array_flatten(\"not an array\");\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-flatten-wrong-type-string: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+
+    out = runClox("print array_flatten(42);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-flatten-wrong-type-number: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
 int main(void) {
     test_clock_exists();
     test_number_abs();
@@ -5733,6 +5942,15 @@ int main(void) {
     test_array_zip_does_not_mutate();
     test_array_zip_wrong_arg_count();
     test_array_zip_wrong_type();
+    /* Stage 38: array_flatten. */
+    test_array_flatten_basic();
+    test_array_flatten_empty();
+    test_array_flatten_single_element_arrays();
+    test_array_flatten_mixed_types();
+    test_array_flatten_does_not_recurse();
+    test_array_flatten_preserves_source();
+    test_array_flatten_wrong_arg_count();
+    test_array_flatten_wrong_type();
 
     /* Stage 28: array_unique. (the duplicate block — was added by an
      * earlier session along with the Stage 29 ones; keeping it in place

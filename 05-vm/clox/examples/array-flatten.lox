@@ -1,0 +1,139 @@
+// Stage 38 example: array-flatten.lox
+// The "shape transform" pattern (nested -> flat).
+// Takes an array of arrays and returns a new flat
+// array. Stops at 1 level: inner arrays' elements
+// become top-level, but elements that are themselves
+// arrays are pushed as-is (not recursed into).
+// Demonstrates: basic, empty, single-element-arrays,
+// mixed-types, no-recurse, compose-with-others, the
+// 1-level convention, strict-error contract.
+
+print "=== basic: flatten a 3x2 array of arrays ===";
+// The most common array_flatten idiom. [[1, 2], [3, 4],
+// [5, 6]] flattens to [1, 2, 3, 4, 5, 6] (6 elements).
+// Inner arrays' elements become top-level, in order.
+var flat = array_flatten([[1, 2], [3, 4], [5, 6]]);
+print "len:" + string(array_length(flat));
+print "0:" + string(array_get(flat, 0));
+print "1:" + string(array_get(flat, 1));
+print "2:" + string(array_get(flat, 2));
+print "3:" + string(array_get(flat, 3));
+print "4:" + string(array_get(flat, 4));
+print "5:" + string(array_get(flat, 5));
+// Output:
+//   len:6
+//   0:1
+//   1:2
+//   2:3
+//   3:4
+//   4:5
+//   5:6
+
+print "=== empty array: returns empty array ===";
+// Empty array: returns empty array without iterating.
+var empty1 = array_flatten([]);
+print "len:" + string(array_length(empty1));
+// Output: len:0
+
+print "=== array of empty arrays: returns empty array ===";
+// An array of empty arrays: no elements to flatten;
+// the result is empty. Each inner empty array is
+// iterated (zero times), so the result is empty.
+var empty2 = array_flatten([[], [], []]);
+print "len:" + string(array_length(empty2));
+// Output: len:0
+
+print "=== single-element arrays: flatten to a single array ===";
+// Each inner array has exactly 1 element. The result
+// is a flat array of those elements, in order.
+var flat3 = array_flatten([[1], [2], [3], [4]]);
+print "len:" + string(array_length(flat3));
+print "0:" + string(array_get(flat3, 0));
+print "1:" + string(array_get(flat3, 1));
+print "2:" + string(array_get(flat3, 2));
+print "3:" + string(array_get(flat3, 3));
+// Output:
+//   len:4
+//   0:1
+//   1:2
+//   2:3
+//   3:4
+
+print "=== mixed types: numbers, strings, booleans, nil ===";
+// Mixed types: numbers, strings, booleans, nil. Each
+// is pushed as-is, no conversion. The flatten is
+// structural, not type-based.
+var flat4 = array_flatten([[1, "two"], [true, nil]]);
+print "len:" + string(array_length(flat4));
+print "0:" + string(array_get(flat4, 0));
+print array_get(flat4, 1);
+print array_get(flat4, 2);
+print array_get(flat4, 3);
+// Output:
+//   len:4
+//   0:1
+//   two
+//   true
+//   nil
+
+print "=== no-recurse: nested arrays are pushed as-is ===";
+// The "stop at 1 level" convention. [[1, 2], [3, [4, 5]]]
+// flattens to [1, 2, 3, [4, 5]] (4 elements), NOT
+// [1, 2, 3, 4, 5] (5 elements). The inner [4, 5] is
+// pushed as a single element of the result.
+var flat5 = array_flatten([[1, 2], [3, [4, 5]]]);
+print "len:" + string(array_length(flat5));
+var inner = array_get(flat5, 3);
+print "inner_len:" + string(array_length(inner));
+print "inner_0:" + string(array_get(inner, 0));
+print "inner_1:" + string(array_get(inner, 1));
+// Output:
+//   len:4
+//   inner_len:2
+//   inner_0:4
+//   inner_1:5
+
+print "=== compose with array_zip (Stage 37 + Stage 38) ===";
+// Real-world: zip two arrays into pairs, then flatten
+// the pairs. Stages 37 (zip) + 38 (flatten) composition.
+fun pair(a, b) {
+  var p = [];
+  array_push(p, a);
+  array_push(p, b);
+  return p;
+}
+var keys = ["a", "b", "c"];
+var values = [1, 2, 3];
+var pairs = array_zip(keys, values, pair);
+// pairs == [["a", 1], ["b", 2], ["c", 3]] (array of pairs).
+// Flatten: [["a", 1], ["b", 2], ["c", 3]] -> ["a", 1, "b", 2, "c", 3].
+var flat6 = array_flatten(pairs);
+print "len:" + string(array_length(flat6));
+print "0:" + array_get(flat6, 0);
+print "1:" + string(array_get(flat6, 1));
+print "2:" + array_get(flat6, 2);
+print "3:" + string(array_get(flat6, 3));
+print "4:" + array_get(flat6, 4);
+print "5:" + string(array_get(flat6, 5));
+// Output:
+//   len:6
+//   0:a
+//   1:1
+//   2:b
+//   3:2
+//   4:c
+//   5:3
+
+print "=== strict-error contract ===";
+// Uncommenting any of the next lines would error at runtime:
+//   array_flatten()              // no arguments
+//   array_flatten([[1,2]], [[3,4]])              // too many args
+//   array_flatten("not an array")                 // non-array source
+//   array_flatten(42)                             // non-array source
+// The discipline: array_flatten is strict on arg count
+// (1) and on the source being an array. The result is
+// a new array. "Stop at 1 level" is the convention
+// (matches lodash's _.flatten, not _.flattenDeep). If
+// the caller wants recursive flatten, they can call
+// array_flatten twice (one level per call) or build a
+// recursive user function.
