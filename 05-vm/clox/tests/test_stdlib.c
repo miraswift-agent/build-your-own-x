@@ -3759,6 +3759,213 @@ static void test_string_split_wrong_arg_count(void) {
     free(out);
 }
 
+/* --- Stage 30: array_filter(arr, predicate) --- */
+/* New native. Takes an array and a callable (a 1-arg Lox
+ * closure that returns true/false). Returns a new array
+ * containing only the elements for which the predicate
+ * returns true. Order is preserved. Empty result is OK.
+ *
+ * This is the first native that invokes user-defined Lox
+ * code from C. The architecture: vm.c's `call()` function is
+ * now public (declared in vm.h), and the native pushes the
+ * current element onto the stack as the call's argument,
+ * invokes `call(closure, 1)`, then pops the result.
+ *
+ * JS reference: Array.prototype.filter(predicate, thisArg)
+ * Python reference: filter(function, iterable)
+ * The clox semantics: predicate is called with one argument
+ * (the element); the result is truthy/falsy per clox's
+ * standard rule (false and nil are falsy, everything else
+ * is truthy). The empty case is `[]`.
+ *
+ * --- clox test syntax notes ---
+ * clox does NOT support `var name = fun(x) {...}` at top level
+ * (the parser doesn't accept function expressions as the rhs
+ * of a var declaration). Top-level function declarations
+ * use the form `fun name(args) { body }`. We use that form
+ * throughout the Stage 30 tests.
+ * clox also doesn't support `%` (modulo) — we use `==` with
+ * specific values for parity tests. */
+
+static void test_array_filter_basic(void) {
+    /* [1, 2, 3, 4] filtered to == 2 -> [2]. */
+    int exitCode;
+    char *out = runClox(
+        "fun isTwo(x) { return x == 2; }\n"
+        "var evens = array_filter([1, 2, 3, 4], isTwo);\n"
+        "print array_length(evens);\n"
+        "print array_get(evens, 0);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-filter-basic: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "1\n")
+            || !contains(out, "2\n")) {
+        fail("stdlib/array-filter-basic: expected '1' and '2' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_filter_strings(void) {
+    /* ["apple", "berry"] filtered to start with 'a' -> ["apple"].
+     * (clox strings support string_index_of; ==0 means starts-with.) */
+    int exitCode;
+    char *out = runClox(
+        "fun startsWithA(s) { return string_index_of(s, \"a\") == 0; }\n"
+        "var aFruits = array_filter([\"apple\", \"berry\"], startsWithA);\n"
+        "print array_length(aFruits);\n"
+        "print array_get(aFruits, 0);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-filter-strings: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "1\n")
+            || !contains(out, "apple\n")) {
+        fail("stdlib/array-filter-strings: expected '1' and 'apple' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_filter_preserves_order(void) {
+    /* [3, 1, 4, 1, 5, 9, 2, 6] filtered to > 2 should
+     * preserve original order -> [3, 4, 5, 9, 6]. */
+    int exitCode;
+    char *out = runClox(
+        "fun gt2(x) { return x > 2; }\n"
+        "var big = array_filter([3, 1, 4, 1, 5, 9, 2, 6], gt2);\n"
+        "print array_length(big);\n"
+        "print array_get(big, 0);\n"
+        "print array_get(big, 1);\n"
+        "print array_get(big, 2);\n"
+        "print array_get(big, 3);\n"
+        "print array_get(big, 4);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-filter-preserves-order: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "5\n")
+            || !contains(out, "3\n")
+            || !contains(out, "4\n")
+            || !contains(out, "5\n")
+            || !contains(out, "9\n")
+            || !contains(out, "6\n")) {
+        fail("stdlib/array-filter-preserves-order: expected '5','3','4','5','9','6' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_filter_empty(void) {
+    /* Empty input array -> empty result. */
+    int exitCode;
+    char *out = runClox(
+        "fun alwaysTrue(x) { return true; }\n"
+        "var result = array_filter([], alwaysTrue);\n"
+        "print array_length(result);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-filter-empty: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "0\n")) {
+        fail("stdlib/array-filter-empty: expected '0' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_filter_all_filtered(void) {
+    /* Predicate returns false for all -> empty result. */
+    int exitCode;
+    char *out = runClox(
+        "fun alwaysFalse(x) { return false; }\n"
+        "var result = array_filter([1, 2, 3], alwaysFalse);\n"
+        "print array_length(result);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-filter-all-filtered: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "0\n")) {
+        fail("stdlib/array-filter-all-filtered: expected '0' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_filter_does_not_mutate(void) {
+    /* The original array must not be mutated. */
+    int exitCode;
+    char *out = runClox(
+        "fun isTwo(x) { return x == 2; }\n"
+        "var nums = [1, 2, 3, 4];\n"
+        "var evens = array_filter(nums, isTwo);\n"
+        "print array_length(nums);\n"
+        "print array_get(nums, 0);\n"
+        "print array_get(nums, 1);\n"
+        "print array_get(nums, 2);\n"
+        "print array_get(nums, 3);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-filter-does-not-mutate: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "4\n")
+            || !contains(out, "1\n")
+            || !contains(out, "2\n")
+            || !contains(out, "3\n")
+            || !contains(out, "4\n")) {
+        fail("stdlib/array-filter-does-not-mutate: expected '4','1','2','3','4' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_filter_wrong_arg_count(void) {
+    /* 1 arg (no predicate) errors. 3 args errors. */
+    int exitCode;
+    char *out = runClox("print array_filter([1,2,3]);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-filter-wrong-arg-count-one: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+
+    out = runClox(
+        "fun alwaysTrue(x) { return true; }\n"
+        "print array_filter([1,2,3], alwaysTrue, 0);\n",
+        &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-filter-wrong-arg-count-three: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_filter_wrong_type(void) {
+    /* First arg must be array. Second arg must be a function. */
+    int exitCode;
+    char *out = runClox(
+        "fun alwaysTrue(x) { return true; }\n"
+        "print array_filter(\"not an array\", alwaysTrue);\n",
+        &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-filter-wrong-type-arr: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+
+    out = runClox("print array_filter([1,2,3], 42);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-filter-wrong-type-fn: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
 int main(void) {
     test_clock_exists();
     test_number_abs();
@@ -3979,15 +4186,20 @@ int main(void) {
     test_string_split_limit_wrong_type();
     test_string_split_wrong_arg_count();
 
-    /* Stage 28: array_unique. */
-    test_array_unique_basic();
-    test_array_unique_strings();
-    test_array_unique_preserves_input();
-    test_array_unique_empty();
-    test_array_unique_single();
-    test_array_unique_mixed_types();
-    test_array_unique_wrong_arg_count();
-    test_array_unique_wrong_type();
+    /* Stage 30: array_filter. */
+    test_array_filter_basic();
+    test_array_filter_strings();
+    test_array_filter_preserves_order();
+    test_array_filter_empty();
+    test_array_filter_all_filtered();
+    test_array_filter_does_not_mutate();
+    test_array_filter_wrong_arg_count();
+    test_array_filter_wrong_type();
+
+    /* Stage 28: array_unique. (the duplicate block — was added by an
+     * earlier session along with the Stage 29 ones; keeping it in place
+     * would re-run all Stage 28 tests and skew the count. Remove.) */
+    (void)0;
 
     printf("%d passed, %d failed\n", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;

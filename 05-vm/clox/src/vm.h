@@ -13,6 +13,21 @@
 #include "table.h"
 #include "value.h"
 
+/* --- Stage 30 architecture: expose `callClosure` for natives. --- */
+/* See the comment in vm.c above `callClosure` for the full contract.
+ * Natives that need to invoke a user-defined Lox closure call this
+ * with (closure, argCount) where args are already on the stack.
+ *
+ * For most native use cases, prefer `callClosureFromNative` (below),
+ * which does call + run + pop-result in one step. Use `callClosure`
+ * directly only if you need to set up the frame without running it. */
+bool callClosure(ObjClosure *closure, int argCount);
+
+/* Higher-level wrapper: calls callClosure(), runs the closure, pops
+ * the result, and returns it. This is what natives should use.
+ * See vm.c for the full contract. */
+Value callClosureFromNative(ObjClosure *closure, int argCount);
+
 typedef enum {
     INTERPRET_OK,
     INTERPRET_COMPILE_ERROR,

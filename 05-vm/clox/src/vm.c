@@ -18,6 +18,7 @@
 #include "native.h"
 #include "object.h"
 #include "table.h"
+#include "vm.h"
 
 /* Stage 11: io_exit() flags. Defined here (not in main.c) so the
  * test binaries (which don't link main.c) can find them. main.c
@@ -71,14 +72,58 @@ Value peek(int distance) {
     return vm.stackTop[-1 - distance];
 }
 
-static bool call(ObjClosure *closure, int argCount);
 static bool callValue(Value callee, int argCount);
-static bool bindMethod(ObjClass *klass, ObjString *name);
+
+/* --- Stage 30 architecture: expose `callClosure` to native.c. --- */
+/* The native function signature is `Value (*)(int argCount, Value *args)`
+ * where `args` points to the first argument on the VM stack (the same
+ * position the VM's OP_CALL handler uses). To invoke a user-defined
+ * Lox closure from a native (e.g., array_filter's predicate), we need
+ * the same machinery the OP_CALL handler uses. That machinery is the
+ * `callClosure` function below.
+ *
+ * NOTE: Named `callClosure` (not `call`) because the compiler has its
+ * own static `call(bool canAssign)` for parsing call expressions. The
+ * two are unrelated; the names are separate to avoid collision.
+ *
+ * Promoting `callClosure` from static to public is the smallest change
+ * that enables natives to invoke user code. The contract:
+ *   - args must point to the first arg on the VM stack (native's args)
+ *   - argCount must match closure->function->arity
+ *   - args[0..argCount-1] are the call's arguments
+ *   - On success, the result is pushed onto the stack and callClosure() returns true
+ *   - On runtime error (arity mismatch, stack overflow, callee-side error),
+ *     runtimeError() does longjmp and the callClosure() return is unreachable.
+ *     (Same shape as OP_CALL in the interpreter.)
+ *
+ * This is the first public hook for user-code dispatch from a native.
+ * The architecture: `callValue` is still static (used by OP_CALL and the
+ * `callClosure` function), `callClosure` is public (used by natives that
+ * need to invoke a closure with args already on the stack). */
+bool callClosure(ObjClosure *closure, int argCount);
+
+/* `run()` is the interpreter loop. Forward-declared here so natives
+ * that have called `callClosure()` can actually run the closure's
+ * bytecodes. The pattern: callClosure(closure, argCount) sets up
+ * the new frame; run() executes the closure's bytecodes until the
+ * closure returns; the result is on top of the stack when run()
+ * returns to the native.
+ *
+ * On runtime error inside the closure, runtimeError() longjmp's and
+ * run()'s return is unreachable (same as OP_CALL). */
+static InterpretResult run(void);
+
+/* `vmNativeTargetDepth` is the frameCount depth at which run() should
+ * stop (returning INTERPRET_OK) instead of continuing into the outer
+ * caller's bytecodes. Used by callClosureFromNative to run a closure
+ * to completion and then return control to the native, not to the
+ * outer script. -1 means "no target" (run until frameCount==0). */
+static int vmNativeTargetDepth = -1;
 static ObjUpvalue *captureUpvalue(Value *local);
 static void closeUpvalues(Value *last);
 static void defineMethod(ObjString *name);
 
-static bool call(ObjClosure *closure, int argCount) {
+bool callClosure(ObjClosure *closure, int argCount) {
     if (argCount != closure->function->arity) {
         runtimeError("Expected %d arguments but got %d.",
                      closure->function->arity, argCount);
@@ -94,6 +139,28 @@ static bool call(ObjClosure *closure, int argCount) {
     frame->closure = closure;
     frame->ip = closure->function->chunk.code;
     frame->slots = vm.stackTop - argCount - 1;
+    /* Stage 30: do NOT call run() here. The function only sets up
+     * the frame; the caller is responsible for running the bytecodes.
+     *
+     * The OP_CALL bytecode path: callValue() calls callClosure() to
+     * push the new frame, then returns true. The OP_CALL handler
+     * continues to the next opcode in the same run() loop iteration;
+     * the new frame is at vm.frames[vm.frameCount - 1], so the next
+     * run() loop iteration picks it up automatically.
+     *
+     * The native path (callClosureFromNative): callClosure() pushes
+     * the new frame, then the wrapper sets a target depth and calls
+     * run() explicitly. run() processes the new frame; when the
+     * closure returns and frameCount drops to the target, OP_RETURN
+     * detects the target and returns INTERPRET_OK.
+     *
+     * The earlier draft of this function called run() here, which
+     * works for the OP_CALL path (it just runs the new frame and
+     * continues into the outer caller's bytecodes, which is what
+     * the OP_CALL handler would do anyway) but BREAKS the native
+     * path (the recursive run() consumes the outer caller's
+     * bytecodes too, so when the wrapper tries to continue the
+     * outer script, the script has already finished). */
     return true;
 }
 
@@ -103,14 +170,14 @@ static bool callValue(Value callee, int argCount) {
             case OBJ_BOUND_METHOD: {
                 ObjBoundMethod *bound = AS_BOUND_METHOD(callee);
                 vm.stackTop[-argCount - 1] = bound->receiver;
-                return call(bound->method, argCount);
+                return callClosure(bound->method, argCount);
             }
             case OBJ_CLASS: {
                 ObjClass *klass = AS_CLASS(callee);
                 vm.stackTop[-argCount - 1] = OBJ_VAL(newInstance(klass));
                 Value initializer;
                 if (tableGet(&klass->methods, copyString("init", 4), &initializer)) {
-                    return call(AS_CLOSURE(initializer), argCount);
+                    return callClosure(AS_CLOSURE(initializer), argCount);
                 } else if (argCount != 0) {
                     runtimeError("Expected 0 arguments but got %d.", argCount);
                     return false;
@@ -118,7 +185,7 @@ static bool callValue(Value callee, int argCount) {
                 return true;
             }
             case OBJ_CLOSURE:
-                return call(AS_CLOSURE(callee), argCount);
+                return callClosure(AS_CLOSURE(callee), argCount);
             case OBJ_NATIVE: {
                 NativeFn native = AS_NATIVE(callee);
                 Value result = native(argCount, vm.stackTop - argCount);
@@ -525,6 +592,17 @@ static InterpretResult run(void) {
 
                 vm.stackTop = frame->slots;
                 push(result);
+                /* Stage 30: if a native set a target depth and we've
+                 * reached it, return to the native instead of falling
+                 * through into the outer caller's bytecodes. The
+                 * target depth is the frameCount BEFORE the closure
+                 * was called; when the closure returns and frameCount
+                 * drops to that depth, we're back at the native's
+                 * caller. */
+                if (vm.frameCount == vmNativeTargetDepth) {
+                    vmNativeTargetDepth = -1;  /* clear for next time */
+                    return INTERPRET_OK;
+                }
                 frame = &vm.frames[vm.frameCount - 1];
                 break;
             }
@@ -580,4 +658,49 @@ InterpretResult interpret(const char *source) {
         resetStack();
         return INTERPRET_RUNTIME_ERROR;
     }
+}
+
+/* --- Stage 30 architecture: callClosureFromNative --- */
+/* A higher-level wrapper for natives that need to invoke a Lox
+ * closure. The pattern:
+ *   1. The native has already pushed the args onto the stack
+ *      (via `push(value)` for each arg).
+ *   2. callClosureFromNative(closure, argCount) is called.
+ *   3. The function calls callClosure() to set up the new frame,
+ *      then run() to execute the closure's bytecodes.
+ *   4. When the closure returns (OP_RETURN pops the frame, the
+ *      new frameCount is the native's caller's frame), the
+ *      result is on top of the stack.
+ *   5. The function pops the result and returns it.
+ *
+ * The "stop when we return to the caller's frame" semantic: we
+ * save the caller's frameCount before calling run(). When the
+ * interpreter's frameCount drops back to that depth, the closure
+ * has returned and run() should exit. This is essential because
+ * run() is the same interpreter loop the top-level interpret()
+ * uses; without a depth check, it would continue running the
+ * outer script's bytecodes from inside the native.
+ *
+ * On runtime error (arity mismatch, stack overflow, callee-side
+ * error), runtimeError() longjmp's and the return is unreachable.
+ * The native doesn't need to handle the error case; the longjmp
+ * unwinds to the top-level interpret() error handler.
+ *
+ * This is the function natives should use, not callClosure() directly.
+ * callClosure() is exposed for the lower-level use case (setting up
+ * a frame without running it), which we don't currently have. */
+Value callClosureFromNative(ObjClosure *closure, int argCount) {
+    if (!callClosure(closure, argCount)) {
+        return NIL_VAL;  /* unreachable; runtimeError longjmp'd */
+    }
+    /* Set the target depth to the caller's frameCount (BEFORE the
+     * closure was pushed). When OP_RETURN pops the closure's frame
+     * and frameCount drops to this value, run() returns. */
+    vmNativeTargetDepth = vm.frameCount - 1;
+    InterpretResult result = run();
+    vmNativeTargetDepth = -1;  /* belt-and-suspenders; OP_RETURN also clears */
+    if (result != INTERPRET_OK) {
+        return NIL_VAL;  /* runtimeError longjmp'd, unreachable */
+    }
+    return pop();
 }

@@ -1650,6 +1650,115 @@ static Value arrayUniqueNative(int argCount, Value *args) {
     return OBJ_VAL(result);
 }
 
+/* --- Stage 30: array_filter(arr, predicate) -> array --- */
+/* The first native that invokes user-defined Lox code from C.
+ * The shape: 2 args (array, predicate). The predicate is a
+ * 1-arg Lox closure. Returns a new array containing only the
+ * elements for which the predicate returns true (clox's
+ * standard truthy/falsy rule: false and nil are falsy,
+ * everything else is truthy). Order is preserved. The empty
+ * input case returns []; the all-false case returns []; the
+ * original array is not mutated.
+ *
+ * JS reference: Array.prototype.filter(predicate, thisArg)
+ * Python reference: filter(function, iterable)
+ * The clox semantics: predicate is called with one argument
+ * (the element); the result is checked for truthiness.
+ *
+ * --- Architecture: user-code dispatch from a native ---
+ * The native function signature is `Value (*)(int argCount,
+ * Value *args)` where `args` points to the first arg on the
+ * VM stack. To invoke a Lox closure from a native, we use
+ * `call(closure, argCount)` from vm.c, now exposed in vm.h.
+ * The contract:
+ *   - args must point to the first arg on the VM stack (the
+ *     native's args pointer)
+ *   - call() will push the result onto the stack and return true
+ *   - on runtime error (arity mismatch, stack overflow, callee-
+ *     side error), runtimeError() does longjmp and call()'s
+ *     return is unreachable
+ *
+ * The `call` function is the same one the OP_CALL bytecode
+ * handler uses internally. Promoting it from static to public
+ * is the smallest change that enables this and any future
+ * native that needs to invoke user code.
+ *
+ * --- GC: keeping the result and the predicate alive ---
+ * The result array is GC-allocated (newArray). The predicate
+ * closure is borrowed from args[1] (already on the stack, so
+ * reachable from the call frame). The current element is
+ * pushed before call() (it's the call's argument) and the
+ * result is popped immediately after to keep the stack
+ * balanced.
+ *
+ * --- Why this stage is more than a new native ---
+ * It's the architecture work that unlocks: array_map, array_reduce,
+ * array_any, array_all, array_find — all of which need to invoke
+ * a user-defined predicate. The pattern established here (call
+ * a closure with args, get a result, pop the result) is the
+ * template for all of them. */
+
+static Value arrayFilterNative(int argCount, Value *args) {
+    if (argCount != 2) {
+        runtimeError("array_filter() takes 2 arguments (%d given).", argCount);
+        return NIL_VAL;
+    }
+    if (!IS_ARRAY(args[0])) {
+        runtimeError("array_filter() argument 0 must be an array.");
+        return NIL_VAL;
+    }
+    if (!IS_CLOSURE(args[1])) {
+        runtimeError("array_filter() argument 1 must be a function.");
+        return NIL_VAL;
+    }
+    ObjArray *src = AS_ARRAY(args[0]);
+    ObjClosure *predicate = AS_CLOSURE(args[1]);
+    if (predicate->function->arity != 1) {
+        runtimeError("array_filter() predicate must take 1 argument (got %d).",
+                     predicate->function->arity);
+        return NIL_VAL;
+    }
+
+    /* Allocate the result. Worst case: every element passes,
+     * so capacity = src->count. The result is empty in the
+     * "no element passes" case; the empty case for an empty
+     * source is naturally handled. */
+    ObjArray *result = newArray(src->count);
+    push(OBJ_VAL(result));  /* GC: keep alive while filling */
+
+    for (int i = 0; i < src->count; i++) {
+        /* Stack layout for callClosure: [callee, arg1, ...].
+         * The predicate is already on the stack (it's args[1] of
+         * the native call), but we need to push it as the callee
+         * for the predicate call. We do that by pushing the
+         * predicate, then the element. The result_array stays on
+         * the stack (under everything) for GC protection.
+         *
+         * Stack before: [..., src, predicate, result_array]
+         * Stack after:  [..., src, predicate, result_array, predicate, element]
+         *
+         * callClosure(predicate, 1) sets frame->slots to the predicate
+         * position (stackTop - 2), so slots[0] = predicate, slots[1] = element.
+         * The predicate's bytecode accesses its arg at slots[1]. */
+        push(OBJ_VAL(predicate));  /* callee */
+        push(src->elements[i]);    /* arg 1 */
+        Value filterResult = callClosureFromNative(predicate, 1);
+        /* Clox's truthy/falsy rule: false and nil are falsy,
+         * everything else truthy. IS_BOOL + AS_BOOL false,
+         * or IS_NIL, are the two explicit falsy cases. */
+        bool keep = !(IS_BOOL(filterResult) && !AS_BOOL(filterResult))
+                 && !IS_NIL(filterResult);
+        if (keep) {
+            arrayPush(result, src->elements[i]);
+        }
+    }
+
+    pop();  /* pop the result array (it stays on the stack until
+             * the function returns; the VM will handle pushing
+             * the return value) */
+    return OBJ_VAL(result);
+}
+
 static Value typeofNative(int argCount, Value *args) {
     if (argCount != 1) {
         runtimeError("typeof() takes 1 argument (%d given).", argCount);
@@ -1819,6 +1928,16 @@ void defineNatives(void) {
     name = copyString("string_join", (int)strlen("string_join"));
     push(OBJ_VAL(name));
     tableSet(&vm.globals, name, OBJ_VAL(newNative(stringJoinNative)));
+    pop();
+
+    /* Stage 30: array_filter. Takes an array and a 1-arg Lox
+     * closure (a callable). Returns a new array containing
+     * only the elements for which the predicate returns true.
+     * The first native that invokes user-defined Lox code from
+     * C; the `call` function (vm.c, now public) does the work. */
+    name = copyString("array_filter", (int)strlen("array_filter"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayFilterNative)));
     pop();
 
     /* Stage 10: more number operations. */

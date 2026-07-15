@@ -1,0 +1,84 @@
+// Stage 30 example: array-filter.lox
+// The first clox native that invokes user-defined Lox code from C.
+// Demonstrates the "filter a list by predicate" idiom. Real-world
+// use cases: keep only the items matching a condition; drop
+// invalid records; select items in a price range; filter events
+// by date.
+
+print "=== basic: filter numbers ===";
+// Keep only the numbers greater than 2.
+fun gt2(x) { return x > 2; }
+var big = array_filter([1, 2, 3, 4, 5], gt2);
+print array_length(big);  // 3
+print array_get(big, 0);  // 3
+print array_get(big, 1);  // 4
+print array_get(big, 2);  // 5
+
+print "=== empty result: nothing matches ===";
+// Predicate returns false for everything -> [].
+fun alwaysFalse(x) { return false; }
+var none = array_filter([1, 2, 3], alwaysFalse);
+print array_length(none);  // 0
+
+print "=== empty input: empty result ===";
+// Empty input -> empty output (no iteration).
+fun alwaysTrue(x) { return true; }
+var empty = array_filter([], alwaysTrue);
+print array_length(empty);  // 0
+
+print "=== strings: keep items starting with 'a' ===";
+// string_index_of(s, "a") == 0 means "starts with 'a'".
+fun startsWithA(s) { return string_index_of(s, "a") == 0; }
+var aFruits = array_filter(["apple", "banana", "avocado", "berry"], startsWithA);
+print array_length(aFruits);  // 2
+print array_get(aFruits, 0);  // apple
+print array_get(aFruits, 1);  // avocado
+
+print "=== predicate returns truthy non-bool values ===";
+// Clox's truthy/falsy rule: only `false` and `nil` are falsy;
+// everything else (including 0, "", and any number) is truthy.
+// A predicate that returns the element itself is therefore
+// always truthy. A predicate that returns false or nil is falsy.
+fun isTruthy(x) { return x; }  // identity: any value is truthy
+var all = array_filter([0, "", false, nil, 1, "x"], isTruthy);
+print array_length(all);  // 4 (0, "", 1, "x"; false and nil are filtered out)
+print array_get(all, 0);  // 0
+print array_get(all, 1);  // (empty string)
+print array_get(all, 2);  // 1
+print array_get(all, 3);  // x
+
+print "=== compose with array_unique and array_length ===";
+// Real-world: dedup, then keep only the duplicates' unique values
+// (i.e., values that appear more than once). Uses Stage 28's
+// array_unique and Stage 30's array_filter.
+fun countOccurrences(x) {
+    var nums = [1, 2, 1, 3, 2, 4];
+    var count = 0;
+    for (var i = 0; i < array_length(nums); i = i + 1) {
+        if (array_get(nums, i) == x) count = count + 1;
+    }
+    return count;
+}
+fun isDup(x) { return countOccurrences(x) > 1; }
+var dups = array_filter(array_unique([1, 2, 1, 3, 2, 4]), isDup);
+print array_length(dups);  // 2 (1 and 2)
+print array_get(dups, 0);  // 1
+print array_get(dups, 1);  // 2
+
+print "=== does not mutate the source ===";
+// array_filter returns a new array; the source is unchanged.
+var nums = [10, 20, 30, 40];
+fun gt15(x) { return x > 15; }
+var big2 = array_filter(nums, gt15);
+print array_length(nums);  // 4 (unchanged)
+print array_length(big2);  // 3 (20, 30, 40)
+
+print "=== strict-error contract ===";
+// Uncommenting any of the next lines would error at runtime:
+//   array_filter()              // no arguments
+//   array_filter([1,2,3])       // missing predicate
+//   array_filter([1,2,3], 42)   // non-function predicate
+//   array_filter("not array", f) // non-array source
+// The discipline: array_filter is strict on arg count, on
+// the source being an array, and on the predicate being a
+// function. (The predicate's arity is also checked: must be 1.)
