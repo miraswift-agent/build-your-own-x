@@ -1,0 +1,97 @@
+// Stage 36 example: array-find-index.lox
+// The natural next native after Stage 35's array_find.
+// Returns the index of the first element for which the
+// predicate is truthy, or -1 if no element matches (or
+// if the array is empty). Demonstrates the "find the
+// index of the first X" idiom: index-of, position-of,
+// first-index-in-range, find-index-via-iteration.
+
+print "=== basic: index of the first positive element ===";
+// The most common array_find_index idiom. Returns the
+// index of the first element that satisfies the
+// predicate, or -1 if none. The result is an index (a
+// number), not the element.
+fun isPositive(x) { return x > 0; }
+var firstPosIdx = array_find_index([0, 0, 5, 3, 7], isPositive);
+print firstPosIdx;  // 2 (the index of 5, the first positive)
+
+print "=== none: returns -1 ===";
+// No element matches the predicate. The result is -1,
+// the canonical "no match" sentinel for index-based
+// searches in JS, Python, and C. Caller can test for
+// "no match" with 'find_index(x) == -1'.
+fun isNegative(x) { return x < 0; }
+var noneFound = array_find_index([1, 2, 3, 0, 5], isNegative);
+print noneFound;  // -1
+
+print "=== empty: returns -1 (predicate never called) ===";
+// Empty array with no iterations: the predicate is
+// never called. The result is -1.
+var empty = array_find_index([], isPositive);
+print empty;  // -1
+
+print "=== short-circuit: only visits up to the first match ===";
+// The native returns early once a match is found. We
+// demonstrate this with a side-effecting predicate. The
+// trace function prints the element before returning;
+// the output shows only the elements before (and
+// including) the first match.
+fun trace(x) { print "visit:" + string(x); return x == 30; }
+var found = array_find_index([10, 20, 30, 40, 50], trace);
+print found;  // 2 (visit:10, visit:20, visit:30 — not 40 or 50)
+
+print "=== first match wins: not the only match ===";
+// When multiple elements match, the *first* one wins.
+// The predicate isOdd matches {1, 3, 5, 7, 9}; [3, 5, 7, 9]
+// returns 0 (the index of 3, the first match), NOT 1, 2, or 3.
+fun isOdd(x) { return x == 1 or x == 3 or x == 5 or x == 7 or x == 9; }
+var firstOddIdx = array_find_index([3, 5, 7, 9], isOdd);
+print firstOddIdx;  // 0 (index of 3, the first match)
+
+print "=== index of an out-of-bounds value ===";
+// Returns -1 even when the value is not in the array.
+// The discipline: 'find_index(x) == -1' is the canonical
+// "not found" test, regardless of whether x is a valid
+// index or not.
+fun isHundred(x) { return x == 100; }
+var notFoundIdx = array_find_index([1, 2, 3, 4, 5], isHundred);
+print notFoundIdx;  // -1 (100 is not in the array)
+
+print "=== compose with array_filter (Stage 30 + Stage 36) ===";
+// Real-world: filter to a subset, then find the index
+// of the first element in the subset. Stages 30 (filter)
+// + 36 (find_index) composition.
+fun isEven(x) { return x == 0 or x == 2 or x == 4 or x == 6 or x == 8; }
+var numbers = [1, 3, 4, 7, 8, 9, 10];
+var evens = array_filter(numbers, isEven);
+// evens == [4, 8, 10]. Find the index (in evens) of
+// the first even > 5:
+fun greaterThan5(x) { return x > 5; }
+var firstBigEvenIdx = array_find_index(evens, greaterThan5);
+print firstBigEvenIdx;  // 1 (evens[1] == 8, the first even > 5)
+
+print "=== -1 sentinel test ===";
+// The 'find_index(x) == -1' idiom: a clox idiom for
+// "did the find_index return a match or not?" Compare
+// directly with -1 (not nil; the sentinel for index-
+// based searches is a number, not a "no value" marker).
+fun isOneHundred(x) { return x == 100; }
+var idx = array_find_index([1, 2, 3], isOneHundred);
+print idx == -1;  // true (no match found; idx is -1)
+
+print "=== strict-error contract ===";
+// Uncommenting any of the next lines would error at runtime:
+//   array_find_index()                            // no arguments
+//   array_find_index([1,2,3])                     // no predicate
+//   array_find_index([1,2,3], f, 99)              // too many args
+//   array_find_index("not array", f)              // non-array source
+//   array_find_index([1,2,3], 42)                 // non-function predicate
+//   array_find_index([1,2,3], fun() { return true; })  // 0-arg predicate
+// The discipline: array_find_index is strict on arg count
+// (2), on the source being an array, on the predicate
+// being a 1-arg Lox closure, and on the predicate's
+// arity being exactly 1. The predicate's return type is
+// unconstrained (any truthy value — only false and nil
+// in clox — counts as "matched"). The result is the
+// index of the first matched element (a number, not a
+// bool, not the element itself). "No match" returns -1.

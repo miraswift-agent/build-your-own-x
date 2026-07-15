@@ -2036,6 +2036,66 @@ static Value arrayFindNative(int argCount, Value *args) {
     return NIL_VAL;
 }
 
+/* Stage 36: array_find_index(arr, predicate) -> number.
+ * Returns the *index* of the first element for which the
+ * predicate is truthy, or -1 if no element matches (or
+ * if the array is empty). The natural next native after
+ * Stage 35 (array_find, which returned the element).
+ * The new wrinkle: the result is a number (the index, an
+ * int), and the "not found" case returns -1 — the
+ * canonical "no match" sentinel for index-based searches
+ * in JS, Python, and C.
+ *
+ * JS reference: Array.prototype.findIndex(predicate).
+ * Python reference: list.index(item), which raises
+ *   ValueError if not found; clox returns -1 instead,
+ *   which is more ergonomic for the "is this in the
+ *   array, and at what index" idiom.
+ *
+ * Stack layout for callClosure: [callee, arg1, ...]. */
+static Value arrayFindIndexNative(int argCount, Value *args) {
+    if (argCount != 2) {
+        runtimeError("array_find_index() takes 2 arguments (%d given).", argCount);
+        return NUMBER_VAL(-1);
+    }
+    if (!IS_ARRAY(args[0])) {
+        runtimeError("array_find_index() argument 0 must be an array.");
+        return NUMBER_VAL(-1);
+    }
+    if (!IS_CLOSURE(args[1])) {
+        runtimeError("array_find_index() argument 1 must be a function.");
+        return NUMBER_VAL(-1);
+    }
+    ObjArray *src = AS_ARRAY(args[0]);
+    ObjClosure *predicate = AS_CLOSURE(args[1]);
+    if (predicate->function->arity != 1) {
+        runtimeError("array_find_index() predicate must take 1 argument (got %d).",
+                     predicate->function->arity);
+        return NUMBER_VAL(-1);
+    }
+
+    for (int i = 0; i < src->count; i++) {
+        /* Same stack layout as array_map/array_any/array_all/
+         * array_find: push predicate (callee) then element
+         * (arg 1). */
+        push(OBJ_VAL(predicate));  /* callee */
+        push(src->elements[i]);    /* arg 1 */
+        Value result = callClosureFromNative(predicate, 1);
+        /* Short-circuit: as soon as the predicate returns a
+         * truthy value, return the *index* (not the
+         * element, not a constant bool). clox's truthy
+         * rule: only false and nil are falsy (not 0, not ""). */
+        if (!(IS_BOOL(result) && !AS_BOOL(result)) && !IS_NIL(result)) {
+            return NUMBER_VAL((double)i);
+        }
+    }
+
+    /* No match found: return -1. This is the "sentinel"
+     * pattern for index-based searches. Caller can use
+     * 'find_index(x) == -1' to test for "no match." */
+    return NUMBER_VAL(-1);
+}
+
 static Value typeofNative(int argCount, Value *args) {
     if (argCount != 1) {
         runtimeError("typeof() takes 1 argument (%d given).", argCount);
@@ -2285,6 +2345,22 @@ void defineNatives(void) {
     name = copyString("array_find", (int)strlen("array_find"));
     push(OBJ_VAL(name));
     tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayFindNative)));
+    pop();
+
+    /* Stage 36: array_find_index. Takes an array and a
+     * 1-arg Lox closure (the predicate). Returns the
+     * *index* of the first element for which the predicate
+     * is truthy, or -1 if no element matches (or if the
+     * array is empty). The natural next native after
+     * Stage 35 (array_find, which returned the element).
+     * The new wrinkle: the result is a number (the index,
+     * an int), and the "not found" case returns -1 — the
+     * canonical "no match" sentinel for index-based
+     * searches in JS, Python, and C. Architecture is the
+     * same as Stage 30/31/33/34/35 (argCount=1). */
+    name = copyString("array_find_index", (int)strlen("array_find_index"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayFindIndexNative)));
     pop();
 
     /* Stage 10: more number operations. */

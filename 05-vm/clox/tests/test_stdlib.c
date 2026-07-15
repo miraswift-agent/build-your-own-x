@@ -5014,6 +5014,206 @@ static void test_array_find_wrong_type(void) {
     free(out);
 }
 
+static void test_array_find_index_finds_match(void) {
+    /* Basic case: returns the index of the first element
+     * for which the predicate is truthy. [10, 20, 30, 40]
+     * with isThirty (which matches x == 30) returns 2
+     * (the index of 30, NOT 1, 2, or 3). */
+    int exitCode;
+    char *out = runClox(
+        "fun isThirty(x) { return x == 30; }\n"
+        "var idx = array_find_index([10, 20, 30, 40], isThirty);\n"
+        "print idx;\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-find-index-finds-match: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "2\n")) {
+        fail("stdlib/array-find-index-finds-match: expected '2' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_find_index_no_match(void) {
+    /* No element matches the predicate: returns -1 (the
+     * canonical "no match" sentinel for index-based
+     * searches in JS, Python, C). The 'isOdd' predicate
+     * only matches {1, 3, 5}; [2, 4, 6, 8] has no element
+     * in that set, so the result is -1. The discipline:
+     * 'find_index(x) == -1' tests for "no match." */
+    int exitCode;
+    char *out = runClox(
+        "fun isOdd(x) { return x == 1 or x == 3 or x == 5; }\n"
+        "var idx = array_find_index([2, 4, 6, 8], isOdd);\n"
+        "print idx;\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-find-index-no-match: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "-1\n")) {
+        fail("stdlib/array-find-index-no-match: expected '-1' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_find_index_empty(void) {
+    /* Empty array: returns -1 without ever calling the
+     * predicate. (No iterations, no match.) */
+    int exitCode;
+    char *out = runClox(
+        "fun isPositive(x) { return x > 0; }\n"
+        "var idx = array_find_index([], isPositive);\n"
+        "print idx;\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-find-index-empty: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "-1\n")) {
+        fail("stdlib/array-find-index-empty: expected '-1' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_find_index_short_circuits(void) {
+    /* Short-circuit on the first truthy: once a match is
+     * found, the rest of the array is not iterated. We
+     * test this with a side-effecting predicate. If
+     * short-circuit works, only the elements before (and
+     * including) the first match are printed. */
+    int exitCode;
+    char *out = runClox(
+        "fun trace(x) { print \"visit:\" + string(x); return x == 30; }\n"
+        "var idx = array_find_index([10, 20, 30, 40, 50], trace);\n"
+        "print idx;\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-find-index-short-circuits: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "visit:10\n") || !contains(out, "visit:20\n")
+            || !contains(out, "visit:30\n") || contains(out, "visit:40\n")) {
+        fail("stdlib/array-find-index-short-circuits: expected short-circuit (no visit:40), got '%s'", out);
+    } else if (!contains(out, "2\n")) {
+        fail("stdlib/array-find-index-short-circuits: expected '2' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_find_index_first_match_wins(void) {
+    /* When multiple elements match, the *first* one wins.
+     * [3, 5, 7, 9] with isOdd (which matches {1, 3, 5, 7, 9})
+     * returns 0 (the index of 3, the first match), NOT 1,
+     * 2, or 3. */
+    int exitCode;
+    char *out = runClox(
+        "fun isOdd(x) { return x == 1 or x == 3 or x == 5 or x == 7 or x == 9; }\n"
+        "var idx = array_find_index([3, 5, 7, 9], isOdd);\n"
+        "print idx;\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-find-index-first-match: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "0\n")) {
+        fail("stdlib/array-find-index-first-match: expected '0' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_find_index_does_not_mutate(void) {
+    /* The source array is not mutated. */
+    int exitCode;
+    char *out = runClox(
+        "var src = [10, 20, 30, 40, 50];\n"
+        "fun isThirty(x) { return x == 30; }\n"
+        "var idx = array_find_index(src, isThirty);\n"
+        "print idx;\n"
+        "print \"len:\" + string(array_length(src));\n"
+        "print \"0:\" + string(array_get(src, 0));\n"
+        "print \"4:\" + string(array_get(src, 4));\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-find-index-does-not-mutate: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "2\n") || !contains(out, "len:5\n")
+            || !contains(out, "0:10\n") || !contains(out, "4:50\n")) {
+        fail("stdlib/array-find-index-does-not-mutate: expected 2 + src unchanged, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_find_index_wrong_arg_count(void) {
+    /* 1 arg, 3 args, 0 args. */
+    int exitCode;
+    char *out = runClox(
+        "fun isPositive(x) { return x > 0; }\n"
+        "print array_find_index([1,2,3]);\n",
+        &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-find-index-wrong-arg-count-one: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+
+    out = runClox(
+        "fun isPositive(x) { return x > 0; }\n"
+        "print array_find_index([1,2,3], isPositive, 99);\n",
+        &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-find-index-wrong-arg-count-three: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+
+    out = runClox("print array_find_index();\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-find-index-wrong-arg-count-zero: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_find_index_wrong_type(void) {
+    /* Source must be array; predicate must be a 1-arg function. */
+    int exitCode;
+    char *out = runClox(
+        "fun isPositive(x) { return x > 0; }\n"
+        "print array_find_index(\"not an array\", isPositive);\n",
+        &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-find-index-wrong-type-arr: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+
+    out = runClox("print array_find_index([1,2,3], 42);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-find-index-wrong-type-fn: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+
+    out = runClox(
+        "fun zeroArg() { return true; }\n"
+        "print array_find_index([1,2,3], zeroArg);\n",
+        &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-find-index-wrong-type-arity: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
 int main(void) {
     test_clock_exists();
     test_number_abs();
@@ -5292,6 +5492,15 @@ int main(void) {
     test_array_find_does_not_mutate();
     test_array_find_wrong_arg_count();
     test_array_find_wrong_type();
+    /* Stage 36: array_find_index. */
+    test_array_find_index_finds_match();
+    test_array_find_index_no_match();
+    test_array_find_index_empty();
+    test_array_find_index_short_circuits();
+    test_array_find_index_first_match_wins();
+    test_array_find_index_does_not_mutate();
+    test_array_find_index_wrong_arg_count();
+    test_array_find_index_wrong_type();
 
     /* Stage 28: array_unique. (the duplicate block — was added by an
      * earlier session along with the Stage 29 ones; keeping it in place
