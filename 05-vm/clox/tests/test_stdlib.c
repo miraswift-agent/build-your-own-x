@@ -2821,6 +2821,166 @@ static void test_string_pad_end_wrong_arg_count(void) {
     free(out);
 }
 
+/* --- Stage 24: string_to_number --- */
+/* string_to_number(s) -> number. The inverse of Stage 17's string(n).
+ * Parses a decimal number from a string. JavaScript's parseFloat
+ * semantics (with strict-error-on-NaN, strict-error-on-overflow):
+ * "42" -> 42.0, "3.14" -> 3.14, "-7" -> -7.0, "0" -> 0, "  42  "
+ * -> 42 (leading/trailing whitespace trimmed by strtod), "3.14e2"
+ * -> 314 (scientific notation accepted). Errors: empty string,
+ * non-numeric, overflow to Infinity, no characters consumed. */
+
+static void test_string_to_number_int_positive(void) {
+    /* "42" -> 42. Adding 1 to a parsed int gives 43 — the round-trip
+     * idiom working end-to-end. */
+    int exitCode;
+    char *out = runClox(
+        "var n = string_to_number(\"42\");\n"
+        "print n + 1;\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/to-number-int-positive: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "43\n")) {
+        fail("stdlib/to-number-int-positive: expected '43' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_to_number_int_negative(void) {
+    /* "-7" -> -7. Negative signs parse correctly. */
+    int exitCode;
+    char *out = runClox(
+        "var n = string_to_number(\"-7\");\n"
+        "print n * 2;\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/to-number-int-negative: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "-14\n")) {
+        fail("stdlib/to-number-int-negative: expected '-14' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_to_number_float(void) {
+    /* "3.14" -> 3.14. Floats parse with their decimal part preserved.
+     * 3.14 + 1.0 = 4.14 (no trailing zeros, %.14g short-form). */
+    int exitCode;
+    char *out = runClox(
+        "var n = string_to_number(\"3.14\");\n"
+        "print n + 1.0;\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/to-number-float: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "4.14\n")) {
+        fail("stdlib/to-number-float: expected '4.14\\n' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_to_number_scientific(void) {
+    /* "3.14e2" -> 314. Scientific notation parses correctly. */
+    int exitCode;
+    char *out = runClox(
+        "print string_to_number(\"3.14e2\");\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/to-number-scientific: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "314")) {
+        fail("stdlib/to-number-scientific: expected '314' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_to_number_round_trip(void) {
+    /* The whole point of Stage 24: string(string_to_number(s)) for
+     * a clean numeric s gives s back. Round-trip via both natives. */
+    int exitCode;
+    char *out = runClox(
+        "print string(string_to_number(\"42\"));\n"
+        "print string(string_to_number(\"3.14\"));\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/to-number-round-trip: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "42\n")
+            || !contains(out, "3.14\n")) {
+        fail("stdlib/to-number-round-trip: expected '42' and '3.14' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_to_number_empty_errors(void) {
+    /* Empty string -> runtime error. Matches strtod's behavior of
+     * returning 0 with endptr == startptr; we treat that as "no
+     * number parsed" and error. */
+    int exitCode;
+    char *out = runClox("print string_to_number(\"\");\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/to-number-empty: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_to_number_non_numeric_errors(void) {
+    /* "abc" -> runtime error. No digits consumed. */
+    int exitCode;
+    char *out = runClox("print string_to_number(\"abc\");\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/to-number-non-numeric: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_to_number_overflow_errors(void) {
+    /* "1e1000" -> Infinity -> runtime error. strtod returns HUGE_VAL
+     * and sets errno = ERANGE; we treat that as overflow. */
+    int exitCode;
+    char *out = runClox("print string_to_number(\"1e1000\");\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/to-number-overflow: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_to_number_wrong_type(void) {
+    /* Non-string first arg -> runtime error. */
+    int exitCode;
+    char *out = runClox("print string_to_number(42);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/to-number-wrong-type: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_to_number_wrong_arg_count(void) {
+    /* Wrong arity (0 args) -> runtime error. */
+    int exitCode;
+    char *out = runClox("print string_to_number();\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/to-number-wrong-arg-count: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
 int main(void) {
     test_clock_exists();
     test_number_abs();
@@ -2983,6 +3143,17 @@ int main(void) {
     test_string_pad_end_empty_fill_errors();
     test_string_pad_end_wrong_type();
     test_string_pad_end_wrong_arg_count();
+    /* Stage 24: string_to_number. */
+    test_string_to_number_int_positive();
+    test_string_to_number_int_negative();
+    test_string_to_number_float();
+    test_string_to_number_scientific();
+    test_string_to_number_round_trip();
+    test_string_to_number_empty_errors();
+    test_string_to_number_non_numeric_errors();
+    test_string_to_number_overflow_errors();
+    test_string_to_number_wrong_type();
+    test_string_to_number_wrong_arg_count();
 
     printf("%d passed, %d failed\n", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;

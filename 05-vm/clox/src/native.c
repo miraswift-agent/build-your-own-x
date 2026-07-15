@@ -23,9 +23,11 @@
  */
 
 #include <ctype.h>
+#include <errno.h>
 #include <limits.h>
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
@@ -127,6 +129,55 @@ static Value stringFromNumberNative(int argCount, Value *args) {
     /* copyString will intern the result so repeated calls with
      * the same input return the same ObjString pointer. */
     return OBJ_VAL(copyString(buf, n));
+}
+
+/* --- Stage 24: string_to_number --- */
+/* string_to_number(s) -> number. The inverse of Stage 17's string(n).
+ * Parses a decimal number from a string. JavaScript's parseFloat
+ * semantics with strict-error-on-failure: leading/trailing whitespace
+ * is skipped, an optional sign, then a non-empty sequence of digits
+ * with at most one decimal point, an optional exponent. Errors:
+ * empty input, no characters consumed (e.g. "abc"), and overflow
+ * to +/-Infinity. Single allocation: none. The function uses strtod
+ * to do the actual parsing (it's a libc-provided inverse of
+ * snprintf("%.14g", n), and it handles all the edge cases the
+ * string(n) impl cares about). NaN is never returned — we error
+ * on any condition strtod considers "no number parsed" or "out
+ * of range." */
+static Value stringToNumberNative(int argCount, Value *args) {
+    if (argCount != 1) {
+        runtimeError("string_to_number() takes 1 argument (%d given).", argCount);
+        return NIL_VAL;
+    }
+    if (!IS_STRING(args[0])) {
+        runtimeError("string_to_number() argument must be a string.");
+        return NIL_VAL;
+    }
+    ObjString *s = AS_STRING(args[0]);
+    /* strtod's contract: endptr points to the first character NOT
+     * consumed. If endptr == startptr, no number was parsed (empty
+     * input, or input started with non-numeric). If endptr points
+     * mid-string (e.g. "1.5abc"), we still accept the prefix — the
+     * canonical JS parseFloat behavior. We check endptr == startptr
+     * to catch the empty and pure-non-numeric cases. */
+    char *endptr;
+    errno = 0;
+    double result = strtod(s->chars, &endptr);
+    if (endptr == s->chars) {
+        /* No characters consumed: empty string or "abc" / "  ". */
+        runtimeError("string_to_number() could not parse a number from the input.");
+        return NIL_VAL;
+    }
+    if (errno == ERANGE) {
+        /* Overflow to +/-HUGE_VAL (= +/-Infinity). We treat this as
+         * a runtime error rather than returning Infinity, because
+         * returning Infinity would be silently wrong for any user
+         * arithmetic that doesn't expect it. The "1e1000" test is
+         * the case that hits this branch. */
+        runtimeError("string_to_number() input is out of range (overflow).");
+        return NIL_VAL;
+    }
+    return NUMBER_VAL(result);
 }
 
 static Value stringUpperNative(int argCount, Value *args) {
@@ -1468,6 +1519,12 @@ void defineNatives(void) {
     name = copyString("string_pad_end", (int)strlen("string_pad_end"));
     push(OBJ_VAL(name));
     tableSet(&vm.globals, name, OBJ_VAL(newNative(stringPadEndNative)));
+    pop();
+
+    /* Stage 24: string_to_number. The inverse of Stage 17's string(n). */
+    name = copyString("string_to_number", (int)strlen("string_to_number"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(stringToNumberNative)));
     pop();
 
     /* Stage 13: string_split / string_join — compose the new array

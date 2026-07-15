@@ -1,0 +1,44 @@
+// Stage 24 example: round-trip-number.lox
+// Composes Stage 17's string(n) and Stage 24's string_to_number(s)
+// to demonstrate the round-trip idiom: a user types a number as a
+// string (e.g. from a file or stdin), the program parses it,
+// does some arithmetic, and prints the result. Closes the gap
+// that Stages 17 and 24 together make a real "process user input
+// as a number" pattern.
+
+// 1. The basic round-trip: a string goes in, a number comes out,
+//    and the number can be re-stringified to the original form.
+var s = "42";
+var n = string_to_number(s);
+print n;                          // 42
+print string(n);                  // 42 (round-trip clean)
+print string(string_to_number("-7"));  // -7
+print string(string_to_number("3.14")); // 3.14
+
+// 2. The "process user input" idiom. The next-stage gap
+//    (string_split + map + join) is exactly this pattern.
+var csv = "10,20,30,40";
+var parts = string_split(csv, ",");
+var sum = 0;
+for (var i = 0; i < array_length(parts); i = i + 1) {
+    sum = sum + string_to_number(array_get(parts, i));
+}
+print "sum = " + string(sum);   // sum = 100
+
+// 3. The "validate before using" idiom. If string_to_number errors
+//    on bad input, the program stops with a clear error message.
+//    This is the right shape: no silent NaN, no silent 0.
+var bad = "abc";
+// Uncommenting the next line would error at runtime:
+//   var n2 = string_to_number(bad);
+//   print n2 + 1;
+// Instead, the program can use a try/catch-equivalent (not yet in
+// clox; deferred) or pre-validate. For now, the error is loud.
+
+// 4. Scientific notation. "1e3" parses to 1000.
+var big = string_to_number("1e3");
+print big;                       // 1000
+
+// 5. Negative + scientific: a real-world coordinate.
+var coord = string_to_number("-1.5e2");
+print coord;                     // -150
