@@ -5039,6 +5039,157 @@ static void test_array_zip_longest_wrong_arg_count(void) {
     free(out2);
 }
 
+static void test_array_take_basic(void) {
+    /* Stage 51: array_take(arr, n) -> array. Take
+     * the first N elements of an array. If N >=
+     * array length, returns the full array. If N
+     * <= 0, returns an empty array. ~25 lines, no
+     * new architecture. The new wrinkle: a "size
+     * limit" pattern, similar to Stage 41's
+     * array_chunk. */
+    int exitCode;
+    char *out = runClox(
+        "var arr = [1, 2, 3, 4, 5];\n"
+        "var taken = array_take(arr, 3);\n"
+        "for (var i = 0; i < array_length(taken); i = i + 1) {\n"
+        "    print string(array_get(taken, i));\n"
+        "}\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-take-basic: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "1\n2\n3\n")) {
+        fail("stdlib/array-take-basic: expected '1\\n2\\n3\\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_take_n_equals_length(void) {
+    /* When N equals the array length, returns the
+     * full array. */
+    int exitCode;
+    char *out = runClox(
+        "var arr = [1, 2, 3];\n"
+        "var taken = array_take(arr, 3);\n"
+        "for (var i = 0; i < array_length(taken); i = i + 1) {\n"
+        "    print string(array_get(taken, i));\n"
+        "}\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-take-n-equals-length: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "1\n2\n3\n")) {
+        fail("stdlib/array-take-n-equals-length: expected '1\\n2\\n3\\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_take_n_exceeds_length(void) {
+    /* When N > array length, returns the full
+     * array. (No error; just returns what's
+     * available.) */
+    int exitCode;
+    char *out = runClox(
+        "var arr = [1, 2];\n"
+        "var taken = array_take(arr, 10);\n"
+        "for (var i = 0; i < array_length(taken); i = i + 1) {\n"
+        "    print string(array_get(taken, i));\n"
+        "}\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-take-n-exceeds-length: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "1\n2\n")) {
+        fail("stdlib/array-take-n-exceeds-length: expected '1\\n2\\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_take_n_zero(void) {
+    /* When N is 0, returns an empty array. */
+    int exitCode;
+    char *out = runClox(
+        "var arr = [1, 2, 3];\n"
+        "var taken = array_take(arr, 0);\n"
+        "print array_length(taken);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-take-n-zero: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "0\n")) {
+        fail("stdlib/array-take-n-zero: expected '0\\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_take_does_not_mutate(void) {
+    /* The source array is not mutated. */
+    int exitCode;
+    char *out = runClox(
+        "var arr = [1, 2, 3, 4, 5];\n"
+        "var taken = array_take(arr, 2);\n"
+        "print \"arr.len:\" + string(array_length(arr));\n"
+        "print \"arr.0:\" + string(array_get(arr, 0));\n"
+        "print \"arr.4:\" + string(array_get(arr, 4));\n"
+        "print \"taken.len:\" + string(array_length(taken));\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-take-does-not-mutate: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "arr.len:5\n") || !contains(out, "arr.0:1\n")
+            || !contains(out, "arr.4:5\n") || !contains(out, "taken.len:2\n")) {
+        fail("stdlib/array-take-does-not-mutate: expected arr.len:5, arr.0:1, arr.4:5, taken.len:2, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_take_wrong_arg_count(void) {
+    /* Defensive: 1 arg, 3 args both error. 2 args
+     * is the only valid count. */
+    int exitCode;
+    char *out1 = runClox("var t = array_take([1, 2, 3]);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-take-wrong-arg-count-1: expected non-zero exit for 1 arg");
+    } else {
+        pass();
+    }
+    free(out1);
+
+    char *out2 = runClox("var t = array_take([1], 2, 3);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-take-wrong-arg-count-3: expected non-zero exit for 3 args");
+    } else {
+        pass();
+    }
+    free(out2);
+}
+
+static void test_array_take_wrong_type(void) {
+    /* Defensive: 1st arg must be an array, 2nd arg
+     * must be a number. */
+    int exitCode;
+    char *out1 = runClox("var t = array_take(42, 2);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-take-wrong-type-arr: expected non-zero exit for non-array 1st arg");
+    } else {
+        pass();
+    }
+    free(out1);
+
+    char *out2 = runClox("var t = array_take([1, 2], \"two\");\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-take-wrong-type-n: expected non-zero exit for non-number 2nd arg");
+    } else {
+        pass();
+    }
+    free(out2);
+}
+
 static void test_array_group_by_three_groups(void) {
     /* Three distinct keys, in the order they first appear.
      * Numbers by signum: keyFn(x) = x > 0 (positive vs.
@@ -7682,6 +7833,13 @@ int main(void) {
     test_array_zip_longest_equal_length();
     test_array_zip_longest_empty();
     test_array_zip_longest_wrong_arg_count();
+    test_array_take_basic();
+    test_array_take_n_equals_length();
+    test_array_take_n_exceeds_length();
+    test_array_take_n_zero();
+    test_array_take_does_not_mutate();
+    test_array_take_wrong_arg_count();
+    test_array_take_wrong_type();
     /* Stage 29: string_split with limit. */
     test_string_split_with_limit();
     test_string_split_limit_zero();

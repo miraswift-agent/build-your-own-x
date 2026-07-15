@@ -2289,6 +2289,40 @@ static Value arrayZipLongestNative(int argCount, Value *args) {
     return OBJ_VAL(result);
 }
 
+static Value arrayTakeNative(int argCount, Value *args) {
+    if (argCount != 2) {
+        runtimeError("array_take() takes 2 arguments (%d given).", argCount);
+        return NIL_VAL;  /* error sentinel */
+    }
+    if (!IS_ARRAY(args[0])) {
+        runtimeError("array_take() argument 0 must be an array.");
+        return NIL_VAL;
+    }
+    if (!IS_NUMBER(args[1])) {
+        runtimeError("array_take() argument 1 must be a number.");
+        return NIL_VAL;
+    }
+    ObjArray *arr = AS_ARRAY(args[0]);
+    int n = (int)AS_NUMBER(args[1]);
+    /* The new wrinkle: a "size limit" pattern, similar
+     * to Stage 41's array_chunk. If N <= 0, return an
+     * empty array. If N >= array length, return the
+     * full array. Otherwise return the first N
+     * elements. */
+    if (n <= 0) {
+        ObjArray *empty = newArray(0);
+        return OBJ_VAL(empty);
+    }
+    int takeCount = n < arr->count ? n : arr->count;
+    ObjArray *result = newArray(takeCount);
+    push(OBJ_VAL(result));  /* GC: keep alive while filling */
+    for (int i = 0; i < takeCount; i++) {
+        arrayPush(result, arr->elements[i]);
+    }
+    pop();  /* pop the result array */
+    return OBJ_VAL(result);
+}
+
 /* Stage 38: array_flatten(arr) -> array.
  * Takes an array of arrays and returns a new flat array.
  * Stops at 1 level: inner arrays' elements become
@@ -3427,5 +3461,17 @@ void defineNatives(void) {
     name = copyString("array_zip_longest", (int)strlen("array_zip_longest"));
     push(OBJ_VAL(name));
     tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayZipLongestNative)));
+    pop();
+
+    /* Stage 51: array_take. Takes an array and a
+     * count, returns the first N elements. ~30
+     * lines, no new architecture, no user-code
+     * dispatch. The new wrinkle: a "size limit"
+     * pattern, similar to Stage 41's array_chunk.
+     * The push/pop count is balanced: 1 push for
+     * the name, 1 pop after tableSet. */
+    name = copyString("array_take", (int)strlen("array_take"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayTakeNative)));
     pop();
 }
