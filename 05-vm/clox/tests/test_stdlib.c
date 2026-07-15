@@ -5214,6 +5214,229 @@ static void test_array_find_index_wrong_type(void) {
     free(out);
 }
 
+static void test_array_zip_basic(void) {
+    /* Basic case: combines two arrays element-wise via
+     * a 2-arg combiner. [1, 2, 3] and [10, 20, 30] with
+     * combiner (a, b) -> a + b returns [11, 22, 33]. */
+    int exitCode;
+    char *out = runClox(
+        "fun add(a, b) { return a + b; }\n"
+        "var zipped = array_zip([1, 2, 3], [10, 20, 30], add);\n"
+        "print \"len:\" + string(array_length(zipped));\n"
+        "print \"0:\" + string(array_get(zipped, 0));\n"
+        "print \"1:\" + string(array_get(zipped, 1));\n"
+        "print \"2:\" + string(array_get(zipped, 2));\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-zip-basic: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "len:3\n") || !contains(out, "0:11\n")
+            || !contains(out, "1:22\n") || !contains(out, "2:33\n")) {
+        fail("stdlib/array-zip-basic: expected len:3 0:11 1:22 2:33, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_zip_truncates_to_shorter(void) {
+    /* Different-length arrays: truncates to the shorter.
+     * [1, 2, 3, 4, 5] and [10, 20] with combiner (a, b) -> a * b
+     * returns [10, 40] (truncated to 2 elements). The discipline
+     * matches Python's zip() and Rust's Iterator::zip(). */
+    int exitCode;
+    char *out = runClox(
+        "fun mul(a, b) { return a * b; }\n"
+        "var zipped = array_zip([1, 2, 3, 4, 5], [10, 20], mul);\n"
+        "print \"len:\" + string(array_length(zipped));\n"
+        "print \"0:\" + string(array_get(zipped, 0));\n"
+        "print \"1:\" + string(array_get(zipped, 1));\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-zip-truncates: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "len:2\n") || !contains(out, "0:10\n")
+            || !contains(out, "1:40\n")) {
+        fail("stdlib/array-zip-truncates: expected len:2 0:10 1:40, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_zip_empty_arr1(void) {
+    /* Empty arr1: returns empty array without ever
+     * calling the combiner. */
+    int exitCode;
+    char *out = runClox(
+        "fun add(a, b) { return a + b; }\n"
+        "var zipped = array_zip([], [1, 2, 3], add);\n"
+        "print \"len:\" + string(array_length(zipped));\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-zip-empty-arr1: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "len:0\n")) {
+        fail("stdlib/array-zip-empty-arr1: expected len:0, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_zip_empty_arr2(void) {
+    /* Empty arr2: returns empty array without ever
+     * calling the combiner. */
+    int exitCode;
+    char *out = runClox(
+        "fun add(a, b) { return a + b; }\n"
+        "var zipped = array_zip([1, 2, 3], [], add);\n"
+        "print \"len:\" + string(array_length(zipped));\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-zip-empty-arr2: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "len:0\n")) {
+        fail("stdlib/array-zip-empty-arr2: expected len:0, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_zip_both_empty(void) {
+    /* Both empty: returns empty array. */
+    int exitCode;
+    char *out = runClox(
+        "fun add(a, b) { return a + b; }\n"
+        "var zipped = array_zip([], [], add);\n"
+        "print \"len:\" + string(array_length(zipped));\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-zip-both-empty: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "len:0\n")) {
+        fail("stdlib/array-zip-both-empty: expected len:0, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_zip_does_not_mutate(void) {
+    /* The source arrays are not mutated. */
+    int exitCode;
+    char *out = runClox(
+        "var a1 = [1, 2, 3];\n"
+        "var a2 = [10, 20, 30];\n"
+        "fun add(a, b) { return a + b; }\n"
+        "var zipped = array_zip(a1, a2, add);\n"
+        "print \"a1.len:\" + string(array_length(a1));\n"
+        "print \"a1.0:\" + string(array_get(a1, 0));\n"
+        "print \"a1.2:\" + string(array_get(a1, 2));\n"
+        "print \"a2.len:\" + string(array_length(a2));\n"
+        "print \"a2.0:\" + string(array_get(a2, 0));\n"
+        "print \"a2.2:\" + string(array_get(a2, 2));\n"
+        "print \"z.len:\" + string(array_length(zipped));\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-zip-does-not-mutate: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "a1.len:3\n") || !contains(out, "a1.0:1\n")
+            || !contains(out, "a1.2:3\n") || !contains(out, "a2.len:3\n")
+            || !contains(out, "a2.0:10\n") || !contains(out, "a2.2:30\n")
+            || !contains(out, "z.len:3\n")) {
+        fail("stdlib/array-zip-does-not-mutate: expected srcs unchanged, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_zip_wrong_arg_count(void) {
+    /* 1 arg, 2 args, 4 args, 0 args. */
+    int exitCode;
+    char *out = runClox(
+        "fun add(a, b) { return a + b; }\n"
+        "print array_zip([1,2,3]);\n",
+        &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-zip-wrong-arg-count-one: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+
+    out = runClox(
+        "fun add(a, b) { return a + b; }\n"
+        "print array_zip([1,2,3], [10,20,30]);\n",
+        &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-zip-wrong-arg-count-two: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+
+    out = runClox(
+        "fun add(a, b) { return a + b; }\n"
+        "print array_zip([1,2,3], [10,20,30], add, 99);\n",
+        &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-zip-wrong-arg-count-four: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+
+    out = runClox("print array_zip();\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-zip-wrong-arg-count-zero: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_zip_wrong_type(void) {
+    /* arr1 must be array; arr2 must be array; combiner must be 2-arg function. */
+    int exitCode;
+    char *out = runClox(
+        "fun add(a, b) { return a + b; }\n"
+        "print array_zip(\"not an array\", [1,2,3], add);\n",
+        &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-zip-wrong-type-arr1: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+
+    out = runClox(
+        "fun add(a, b) { return a + b; }\n"
+        "print array_zip([1,2,3], \"not an array\", add);\n",
+        &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-zip-wrong-type-arr2: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+
+    out = runClox("print array_zip([1,2,3], [10,20,30], 42);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-zip-wrong-type-fn: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+
+    out = runClox(
+        "fun oneArg(a) { return a; }\n"
+        "print array_zip([1,2,3], [10,20,30], oneArg);\n",
+        &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-zip-wrong-type-arity: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
 int main(void) {
     test_clock_exists();
     test_number_abs();
@@ -5501,6 +5724,15 @@ int main(void) {
     test_array_find_index_does_not_mutate();
     test_array_find_index_wrong_arg_count();
     test_array_find_index_wrong_type();
+    /* Stage 37: array_zip. */
+    test_array_zip_basic();
+    test_array_zip_truncates_to_shorter();
+    test_array_zip_empty_arr1();
+    test_array_zip_empty_arr2();
+    test_array_zip_both_empty();
+    test_array_zip_does_not_mutate();
+    test_array_zip_wrong_arg_count();
+    test_array_zip_wrong_type();
 
     /* Stage 28: array_unique. (the duplicate block — was added by an
      * earlier session along with the Stage 29 ones; keeping it in place

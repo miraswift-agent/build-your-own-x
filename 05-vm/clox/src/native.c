@@ -2096,6 +2096,91 @@ static Value arrayFindIndexNative(int argCount, Value *args) {
     return NUMBER_VAL(-1);
 }
 
+/* Stage 37: array_zip(arr1, arr2, combiner) -> array.
+ * Combines two arrays element-wise via a 2-arg Lox
+ * closure (the combiner: (a, b) -> result). Returns a
+ * new array where each element is combiner(arr1[i],
+ * arr2[i]). Truncates to the shorter of the two arrays.
+ * The natural next native after Stage 36 (array_find_index).
+ * The new wrinkle: TWO source arrays (not one); the
+ * combiner is 2-arg (the 2-arg closure path was verified
+ * in Stage 32 with array_reduce).
+ *
+ * JS reference: there is no direct equivalent, but
+ *   lodash's _.zip([arr1, arr2]) does the same.
+ * Python reference: zip(arr1, arr2) — truncates to the
+ *   shorter; clox matches this convention.
+ * Rust reference: Iterator::zip — also truncates to the
+ *   shorter.
+ *
+ * Stack layout for callClosure: [callee, arg1, arg2, ...].
+ * For 2-arg, that's 3 items on the stack. */
+static Value arrayZipNative(int argCount, Value *args) {
+    if (argCount != 3) {
+        runtimeError("array_zip() takes 3 arguments (%d given).", argCount);
+        return NIL_VAL;  /* error sentinel; matches array_filter / array_reduce */
+    }
+    if (!IS_ARRAY(args[0])) {
+        runtimeError("array_zip() argument 0 must be an array.");
+        return NIL_VAL;
+    }
+    if (!IS_ARRAY(args[1])) {
+        runtimeError("array_zip() argument 1 must be an array.");
+        return NIL_VAL;
+    }
+    if (!IS_CLOSURE(args[2])) {
+        runtimeError("array_zip() argument 2 must be a function.");
+        return NIL_VAL;
+    }
+    ObjArray *arr1 = AS_ARRAY(args[0]);
+    ObjArray *arr2 = AS_ARRAY(args[1]);
+    ObjClosure *combiner = AS_CLOSURE(args[2]);
+    if (combiner->function->arity != 2) {
+        runtimeError("array_zip() combiner must take 2 arguments (got %d).",
+                     combiner->function->arity);
+        return NIL_VAL;
+    }
+
+    /* GC protection: build the result array BEFORE calling
+     * the combiner, so the combiner's allocations don't
+     * sweep away our partial result. */
+    int minCount = arr1->count < arr2->count ? arr1->count : arr2->count;
+    ObjArray *result = newArray(minCount);
+    push(OBJ_VAL(result));  /* GC: keep alive while filling */
+
+    for (int i = 0; i < minCount; i++) {
+        /* Stack layout for callClosure with argCount=2:
+         * [callee, arg1, arg2]. The combiner's bytecode
+         * reads its args at slots[1] and slots[2].
+         *
+         * Stack before: [..., arr1, arr2, combiner, result_array]
+         * Stack after:  [..., arr1, arr2, combiner, result_array, combiner, arg1, arg2]
+         *
+         * callClosure(combiner, 2) sets frame->slots to the
+         * combiner position (stackTop - 3), so slots[0] =
+         * combiner, slots[1] = arg1, slots[2] = arg2. The
+         * combiner's bytecode accesses its args at slots[1]
+         * and slots[2]. */
+        push(OBJ_VAL(combiner));   /* callee */
+        push(arr1->elements[i]);   /* arg 1 */
+        push(arr2->elements[i]);   /* arg 2 */
+        Value combined = callClosureFromNative(combiner, 2);
+        /* Push the combiner's return value to the result.
+         * The GC is safe: the result array is on the stack
+         * below the native's frames, and any allocations
+         * the combiner made are handled by its own frame's
+         * GC checkpoints. The callee + 2 args are part of
+         * the callClosure's frame; we don't manually pop
+         * them. */
+        arrayPush(result, combined);
+    }
+
+    pop();  /* pop the result array (it stays on the stack until
+             * the function returns; the VM will handle pushing
+             * the return value) */
+    return OBJ_VAL(result);
+}
+
 static Value typeofNative(int argCount, Value *args) {
     if (argCount != 1) {
         runtimeError("typeof() takes 1 argument (%d given).", argCount);
@@ -2361,6 +2446,22 @@ void defineNatives(void) {
     name = copyString("array_find_index", (int)strlen("array_find_index"));
     push(OBJ_VAL(name));
     tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayFindIndexNative)));
+    pop();
+
+    /* Stage 37: array_zip. Takes two arrays and a 2-arg
+     * Lox closure (the combiner: (a, b) -> result).
+     * Returns a new array where each element is
+     * combiner(arr1[i], arr2[i]). Truncates to the
+     * shorter of the two arrays. The natural next native
+     * after Stage 36 (array_find_index). The new wrinkle:
+     * TWO source arrays (not one); the combiner is 2-arg
+     * (the 2-arg closure path was verified in Stage 32
+     * with array_reduce). Architecture is the same as
+     * Stage 30/31/32 (argCount=2). Stack layout for
+     * callClosure with argCount=2 is [callee, arg1, arg2]. */
+    name = copyString("array_zip", (int)strlen("array_zip"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayZipNative)));
     pop();
 
     /* Stage 10: more number operations. */

@@ -1,0 +1,119 @@
+// Stage 37 example: array-zip.lox
+// The natural next native after Stage 36's
+// array_find_index. Combines two arrays element-wise
+// via a 2-arg Lox closure (the combiner). Returns a
+// new array. Truncates to the shorter of the two arrays.
+// Demonstrates: basic, truncate-to-shorter, different
+// types of combiners, compose-with-filter, strict-error
+// contract.
+
+print "=== basic: element-wise sum ===";
+// The most common array_zip idiom. [1, 2, 3] and
+// [10, 20, 30] with combiner (a, b) -> a + b returns
+// [11, 22, 33]. The combiner is a 2-arg Lox closure.
+fun add(a, b) { return a + b; }
+var sums = array_zip([1, 2, 3], [10, 20, 30], add);
+print "len:" + string(array_length(sums));
+print "0:" + string(array_get(sums, 0));
+print "1:" + string(array_get(sums, 1));
+print "2:" + string(array_get(sums, 2));
+// Output:
+//   len:3
+//   0:11
+//   1:22
+//   2:33
+
+print "=== truncate to shorter ===";
+// Different-length arrays: truncates to the shorter.
+// [1, 2, 3, 4, 5] and [10, 20] with combiner
+// (a, b) -> a * b returns [10, 40] (2 elements).
+// The discipline matches Python's zip() and Rust's
+// Iterator::zip().
+fun mul(a, b) { return a * b; }
+var products = array_zip([1, 2, 3, 4, 5], [10, 20], mul);
+print "len:" + string(array_length(products));
+print "0:" + string(array_get(products, 0));
+print "1:" + string(array_get(products, 1));
+// Output:
+//   len:2
+//   0:10
+//   1:40
+
+print "=== empty arr1: returns empty array ===";
+// Empty arr1: returns empty array without ever
+// calling the combiner. The "no iterations" case.
+var empty1 = array_zip([], [1, 2, 3], add);
+print "len:" + string(array_length(empty1));
+// Output: len:0
+
+print "=== empty arr2: returns empty array ===";
+// Empty arr2: returns empty array without ever
+// calling the combiner. Same as empty arr1.
+var empty2 = array_zip([1, 2, 3], [], add);
+print "len:" + string(array_length(empty2));
+// Output: len:0
+
+print "=== both empty: returns empty array ===";
+// Both empty: returns empty array. (No elements to
+// pair.)
+var bothEmpty = array_zip([], [], add);
+print "len:" + string(array_length(bothEmpty));
+// Output: len:0
+
+print "=== strings: build a parallel array of pairs ===";
+// Real-world: build a parallel array of pairs from two
+// arrays of strings. The combiner returns a 2-element
+// array (clox doesn't have tuples).
+fun pairStrings(a, b) {
+  var pair = [];
+  array_push(pair, a);
+  array_push(pair, b);
+  return pair;
+}
+var names = ["alice", "bob", "carol"];
+var ages = ["30", "25", "40"];
+var pairs = array_zip(names, ages, pairStrings);
+print "len:" + string(array_length(pairs));
+// Output: len:3 (3 pairs)
+
+print "=== compose with array_filter (Stage 30 + Stage 37) ===";
+// Real-world: filter arr1, then zip the filtered
+// result with arr2. Stages 30 (filter) + 37 (zip)
+// composition.
+fun isEven(x) { return x == 0 or x == 2 or x == 4 or x == 6 or x == 8; }
+var numbers = [1, 2, 3, 4, 5, 6, 7, 8];
+var evens = array_filter(numbers, isEven);
+// evens == [2, 4, 6, 8] (4 elements).
+var weights = [1, 10, 100, 1000];
+// weights is also 4 elements, so no truncation. Zip
+// evens with weights, element-wise product.
+var weighted = array_zip(evens, weights, mul);
+print "len:" + string(array_length(weighted));
+print "0:" + string(array_get(weighted, 0));
+print "1:" + string(array_get(weighted, 1));
+print "2:" + string(array_get(weighted, 2));
+print "3:" + string(array_get(weighted, 3));
+// Output:
+//   len:4  (no truncation — both are 4 elements)
+//   0:2    (2 * 1)
+//   1:40   (4 * 10)
+//   2:600  (6 * 100)
+//   3:8000 (8 * 1000)
+
+print "=== strict-error contract ===";
+// Uncommenting any of the next lines would error at runtime:
+//   array_zip()                                  // no arguments
+//   array_zip([1,2,3])                           // no arr2, no combiner
+//   array_zip([1,2,3], [10,20,30])               // no combiner
+//   array_zip([1,2,3], [10,20,30], f, 99)        // too many args
+//   array_zip("not array", [1,2,3], f)           // non-array arr1
+//   array_zip([1,2,3], "not array", f)           // non-array arr2
+//   array_zip([1,2,3], [10,20,30], 42)           // non-function combiner
+//   array_zip([1,2,3], [10,20,30], f)            // 1-arg combiner (must be 2-arg)
+// The discipline: array_zip is strict on arg count (3),
+// on arr1 being an array, on arr2 being an array, on
+// the combiner being a 2-arg Lox closure, and on the
+// combiner's arity being exactly 2. The combiner's
+// return type is unconstrained. The result is a new
+// array. "Truncate to the shorter" is the convention
+// (matches Python's zip and Rust's Iterator::zip).
