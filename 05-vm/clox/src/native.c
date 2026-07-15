@@ -2323,6 +2323,50 @@ static Value arrayTakeNative(int argCount, Value *args) {
     return OBJ_VAL(result);
 }
 
+static Value arrayDropNative(int argCount, Value *args) {
+    if (argCount != 2) {
+        runtimeError("array_drop() takes 2 arguments (%d given).", argCount);
+        return NIL_VAL;  /* error sentinel */
+    }
+    if (!IS_ARRAY(args[0])) {
+        runtimeError("array_drop() argument 0 must be an array.");
+        return NIL_VAL;
+    }
+    if (!IS_NUMBER(args[1])) {
+        runtimeError("array_drop() argument 1 must be a number.");
+        return NIL_VAL;
+    }
+    ObjArray *arr = AS_ARRAY(args[0]);
+    int n = (int)AS_NUMBER(args[1]);
+    /* The new wrinkle: the "skip the first N"
+     * pattern, the complement of Stage 51's
+     * array_take. If N <= 0, return the full
+     * array. If N >= array length, return an
+     * empty array. Otherwise return the elements
+     * from index N to the end. */
+    if (n <= 0) {
+        ObjArray *full = newArray(arr->count);
+        push(OBJ_VAL(full));  /* GC: keep alive while filling */
+        for (int i = 0; i < arr->count; i++) {
+            arrayPush(full, arr->elements[i]);
+        }
+        pop();  /* pop the full array */
+        return OBJ_VAL(full);
+    }
+    if (n >= arr->count) {
+        ObjArray *empty = newArray(0);
+        return OBJ_VAL(empty);
+    }
+    int keepCount = arr->count - n;
+    ObjArray *result = newArray(keepCount);
+    push(OBJ_VAL(result));  /* GC: keep alive while filling */
+    for (int i = n; i < arr->count; i++) {
+        arrayPush(result, arr->elements[i]);
+    }
+    pop();  /* pop the result array */
+    return OBJ_VAL(result);
+}
+
 /* Stage 38: array_flatten(arr) -> array.
  * Takes an array of arrays and returns a new flat array.
  * Stops at 1 level: inner arrays' elements become
@@ -3473,5 +3517,17 @@ void defineNatives(void) {
     name = copyString("array_take", (int)strlen("array_take"));
     push(OBJ_VAL(name));
     tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayTakeNative)));
+    pop();
+
+    /* Stage 52: array_drop. The complement of
+     * Stage 51's array_take: drop the first N
+     * elements, return the rest. ~30 lines, no new
+     * architecture, no user-code dispatch. The
+     * new wrinkle: the "skip the first N" pattern.
+     * The push/pop count is balanced: 1 push for
+     * the name, 1 pop after tableSet. */
+    name = copyString("array_drop", (int)strlen("array_drop"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayDropNative)));
     pop();
 }

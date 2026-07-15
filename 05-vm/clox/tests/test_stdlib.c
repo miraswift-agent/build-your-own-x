@@ -5190,6 +5190,177 @@ static void test_array_take_wrong_type(void) {
     free(out2);
 }
 
+static void test_array_drop_basic(void) {
+    /* Stage 52: array_drop(arr, n) -> array. Drop
+     * the first N elements of an array, returning
+     * the rest. If N >= array length, returns an
+     * empty array. If N <= 0, returns the full
+     * array. ~25 lines, no new architecture. The
+     * new wrinkle: the "skip the first N" pattern,
+     * the complement of Stage 51's "take the
+     * first N" pattern. */
+    int exitCode;
+    char *out = runClox(
+        "var arr = [1, 2, 3, 4, 5];\n"
+        "var dropped = array_drop(arr, 2);\n"
+        "for (var i = 0; i < array_length(dropped); i = i + 1) {\n"
+        "    print string(array_get(dropped, i));\n"
+        "}\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-drop-basic: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "3\n4\n5\n")) {
+        fail("stdlib/array-drop-basic: expected '3\\n4\\n5\\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_drop_n_equals_length(void) {
+    /* When N equals the array length, returns an
+     * empty array. */
+    int exitCode;
+    char *out = runClox(
+        "var arr = [1, 2, 3];\n"
+        "var dropped = array_drop(arr, 3);\n"
+        "print array_length(dropped);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-drop-n-equals-length: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "0\n")) {
+        fail("stdlib/array-drop-n-equals-length: expected '0\\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_drop_n_exceeds_length(void) {
+    /* When N > array length, returns an empty
+     * array. (No error; just drops everything.) */
+    int exitCode;
+    char *out = runClox(
+        "var arr = [1, 2];\n"
+        "var dropped = array_drop(arr, 10);\n"
+        "print array_length(dropped);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-drop-n-exceeds-length: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "0\n")) {
+        fail("stdlib/array-drop-n-exceeds-length: expected '0\\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_drop_n_zero(void) {
+    /* When N is 0, returns the full array. */
+    int exitCode;
+    char *out = runClox(
+        "var arr = [1, 2, 3];\n"
+        "var dropped = array_drop(arr, 0);\n"
+        "for (var i = 0; i < array_length(dropped); i = i + 1) {\n"
+        "    print string(array_get(dropped, i));\n"
+        "}\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-drop-n-zero: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "1\n2\n3\n")) {
+        fail("stdlib/array-drop-n-zero: expected '1\\n2\\n3\\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_drop_does_not_mutate(void) {
+    /* The source array is not mutated. */
+    int exitCode;
+    char *out = runClox(
+        "var arr = [1, 2, 3, 4, 5];\n"
+        "var dropped = array_drop(arr, 3);\n"
+        "print \"arr.len:\" + string(array_length(arr));\n"
+        "print \"arr.0:\" + string(array_get(arr, 0));\n"
+        "print \"arr.4:\" + string(array_get(arr, 4));\n"
+        "print \"dropped.len:\" + string(array_length(dropped));\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-drop-does-not-mutate: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "arr.len:5\n") || !contains(out, "arr.0:1\n")
+            || !contains(out, "arr.4:5\n") || !contains(out, "dropped.len:2\n")) {
+        fail("stdlib/array-drop-does-not-mutate: expected arr.len:5, arr.0:1, arr.4:5, dropped.len:2, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_drop_composes_with_take(void) {
+    /* The composition: array_take(array_drop(arr, n), m)
+     * = a sub-array starting at index n, length m.
+     * This is the "page slice" pattern. */
+    int exitCode;
+    char *out = runClox(
+        "var arr = [1, 2, 3, 4, 5];\n"
+        "var middle = array_take(array_drop(arr, 1), 3);\n"
+        "for (var i = 0; i < array_length(middle); i = i + 1) {\n"
+        "    print string(array_get(middle, i));\n"
+        "}\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-drop-composes-with-take: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "2\n3\n4\n")) {
+        fail("stdlib/array-drop-composes-with-take: expected '2\\n3\\n4\\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_drop_wrong_arg_count(void) {
+    /* Defensive: 1 arg, 3 args both error. 2 args
+     * is the only valid count. */
+    int exitCode;
+    char *out1 = runClox("var d = array_drop([1, 2, 3]);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-drop-wrong-arg-count-1: expected non-zero exit for 1 arg");
+    } else {
+        pass();
+    }
+    free(out1);
+
+    char *out2 = runClox("var d = array_drop([1], 2, 3);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-drop-wrong-arg-count-3: expected non-zero exit for 3 args");
+    } else {
+        pass();
+    }
+    free(out2);
+}
+
+static void test_array_drop_wrong_type(void) {
+    /* Defensive: 1st arg must be an array, 2nd arg
+     * must be a number. */
+    int exitCode;
+    char *out1 = runClox("var d = array_drop(42, 2);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-drop-wrong-type-arr: expected non-zero exit for non-array 1st arg");
+    } else {
+        pass();
+    }
+    free(out1);
+
+    char *out2 = runClox("var d = array_drop([1, 2], \"two\");\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-drop-wrong-type-n: expected non-zero exit for non-number 2nd arg");
+    } else {
+        pass();
+    }
+    free(out2);
+}
+
 static void test_array_group_by_three_groups(void) {
     /* Three distinct keys, in the order they first appear.
      * Numbers by signum: keyFn(x) = x > 0 (positive vs.
@@ -7840,6 +8011,14 @@ int main(void) {
     test_array_take_does_not_mutate();
     test_array_take_wrong_arg_count();
     test_array_take_wrong_type();
+    test_array_drop_basic();
+    test_array_drop_n_equals_length();
+    test_array_drop_n_exceeds_length();
+    test_array_drop_n_zero();
+    test_array_drop_does_not_mutate();
+    test_array_drop_composes_with_take();
+    test_array_drop_wrong_arg_count();
+    test_array_drop_wrong_type();
     /* Stage 29: string_split with limit. */
     test_string_split_with_limit();
     test_string_split_limit_zero();
