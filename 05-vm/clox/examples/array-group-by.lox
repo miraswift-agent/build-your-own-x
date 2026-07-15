@@ -1,0 +1,172 @@
+// Stage 42 example: array-group-by.lox
+// The "group elements by a key function" native.
+// Takes an array and a keyFn closure: keyFn(element)
+// -> key. Returns an array of arrays (the groups),
+// in first-occurrence-of-each-key order. The key
+// itself is not in the output (matches lodash's
+// _.groupBy). Reuses Stage 30's 1-arg closure path.
+//
+// Canonical convention: "groups only, in first-
+// occurrence order, no key duplication in the output"
+// (matches lodash, Python more-itertools, Rust
+// itertools's group_by). The 2-element-pair
+// representation is a different primitive (would be
+// array_group_by_with_key or similar) — not part of
+// this stage.
+
+print "=== basic: group numbers by a boolean predicate ===";
+// [1, 2, 3, 4, 5, 6] with keyFn(x) = x < 4
+// -> [[1, 2, 3], [4, 5, 6]] (2 groups: small, big)
+// First-occurrence order: small first (1 < 4), then
+// big (4 is the first element NOT < 4).
+var arr = [1, 2, 3, 4, 5, 6];
+fun keyFn1(x) { return x < 4; }
+var groups1 = array_group_by(arr, keyFn1);
+print array_length(groups1);
+print array_length(array_get(groups1, 0));
+print array_get(array_get(groups1, 0), 0);
+print array_get(array_get(groups1, 0), 2);
+print array_length(array_get(groups1, 1));
+print array_get(array_get(groups1, 1), 0);
+print array_get(array_get(groups1, 1), 2);
+// Output:
+//   2
+//   3
+//   1
+//   3
+//   3
+//   4
+//   6
+
+print "=== group strings by length ===";
+// ["a", "bb", "c", "dd"] with keyFn(s) = string_length(s)
+// -> [["a", "c"], ["bb", "dd"]] (2 groups: len 1, len 2)
+// First-occurrence order: len 1 first (a's key is 1,
+// bb's key is 2 — len 1 is seen first).
+var strs = ["a", "bb", "c", "dd"];
+fun keyFn2(s) { return string_length(s); }
+var groups2 = array_group_by(strs, keyFn2);
+print array_length(groups2);
+print array_length(array_get(groups2, 0));
+print array_get(array_get(groups2, 0), 0);
+print array_get(array_get(groups2, 0), 1);
+print array_length(array_get(groups2, 1));
+print array_get(array_get(groups2, 1), 0);
+print array_get(array_get(groups2, 1), 1);
+// Output:
+//   2
+//   2
+//   a
+//   c
+//   2
+//   bb
+//   dd
+
+print "=== three groups in first-occurrence order ===";
+// [1, 2, 3, 1, 2, 3, 1] with identity keyFn
+// -> [[1, 1, 1], [2, 2], [3, 3]] (3 groups)
+// First-occurrence order: 1 first, 2 second, 3 third.
+var nums = [1, 2, 3, 1, 2, 3, 1];
+fun keyFn3(x) { return x; }
+var groups3 = array_group_by(nums, keyFn3);
+print array_length(groups3);
+print array_length(array_get(groups3, 0));
+print array_length(array_get(groups3, 1));
+print array_length(array_get(groups3, 2));
+// Output:
+//   3
+//   3
+//   2
+//   2
+
+print "=== empty input: no groups ===";
+// [] with any keyFn -> [] (empty array of groups)
+var groups4 = array_group_by([], keyFn3);
+print array_length(groups4);
+// Output: 0
+
+print "=== all-same-key: one group with all elements ===";
+// [1, 2, 3, 4, 5] with keyFn(x) = 0 (all map to 0)
+// -> [[1, 2, 3, 4, 5]] (1 group, 5 elements)
+fun keyFn5(x) { return 0; }
+var groups5 = array_group_by([1, 2, 3, 4, 5], keyFn5);
+print array_length(groups5);
+print array_length(array_get(groups5, 0));
+// Output:
+//   1
+//   5
+
+print "=== does not mutate the source ===";
+// array_group_by returns a new array of arrays; the
+// source is unchanged. Same "non-mutating" pattern as
+// Stage 38's array_flatten, Stage 40's array_unique_by,
+// Stage 41's array_chunk.
+var src = [10, 20, 30, 40];
+array_group_by(src, keyFn1);
+print array_length(src);
+print array_get(src, 0);
+print array_get(src, 3);
+// Output:
+//   4
+//   10
+//   40
+
+print "=== composes with array_unique_by (inverse-ish) ===";
+// For an array with duplicates, group_by followed by
+// flattening then unique_by returns the unique elements
+// in the order they first appear across the groups.
+// But for the simple case: array_unique_by(arr, x -> x)
+// is the same as flatten(group_by(arr, x -> x)) if every
+// element is in a unique key. The compose demonstrates
+// that group_by + flatten + unique_by (with identity
+// keyFn) = the unique elements of the input.
+var dup = [1, 2, 1, 3, 2, 4, 3, 5];
+fun id(x) { return x; }
+var grouped = array_group_by(dup, id);
+var flat = array_flatten(grouped);
+var uniq = array_unique_by(flat, id);
+print array_length(uniq);
+print array_get(uniq, 0);
+print array_get(uniq, 4);
+// Output:
+//   5
+//   1
+//   5
+
+print "=== what this stage teaches ===";
+// (a) "Group by key function" is the canonical
+//     primitive. The output is an array of groups
+//     (sub-arrays), in first-occurrence-of-each-key
+//     order. The key itself is not in the output
+//     (the caller can re-derive it via keyFn on
+//     the first element of each group).
+//
+// (b) "First-occurrence order" is the canonical
+//     convention. lodash, Python more-itertools, and
+//     Rust itertools all agree. When the design
+//     matches an existing canonical convention,
+//     document the convention in the close-out,
+//     not in the test.
+//
+// (c) "Parallel Lox-heap arrays" is the new GC
+//     pattern for Stage 42. seenKeys[i] is the
+//     i-th unique key; result[i] is the i-th group.
+//     Both grow dynamically. The Lox-heap gives
+//     free GC protection via push/pop. The
+//     alternative (C-side Value array + manual
+//     GC tracking) is more error-prone for the
+//     same big-O cost.
+//
+// (d) "First native with a 2D result" — Stage 41
+//     was the first to return array-of-arrays;
+//     Stage 42 also returns array-of-arrays.
+//     The caller may need to flatten the result
+//     to iterate the elements, or iterate the
+//     groups themselves. The example demonstrates
+//     group_by + flatten + unique_by composition.
+//
+// (e) "Identity keyFn is the natural test fixture."
+//     Stage 40 (array_unique_by) used identity
+//     keyFn as the basic test. Stage 42 follows
+//     the same pattern. Boolean predicate
+//     (x < N) is the natural "2-group" fixture.

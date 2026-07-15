@@ -2400,6 +2400,96 @@ static Value arrayChunkNative(int argCount, Value *args) {
     return OBJ_VAL(result);
 }
 
+/* Stage 42: array_group_by(arr, keyFn) -> array.
+ * Groups elements of an array by a key function. The
+ * shape: 2 args (array, keyFn). The keyFn is a 1-arg
+ * Lox closure: keyFn(element) -> key. Returns an
+ * array of arrays (the groups), in first-occurrence-
+ * of-each-key order. Elements with the same key go
+ * into the same group. The key itself is not included
+ * in the output (matches lodash's _.groupBy, which
+ * returns the groups only). Empty array returns
+ * empty array. No user-code dispatch beyond the 1-arg
+ * closure path (reuses Stage 30 unchanged).
+ *
+ * The new wrinkle: this is the first native that
+ * maintains a parallel "keys so far" array AND a
+ * parallel "groups so far" array, where the index
+ * in the keys array determines the index in the
+ * groups array. The keys array is a unique-key
+ * registry; the groups array is the result. Each
+ * element of the input is appended to its group's
+ * chunk.
+ *
+ * JS reference: lodash's _.groupBy(collection, iteratee)
+ * Python reference: more-itertools's map_reduce(iterable, keyfn)
+ * Rust reference: itertools's group_by
+ * The canonical convention across all three: groups only,
+ * in first-occurrence order, no key duplication in the
+ * output.
+ */
+static Value arrayGroupByNative(int argCount, Value *args) {
+    if (argCount != 2) {
+        runtimeError("array_group_by() takes 2 arguments (%d given).", argCount);
+        return NIL_VAL;
+    }
+    if (!IS_ARRAY(args[0])) {
+        runtimeError("array_group_by() argument must be an array.");
+        return NIL_VAL;
+    }
+    if (!IS_CLOSURE(args[1])) {
+        runtimeError("array_group_by() keyFn must be a function.");
+        return NIL_VAL;
+    }
+    ObjArray *input = AS_ARRAY(args[0]);
+    ObjClosure *keyFn = AS_CLOSURE(args[1]);
+    /* Two parallel Lox-heap arrays: seenKeys[i] is the
+     * i-th unique key, result[i] is the i-th group (a
+     * sub-array of input elements that share that key).
+     * Both grow dynamically. */
+    ObjArray *seenKeys = newArray(0);
+    push(OBJ_VAL(seenKeys));  /* GC: keep alive while filling */
+    ObjArray *result = newArray(0);
+    push(OBJ_VAL(result));  /* GC: keep alive while filling */
+    for (int i = 0; i < input->count; i++) {
+        Value candidate = input->elements[i];
+        /* Compute the key by calling keyFn(candidate). The
+         * stack layout for callClosureFromNative is
+         * [callee, arg1, ..., argN]; push them in order. */
+        push(OBJ_VAL(keyFn));
+        push(candidate);
+        Value key = callClosureFromNative(keyFn, 1);
+        /* Scan the seen keys to find this key's index. */
+        int groupIndex = -1;
+        for (int j = 0; j < seenKeys->count; j++) {
+            if (valuesEqual(key, seenKeys->elements[j])) {
+                groupIndex = j;
+                break;
+            }
+        }
+        if (groupIndex == -1) {
+            /* New key: append to seenKeys, create a new group. */
+            arrayPush(seenKeys, key);
+            ObjArray *newGroup = newArray(1);
+            /* GC: push the new group before pushing the
+             * element. The group needs to be alive while we
+             * push the element, and the result needs to be
+             * alive while we push the group. */
+            push(OBJ_VAL(newGroup));
+            arrayPush(newGroup, candidate);
+            pop();  /* newGroup */
+            arrayPush(result, OBJ_VAL(newGroup));
+        } else {
+            /* Existing key: append to the existing group. */
+            ObjArray *existingGroup = AS_ARRAY(result->elements[groupIndex]);
+            arrayPush(existingGroup, candidate);
+        }
+    }
+    pop();  /* result */
+    pop();  /* seenKeys */
+    return OBJ_VAL(result);
+}
+
 static Value typeofNative(int argCount, Value *args) {
     if (argCount != 1) {
         runtimeError("typeof() takes 1 argument (%d given).", argCount);
@@ -2715,6 +2805,19 @@ void defineNatives(void) {
     name = copyString("array_chunk", (int)strlen("array_chunk"));
     push(OBJ_VAL(name));
     tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayChunkNative)));
+    pop();
+
+    /* Stage 42: array_group_by. Takes an array and a
+     * keyFn closure; returns an array of arrays (the
+     * groups). Elements with the same key go into the
+     * same group. Groups are in first-occurrence-of-
+     * each-key order. The key itself is not in the
+     * output (matches lodash's _.groupBy). Reuses
+     * Stage 30's callClosureFromNative(argCount=1)
+     * unchanged. */
+    name = copyString("array_group_by", (int)strlen("array_group_by"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayGroupByNative)));
     pop();
 
     /* Stage 10: more number operations. */

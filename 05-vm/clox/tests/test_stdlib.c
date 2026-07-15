@@ -4080,6 +4080,264 @@ static void test_array_chunk_size_negative(void) {
     free(out);
 }
 
+/* --- Stage 42: array_group_by(arr, keyFn) -> array --- */
+/* Groups elements of an array by a key function. The
+ * shape: 2 args (array, keyFn). The keyFn is a 1-arg
+ * Lox closure: keyFn(element) -> key. Returns an array
+ * of arrays (the groups), in first-occurrence-of-each-
+ * key order. Elements with the same key go into the
+ * same group. The key itself is not included in the
+ * output (matches lodash's _.groupBy). Empty array
+ * returns empty array. No user-code dispatch beyond
+ * the 1-arg closure path (reuses Stage 30). */
+static void test_array_group_by_basic(void) {
+    /* Group numbers by parity. [1, 2, 3, 4, 5, 6] with
+     * keyFn(x) = x - 2*(x/2) — but clox uses floating-
+     * point division (Stage 40's lesson), so that
+     * collapses all keys to 0. Use a boolean predicate
+     * instead: keyFn(x) = x < 4 (groups: small=[1,2,3],
+     * big=[4,5,6]). */
+    int exitCode;
+    char *out = runClox(
+        "var arr = [1, 2, 3, 4, 5, 6];\n"
+        "fun keyFn(x) { return x < 4; }\n"
+        "var groups = array_group_by(arr, keyFn);\n"
+        "print array_length(groups);\n"
+        "print array_length(array_get(groups, 0));\n"
+        "print array_get(array_get(groups, 0), 0);\n"
+        "print array_get(array_get(groups, 0), 1);\n"
+        "print array_get(array_get(groups, 0), 2);\n"
+        "print array_length(array_get(groups, 1));\n"
+        "print array_get(array_get(groups, 1), 0);\n"
+        "print array_get(array_get(groups, 1), 1);\n"
+        "print array_get(array_get(groups, 1), 2);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-group-by-basic: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "2\n3\n1\n2\n3\n3\n4\n5\n6\n")) {
+        fail("stdlib/array-group-by-basic: expected [[1,2,3],[4,5,6]], got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_group_by_preserves_order(void) {
+    /* Order of groups matches first-occurrence of each key.
+     * Strings by length: ["a", "bb", "c", "dd"] with
+     * keyFn(s) = string_length(s) -> [["a", "c"], ["bb", "dd"]]
+     * (length 1, then length 2). */
+    int exitCode;
+    char *out = runClox(
+        "var arr = [\"a\", \"bb\", \"c\", \"dd\"];\n"
+        "fun keyFn(s) { return string_length(s); }\n"
+        "var groups = array_group_by(arr, keyFn);\n"
+        "print array_length(groups);\n"
+        "print array_length(array_get(groups, 0));\n"
+        "print array_get(array_get(groups, 0), 0);\n"
+        "print array_get(array_get(groups, 0), 1);\n"
+        "print array_length(array_get(groups, 1));\n"
+        "print array_get(array_get(groups, 1), 0);\n"
+        "print array_get(array_get(groups, 1), 1);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-group-by-preserves-order: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "2\n2\na\nc\n2\nbb\ndd\n")) {
+        fail("stdlib/array-group-by-preserves-order: expected [[a,c],[bb,dd]], got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_group_by_empty(void) {
+    /* Empty input returns empty array of groups. */
+    int exitCode;
+    char *out = runClox(
+        "fun keyFn(x) { return x; }\n"
+        "var groups = array_group_by([], keyFn);\n"
+        "print array_length(groups);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-group-by-empty: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "0\n")) {
+        fail("stdlib/array-group-by-empty: expected 0 groups, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_group_by_single(void) {
+    /* Single element returns 1 group with 1 element. */
+    int exitCode;
+    char *out = runClox(
+        "fun keyFn(x) { return x; }\n"
+        "var groups = array_group_by([42], keyFn);\n"
+        "print array_length(groups);\n"
+        "print array_length(array_get(groups, 0));\n"
+        "print array_get(array_get(groups, 0), 0);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-group-by-single: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "1\n1\n42\n")) {
+        fail("stdlib/array-group-by-single: expected [[42]], got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_group_by_all_same_key(void) {
+    /* All elements have the same key -> 1 group with all elements. */
+    int exitCode;
+    char *out = runClox(
+        "fun keyFn(x) { return 0; }\n"
+        "var groups = array_group_by([1, 2, 3, 4, 5], keyFn);\n"
+        "print array_length(groups);\n"
+        "print array_length(array_get(groups, 0));\n"
+        "print array_get(array_get(groups, 0), 0);\n"
+        "print array_get(array_get(groups, 0), 4);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-group-by-all-same-key: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "1\n5\n1\n5\n")) {
+        fail("stdlib/array-group-by-all-same-key: expected [[1,2,3,4,5]], got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_group_by_all_unique_keys(void) {
+    /* Each element has a unique key -> N groups of 1 element each. */
+    int exitCode;
+    char *out = runClox(
+        "fun keyFn(x) { return x; }\n"
+        "var groups = array_group_by([10, 20, 30], keyFn);\n"
+        "print array_length(groups);\n"
+        "print array_length(array_get(groups, 0));\n"
+        "print array_get(array_get(groups, 0), 0);\n"
+        "print array_length(array_get(groups, 2));\n"
+        "print array_get(array_get(groups, 2), 0);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-group-by-all-unique-keys: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "3\n1\n10\n1\n30\n")) {
+        fail("stdlib/array-group-by-all-unique-keys: expected [[10],[20],[30]], got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_group_by_does_not_mutate(void) {
+    /* The source array is unchanged. */
+    int exitCode;
+    char *out = runClox(
+        "var arr = [1, 2, 3, 4];\n"
+        "fun keyFn(x) { return x < 3; }\n"
+        "array_group_by(arr, keyFn);\n"
+        "print array_length(arr);\n"
+        "print array_get(arr, 0);\n"
+        "print array_get(arr, 3);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-group-by-does-not-mutate: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "4\n1\n4\n")) {
+        fail("stdlib/array-group-by-does-not-mutate: expected source unchanged, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_group_by_wrong_arg_count(void) {
+    /* array_group_by takes 2 args. 0, 1, 3 args error. */
+    int exitCode;
+    char *out;
+    out = runClox("array_group_by();\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-group-by-wrong-arg-count/0: expected nonzero exit, got 0 (output: %s)", out);
+        free(out);
+        return;
+    }
+    free(out);
+    out = runClox("array_group_by([1,2,3]);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-group-by-wrong-arg-count/1: expected nonzero exit, got 0 (output: %s)", out);
+        free(out);
+        return;
+    }
+    free(out);
+    out = runClox("array_group_by([1,2,3], fun(x) { return x; }, 99);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-group-by-wrong-arg-count/3: expected nonzero exit, got 0 (output: %s)", out);
+        free(out);
+        return;
+    }
+    free(out);
+    pass();
+}
+
+static void test_array_group_by_wrong_type(void) {
+    /* Non-array first arg, non-closure second arg. */
+    int exitCode;
+    char *out;
+    out = runClox("array_group_by(\"hello\", fun(x) { return x; });\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-group-by-wrong-type/non-array: expected nonzero exit, got 0 (output: %s)", out);
+        free(out);
+        return;
+    }
+    free(out);
+    out = runClox("array_group_by([1,2,3], 42);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-group-by-wrong-type/non-closure: expected nonzero exit, got 0 (output: %s)", out);
+        free(out);
+        return;
+    }
+    free(out);
+    pass();
+}
+
+static void test_array_group_by_three_groups(void) {
+    /* Three distinct keys, in the order they first appear.
+     * Numbers by signum: keyFn(x) = x > 0 (positive vs.
+     * zero vs negative would be 3 groups, but we only
+     * have 2 cases here). Use 3 keys via a string-
+     * comparison keyFn that always returns a string.
+     * Actually, use keyFn(x) = string(x) for numbers and
+     * the element itself for strings — but clox's
+     * string() takes a number only. Workaround: use
+     * typeof(x) (Stage 39) as the key, which always
+     * returns a string. [1, "a", 2, "b", 3] -> [[1,2,3],
+     * ["a","b"]] (2 groups by type). For 3 groups,
+     * use [1, 2, 3] with keyFn that returns the element
+     * itself (each unique). That's only 1 test.
+     * For 3 distinct keys in a single test, use
+     * [1, 2, 3, 1, 2, 3, 1] with keyFn(x) = x:
+     * groups = [[1,1,1], [2,2], [3,3]] (3 groups). */
+    int exitCode;
+    char *out = runClox(
+        "var arr = [1, 2, 3, 1, 2, 3, 1];\n"
+        "fun keyFn(x) { return x; }\n"
+        "var groups = array_group_by(arr, keyFn);\n"
+        "print array_length(groups);\n"
+        "print array_length(array_get(groups, 0));\n"
+        "print array_length(array_get(groups, 1));\n"
+        "print array_length(array_get(groups, 2));\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-group-by-three-groups: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "3\n3\n2\n2\n")) {
+        fail("stdlib/array-group-by-three-groups: expected 3 groups [3,2,2], got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
 /* --- Stage 29: string_split(s, delim, limit) --- */
 /* Extends Stage 13's string_split with a max-split-count
  * parameter. The shape: 2 args (Stage 13) splits on every
@@ -6353,6 +6611,17 @@ int main(void) {
     test_array_chunk_wrong_type();
     test_array_chunk_size_zero();
     test_array_chunk_size_negative();
+    /* Stage 42: array_group_by. */
+    test_array_group_by_basic();
+    test_array_group_by_preserves_order();
+    test_array_group_by_empty();
+    test_array_group_by_single();
+    test_array_group_by_all_same_key();
+    test_array_group_by_all_unique_keys();
+    test_array_group_by_does_not_mutate();
+    test_array_group_by_wrong_arg_count();
+    test_array_group_by_wrong_type();
+    test_array_group_by_three_groups();
     /* Stage 29: string_split with limit. */
     test_string_split_with_limit();
     test_string_split_limit_zero();
