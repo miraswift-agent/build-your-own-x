@@ -536,6 +536,62 @@ static Value stringTrimNative(int argCount, Value *args) {
     return OBJ_VAL(result);
 }
 
+/* --- Stage 27: string_trim_start / string_trim_end --- */
+/* Two new natives, mirror of Stage 9's string_trim. trimStart
+ * removes leading whitespace only (leaves trailing intact);
+ * trimEnd removes trailing whitespace only (leaves leading
+ * intact). JS reference: String.prototype.trimStart / trimEnd
+ * (also exposed as trimLeft / trimRight in older specs). The
+ * implementation is the same shape as stringTrimNative but with
+ * only one of the two while-loops. isWhitespace() handles spaces,
+ * tabs, and newlines (the same set stringTrimNative uses). All-
+ * whitespace input returns a fresh empty string (the same all-ws
+ * case stringTrimNative handles). No allocation beyond the
+ * copyString call (single allocation per call). */
+static Value stringTrimStartNative(int argCount, Value *args) {
+    if (argCount != 1) {
+        runtimeError("string_trim_start() takes 1 argument (%d given).", argCount);
+        return NIL_VAL;
+    }
+    if (!IS_STRING(args[0])) {
+        runtimeError("string_trim_start() argument must be a string.");
+        return NIL_VAL;
+    }
+    ObjString *s = AS_STRING(args[0]);
+    int start = 0;
+    int end = s->length;
+    while (start < end && isWhitespace(s->chars[start])) start++;
+    if (start == end) {
+        /* All whitespace: return a fresh empty string. */
+        ObjString *result = copyString("", 0);
+        return OBJ_VAL(result);
+    }
+    ObjString *result = copyString(s->chars + start, end - start);
+    return OBJ_VAL(result);
+}
+
+static Value stringTrimEndNative(int argCount, Value *args) {
+    if (argCount != 1) {
+        runtimeError("string_trim_end() takes 1 argument (%d given).", argCount);
+        return NIL_VAL;
+    }
+    if (!IS_STRING(args[0])) {
+        runtimeError("string_trim_end() argument must be a string.");
+        return NIL_VAL;
+    }
+    ObjString *s = AS_STRING(args[0]);
+    int start = 0;
+    int end = s->length;
+    while (end > start && isWhitespace(s->chars[end - 1])) end--;
+    if (start == end) {
+        /* All whitespace: return a fresh empty string. */
+        ObjString *result = copyString("", 0);
+        return OBJ_VAL(result);
+    }
+    ObjString *result = copyString(s->chars + start, end - start);
+    return OBJ_VAL(result);
+}
+
 /* --- Stage 21: string_repeat --- */
 /* string_repeat(s, n) -> string. Concatenate s with itself n times.
  * n = 0 -> empty string (the "repeat zero times" idiom). Negative n
@@ -1619,6 +1675,19 @@ void defineNatives(void) {
     name = copyString("string_trim", (int)strlen("string_trim"));
     push(OBJ_VAL(name));
     tableSet(&vm.globals, name, OBJ_VAL(newNative(stringTrimNative)));
+    pop();
+
+    /* Stage 27: string_trim_start / string_trim_end. Two new
+     * natives, mirror of Stage 9's string_trim but only one
+     * side. */
+    name = copyString("string_trim_start", (int)strlen("string_trim_start"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(stringTrimStartNative)));
+    pop();
+
+    name = copyString("string_trim_end", (int)strlen("string_trim_end"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(stringTrimEndNative)));
     pop();
 
     /* Stage 21: string_repeat. */

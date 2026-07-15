@@ -1,0 +1,68 @@
+// Stage 27 example: trim-one-side.lox
+// Composes Stage 9's string_trim with Stage 27's string_trim_start
+// and string_trim_end. Demonstrates the 'whitespace handling' set:
+// trim_start (leading only), trim_end (trailing only), trim (both
+// sides). Real-world use cases: parsing CSV columns with leading
+// whitespace, normalizing log lines, handling user input where only
+// one side has stray whitespace.
+
+print "=== trim_start (leading only) ===";
+// Strips leading whitespace, preserves trailing.
+print string_trim_start("   hello   ");  // "hello   "
+print string_trim_start("   hello");     // "hello"
+print string_trim_start("hello   ");     // "hello   " (no leading)
+print string_trim_start("\t\n  hi");     // "hi" (tabs and newlines stripped)
+
+print "=== trim_end (trailing only) ===";
+// Strips trailing whitespace, preserves leading.
+print string_trim_end("   hello   ");    // "   hello"
+print string_trim_end("   hello");       // "   hello" (no trailing)
+print string_trim_end("hello   ");       // "hello"
+print string_trim_end("hi  \t\n");       // "hi" (tabs and newlines stripped)
+
+print "=== compose: trim both sides ===";
+// trim_start then trim_end = same effect as Stage 9's string_trim,
+// but explicit. Useful when you want to document the two-step
+// normalization in code.
+var raw = "   hello world   ";
+print string_trim_start(string_trim_end(raw));  // "hello world"
+
+print "=== preserve one side ===";
+// The 'keep trailing newline' idiom — common when reading lines
+// from a file. You want to strip leading whitespace (indentation)
+// but keep the trailing newline intact.
+var line = "    indented log line\n";
+print string_trim_start(line);  // "indented log line\n" (trailing \n preserved)
+
+print "=== CSV column parsing ===";
+// A CSV column might have leading whitespace from copy-paste but
+// no trailing whitespace. trim_start is the right tool; trim
+// would strip a trailing newline that may or may not be present.
+var csv_line = "  alpha,  beta,   gamma";
+var cols = string_split(csv_line, ",");
+for (var i = 0; i < array_length(cols); i = i + 1) {
+    print string_trim_start(array_get(cols, i));
+}
+// "alpha"
+// "beta"
+// "gamma"  (leading 3 spaces stripped, no trailing)
+
+print "=== compose with trim ===";
+// Stage 9's string_trim does both sides; Stage 27's trim_start/
+// trim_end are explicit. For complex whitespace handling, you can
+// compose them in any order:
+var s = "  \t\n  hello \n\t  ";
+print string_trim(s);                  // "hello"
+print string_trim_start(s);            // "hello \n\t  "
+print string_trim_end(s);              // "  \t\n  hello"
+print string_trim_start(string_trim_end(s));  // "hello" (same as trim)
+
+print "=== strict-error contract ===";
+// Uncommenting any of the next lines would error at runtime:
+//   string_trim_start(42)        // wrong type
+//   string_trim_start()          // 0 args
+//   string_trim_start("  hi  ", 1)  // 2 args
+// Same shape for string_trim_end.
+// The discipline: trim natives are strict on input type and arity,
+// lenient on the input string content (any string, including all
+// whitespace, returns "" or a partial-trimmed string).

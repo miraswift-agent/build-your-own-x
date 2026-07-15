@@ -3261,6 +3261,198 @@ static void test_string_to_int_wrong_arg_count(void) {
     free(out);
 }
 
+/* --- Stage 27: string_trim_start / string_trim_end --- */
+/* Two new natives, mirror of Stage 9's string_trim. The shape:
+ * trimStart removes leading whitespace only, leaving trailing
+ * whitespace intact; trimEnd removes trailing whitespace only,
+ * leaving leading whitespace intact. Combined with Stage 9's
+ * string_trim (which removes both), the user has a complete
+ * 'whitespace handling' set. JS reference: String.prototype.
+ * trimStart / trimEnd (also exposed as trimLeft / trimRight in
+ * older specs). */
+
+static void test_string_trim_start_basic(void) {
+    /* Leading whitespace removed, trailing preserved. */
+    int exitCode;
+    char *out = runClox(
+        "print string_trim_start(\"   hello   \");\n"  /* -> "hello   " */
+        "print string_trim_start(\"   hello\");\n"     /* -> "hello" (no trailing ws) */
+        "print string_trim_start(\"hello   \");\n",    /* -> "hello   " (no leading ws) */
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/trim-start-basic: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "hello   \n")
+            || !contains(out, "hello\n")
+            || !contains(out, "hello   \n")) {
+        fail("stdlib/trim-start-basic: expected 'hello   ', 'hello', 'hello   ' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_trim_start_all_whitespace(void) {
+    /* All-whitespace input -> empty string. */
+    int exitCode;
+    char *out = runClox("print string_trim_start(\"     \");\n", &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/trim-start-all-ws: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "\n")
+            || contains(out, "      \n")) {  /* reject the original 5 spaces */
+        fail("stdlib/trim-start-all-ws: expected empty string in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_trim_start_tabs_and_newlines(void) {
+    /* Whitespace includes tabs and newlines, not just spaces.
+     * isWhitespace() in clox's native.c handles all three. */
+    int exitCode;
+    char *out = runClox(
+        "print string_trim_start(\"\\t\\n  hello\");\n",  /* -> "hello" */
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/trim-start-tabs-newlines: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "hello\n")) {
+        fail("stdlib/trim-start-tabs-newlines: expected 'hello' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_trim_start_wrong_type(void) {
+    int exitCode;
+    char *out = runClox("print string_trim_start(42);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/trim-start-wrong-type: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_trim_start_wrong_arg_count(void) {
+    int exitCode;
+    char *out = runClox("print string_trim_start();\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/trim-start-wrong-arg-count-zero: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+
+    out = runClox("print string_trim_start(\"  hello  \", 1);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/trim-start-wrong-arg-count-two: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_trim_end_basic(void) {
+    /* Trailing whitespace removed, leading preserved. */
+    int exitCode;
+    char *out = runClox(
+        "print string_trim_end(\"   hello   \");\n"    /* -> "   hello" */
+        "print string_trim_end(\"   hello\");\n"       /* -> "   hello" (no trailing ws) */
+        "print string_trim_end(\"hello   \");\n",      /* -> "hello" (no leading ws) */
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/trim-end-basic: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "   hello\n")
+            || !contains(out, "hello\n")) {
+        fail("stdlib/trim-end-basic: expected '   hello' and 'hello' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_trim_end_all_whitespace(void) {
+    /* All-whitespace input -> empty string. */
+    int exitCode;
+    char *out = runClox("print string_trim_end(\"     \");\n", &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/trim-end-all-ws: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (contains(out, "     \n")) {
+        fail("stdlib/trim-end-all-ws: expected empty string in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_trim_end_tabs_and_newlines(void) {
+    /* Trailing tabs and newlines stripped. */
+    int exitCode;
+    char *out = runClox(
+        "print string_trim_end(\"hello\\t\\n  \");\n",  /* -> "hello" */
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/trim-end-tabs-newlines: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "hello\n")) {
+        fail("stdlib/trim-end-tabs-newlines: expected 'hello' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_trim_end_wrong_type(void) {
+    int exitCode;
+    char *out = runClox("print string_trim_end(42);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/trim-end-wrong-type: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_trim_end_wrong_arg_count(void) {
+    int exitCode;
+    char *out = runClox("print string_trim_end();\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/trim-end-wrong-arg-count-zero: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+
+    out = runClox("print string_trim_end(\"  hello  \", 1);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/trim-end-wrong-arg-count-two: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_trim_compose(void) {
+    /* Compose trim_start + trim_end to do both sides (the same
+     * effect as Stage 9's string_trim, but explicit). Or compose
+     * them with the input string in either order. */
+    int exitCode;
+    char *out = runClox(
+        "var s = \"   hello   \";\n"
+        "print string_trim(string_trim_start(string_trim_end(s)));\n"  /* -> "hello" */
+        "print string_trim_start(s) + \"|\" + string_trim_end(s);\n",   /* -> "hello   |   hello" */
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/trim-compose: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "hello\n")
+            || !contains(out, "hello   |   hello\n")) {
+        fail("stdlib/trim-compose: expected 'hello' and 'hello   |   hello' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
 int main(void) {
     test_clock_exists();
     test_number_abs();
@@ -3451,6 +3643,18 @@ int main(void) {
     test_string_to_int_non_numeric_errors();
     test_string_to_int_wrong_type();
     test_string_to_int_wrong_arg_count();
+    /* Stage 27: string_trim_start / string_trim_end. */
+    test_string_trim_start_basic();
+    test_string_trim_start_all_whitespace();
+    test_string_trim_start_tabs_and_newlines();
+    test_string_trim_start_wrong_type();
+    test_string_trim_start_wrong_arg_count();
+    test_string_trim_end_basic();
+    test_string_trim_end_all_whitespace();
+    test_string_trim_end_tabs_and_newlines();
+    test_string_trim_end_wrong_type();
+    test_string_trim_end_wrong_arg_count();
+    test_string_trim_compose();
 
     printf("%d passed, %d failed\n", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
