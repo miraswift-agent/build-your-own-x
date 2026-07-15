@@ -1,0 +1,118 @@
+// Stage 35 example: array-find.lox
+// The natural next native in the "iterate-and-return-
+// something" pattern after Stage 34's array_all. Returns
+// the first element for which the predicate is truthy, or
+// nil if no element matches (or if the array is empty).
+// Demonstrates the "find the first X" idiom: first-positive,
+// first-matches-a-set, first-string-non-empty, first-index-
+// of, find-or-default, find-index-via-iteration.
+
+print "=== basic: first positive element ===";
+// The most common array_find idiom. Returns the first
+// element that satisfies the predicate, or nil if none.
+fun isPositive(x) { return x > 0; }
+var firstPos = array_find([0, 0, 5, 3, 7], isPositive);
+print firstPos;  // 5 (the first positive element)
+
+print "=== none: returns nil ===";
+// No element matches the predicate. The result is nil,
+// the canonical "no match" sentinel in clox. Caller can
+// test for "no match" with 'find(x) == nil'.
+fun isNegative(x) { return x < 0; }
+var noneFound = array_find([1, 2, 3, 0, 5], isNegative);
+print noneFound;  // nil
+
+print "=== empty: returns nil (predicate never called) ===";
+// Empty array with no iterations: the predicate is never
+// called. The result is nil. This is the canonical
+// 'default value' for "find in zero elements."
+var empty = array_find([], isPositive);
+print empty;  // nil
+
+print "=== short-circuit: only visits up to the first match ===";
+// The native returns early once a match is found. We
+// demonstrate this with a side-effecting predicate. The
+// trace function prints the element before returning; the
+// output shows only the elements before (and including)
+// the first match.
+fun trace(x) { print "visit:" + string(x); return x == 3; }
+var found = array_find([1, 2, 3, 4, 5], trace);
+print found;  // 3 (visit:1, visit:2, visit:3 — not 4 or 5)
+
+print "=== first match wins: not the only match ===";
+// When multiple elements match, the *first* one wins. The
+// predicate isOdd matches {1, 3, 5, 7, 9}; [3, 5, 7, 9]
+// returns 3 (the first match), NOT 5, 7, or 9.
+fun isOdd(x) { return x == 1 or x == 3 or x == 5 or x == 7 or x == 9; }
+var firstOdd = array_find([3, 5, 7, 9], isOdd);
+print firstOdd;  // 3 (first, not 5/7/9)
+
+print "=== find-or-default: the 'or' pattern ===";
+// Real-world: find the first match, or use a default if
+// no match. clox's truthy rule: only false and nil are
+// falsy; 0 is truthy. The 'or' pattern works because nil
+// is falsy and any number (including 0) is truthy. This
+// is a useful idiom for "find a config value or use a
+// default."
+fun isThirty(x) { return x == 30; }
+var src = [10, 20, 40, 50];
+var foundOrDefault = array_find(src, isThirty);
+if (foundOrDefault == nil) {
+  print "default:99";
+} else {
+  print "found:" + string(foundOrDefault);
+}
+// The above would print "default:99" since 30 is not in
+// src. To make it print "found:30", use src=[10,20,30,40,50].
+
+print "=== find-index via iteration ===";
+// clox doesn't have array_find_index yet; the 'find the
+// first index of element' idiom is array_find on a
+// side-effecting predicate that returns true at the first
+// match and tracks the index. (This is verbose in clox
+// because clox has no early-exit 'for' with index. A
+// simpler approach: use array_find on a pre-computed
+// index array.)
+var strings = ["foo", "bar", "baz", "qux"];
+// Find the first string longer than 2 chars:
+fun longerThan2(s) { return string_length(s) > 2; }
+var longString = array_find(strings, longerThan2);
+print longString;  // "foo" (3 chars, first match)
+
+print "=== compose with array_filter (Stage 30 + Stage 35) ===";
+// Real-world: filter to a subset, then find the first
+// element of the subset. Stages 30 (filter) + 35 (find)
+// composition.
+fun isEven(x) { return x == 0 or x == 2 or x == 4 or x == 6 or x == 8; }
+var numbers = [1, 3, 4, 7, 8, 9, 10];
+var evens = array_filter(numbers, isEven);
+// Find the first even that is greater than 5:
+fun greaterThan5(x) { return x > 5; }
+var firstBigEven = array_find(evens, greaterThan5);
+print firstBigEven;  // 8 (first even > 5)
+
+print "=== nil sentinel test ===";
+// The 'find(x) == nil' idiom: a clox idiom for "did the
+// find return a match or not?" Compare directly with
+// nil (not false; clox's nil is the unique "no value"
+// sentinel). The result of the comparison is a bool, so
+// we can print it directly.
+fun isOneHundred(x) { return x == 100; }
+var result = array_find([1, 2, 3], isOneHundred);
+print result == nil;  // true (no match found; result is nil)
+
+print "=== strict-error contract ===";
+// Uncommenting any of the next lines would error at runtime:
+//   array_find()                            // no arguments
+//   array_find([1,2,3])                     // no predicate
+//   array_find([1,2,3], f, 99)              // too many args
+//   array_find("not array", f)              // non-array source
+//   array_find([1,2,3], 42)                 // non-function predicate
+//   array_find([1,2,3], fun() { return true; })  // 0-arg predicate
+// The discipline: array_find is strict on arg count (2),
+// on the source being an array, on the predicate being a
+// 1-arg Lox closure, and on the predicate's arity being
+// exactly 1. The predicate's return type is unconstrained
+// (any truthy value — only false and nil in clox — counts
+// as "matched"). The result is the first matched element
+// (a Value, not a bool).

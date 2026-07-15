@@ -1974,6 +1974,68 @@ static Value arrayAllNative(int argCount, Value *args) {
     return BOOL_VAL(true);
 }
 
+/* Stage 35: array_find(arr, predicate) -> value.
+ * Returns the *first element* for which the predicate is
+ * truthy, or nil if no element matches (or if the array
+ * is empty). The natural next native in the
+ * "iterate-and-return-something" pattern after Stage 34
+ * (array_all, which returned a bool). The new wrinkle:
+ * the result is a Value (an element of the array), not a
+ * bool, and the "not found" case returns nil — a special
+ * sentinel that means "no match." This is the first
+ * native that returns a Value that is not a bool, an
+ * array, or a number.
+ *
+ * JS reference: Array.prototype.find(predicate).
+ * Python reference: next(item for item in arr if
+ *   pred(item)), which raises StopIteration if no match;
+ *   clox returns nil instead, which is more ergonomic for
+ *   the "find-or-default" idiom.
+ *
+ * Stack layout for callClosure: [callee, arg1, ...]. */
+static Value arrayFindNative(int argCount, Value *args) {
+    if (argCount != 2) {
+        runtimeError("array_find() takes 2 arguments (%d given).", argCount);
+        return NIL_VAL;
+    }
+    if (!IS_ARRAY(args[0])) {
+        runtimeError("array_find() argument 0 must be an array.");
+        return NIL_VAL;
+    }
+    if (!IS_CLOSURE(args[1])) {
+        runtimeError("array_find() argument 1 must be a function.");
+        return NIL_VAL;
+    }
+    ObjArray *src = AS_ARRAY(args[0]);
+    ObjClosure *predicate = AS_CLOSURE(args[1]);
+    if (predicate->function->arity != 1) {
+        runtimeError("array_find() predicate must take 1 argument (got %d).",
+                     predicate->function->arity);
+        return NIL_VAL;
+    }
+
+    for (int i = 0; i < src->count; i++) {
+        /* Same stack layout as array_map/array_any/array_all:
+         * push predicate (callee) then element (arg 1). */
+        push(OBJ_VAL(predicate));  /* callee */
+        push(src->elements[i]);    /* arg 1 */
+        Value result = callClosureFromNative(predicate, 1);
+        /* Short-circuit: as soon as the predicate returns a
+         * truthy value, return that *element* (not the
+         * result, not a constant bool). clox's truthy rule:
+         * only false and nil are falsy (not 0, not ""). */
+        if (!(IS_BOOL(result) && !AS_BOOL(result)) && !IS_NIL(result)) {
+            return src->elements[i];
+        }
+    }
+
+    /* No match found: return nil. This is the "sentinel"
+     * pattern — nil is the canonical "no match" value in
+     * clox (no Optional, no error). Caller can use
+     * 'find(x) == nil' to test for "no match." */
+    return NIL_VAL;
+}
+
 static Value typeofNative(int argCount, Value *args) {
     if (argCount != 1) {
         runtimeError("typeof() takes 1 argument (%d given).", argCount);
@@ -2206,6 +2268,23 @@ void defineNatives(void) {
     name = copyString("array_all", (int)strlen("array_all"));
     push(OBJ_VAL(name));
     tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayAllNative)));
+    pop();
+
+    /* Stage 35: array_find. Takes an array and a 1-arg Lox
+     * closure (the predicate). Returns the *first element*
+     * for which the predicate is truthy, or nil if no
+     * element matches (or if the array is empty). The
+     * natural next native in the "iterate-and-return-something"
+     * pattern after Stage 34. The new wrinkle: the result
+     * is a Value (an element of the array), not a bool, and
+     * the "not found" case returns nil — a special sentinel
+     * that means "no match." This is the first native that
+     * returns a Value that is not a bool, an array, or a
+     * number. Architecture is the same as Stage 30/31/33/34
+     * (argCount=1). */
+    name = copyString("array_find", (int)strlen("array_find"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayFindNative)));
     pop();
 
     /* Stage 10: more number operations. */

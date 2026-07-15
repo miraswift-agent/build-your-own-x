@@ -4817,6 +4817,203 @@ static void test_array_all_wrong_type(void) {
     free(out);
 }
 
+static void test_array_find_finds_match(void) {
+    /* Basic case: returns the first element for which the
+     * predicate is truthy. [2, 4, 5, 6] with isEven (which
+     * matches {0, 2, 4, 6, 8}) returns 2 (the first match,
+     * NOT 4 or 6). */
+    int exitCode;
+    char *out = runClox(
+        "fun isEven(x) { return x == 0 or x == 2 or x == 4 or x == 6 or x == 8; }\n"
+        "var found = array_find([2, 4, 5, 6], isEven);\n"
+        "print found;\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-find-finds-match: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "2\n")) {
+        fail("stdlib/array-find-finds-match: expected '2' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_find_no_match(void) {
+    /* No element matches the predicate: returns nil. The
+     * 'isOdd' predicate only matches {1, 3, 5}; [2, 4, 6, 8]
+     * has no element in that set, so the result is nil.
+     * The discipline: 'find(x) == nil' tests for "no match." */
+    int exitCode;
+    char *out = runClox(
+        "fun isOdd(x) { return x == 1 or x == 3 or x == 5; }\n"
+        "var found = array_find([2, 4, 6, 8], isOdd);\n"
+        "print found;\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-find-no-match: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "nil\n")) {
+        fail("stdlib/array-find-no-match: expected 'nil' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_find_empty(void) {
+    /* Empty array: returns nil without ever calling the
+     * predicate. (No iterations, no match.) */
+    int exitCode;
+    char *out = runClox(
+        "fun isPositive(x) { return x > 0; }\n"
+        "var found = array_find([], isPositive);\n"
+        "print found;\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-find-empty: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "nil\n")) {
+        fail("stdlib/array-find-empty: expected 'nil' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_find_short_circuits(void) {
+    /* Short-circuit on the first truthy: once a match is
+     * found, the rest of the array is not iterated. We
+     * test this with a side-effecting predicate. If
+     * short-circuit works, only the elements before (and
+     * including) the first match are printed. */
+    int exitCode;
+    char *out = runClox(
+        "fun trace(x) { print \"visit:\" + string(x); return x == 3; }\n"
+        "var found = array_find([1, 2, 3, 4, 5], trace);\n"
+        "print found;\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-find-short-circuits: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "visit:1\n") || !contains(out, "visit:2\n")
+            || !contains(out, "visit:3\n") || contains(out, "visit:4\n")) {
+        fail("stdlib/array-find-short-circuits: expected short-circuit (no visit:4), got '%s'", out);
+    } else if (!contains(out, "3\n")) {
+        fail("stdlib/array-find-short-circuits: expected '3' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_find_first_match_wins(void) {
+    /* When multiple elements match, the first one wins.
+     * [3, 5, 7, 9] with isOdd (which matches {1, 3, 5, 7, 9})
+     * returns 3 (the first match), NOT 5, 7, or 9. */
+    int exitCode;
+    char *out = runClox(
+        "fun isOdd(x) { return x == 1 or x == 3 or x == 5 or x == 7 or x == 9; }\n"
+        "var found = array_find([3, 5, 7, 9], isOdd);\n"
+        "print found;\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-find-first-match: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "3\n")) {
+        fail("stdlib/array-find-first-match: expected '3' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_find_does_not_mutate(void) {
+    /* The source array is not mutated. */
+    int exitCode;
+    char *out = runClox(
+        "var src = [10, 20, 30, 40];\n"
+        "fun isThirty(x) { return x == 30; }\n"
+        "var found = array_find(src, isThirty);\n"
+        "print found;\n"
+        "print \"len:\" + string(array_length(src));\n"
+        "print \"0:\" + string(array_get(src, 0));\n"
+        "print \"3:\" + string(array_get(src, 3));\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-find-does-not-mutate: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "30\n") || !contains(out, "len:4\n")
+            || !contains(out, "0:10\n") || !contains(out, "3:40\n")) {
+        fail("stdlib/array-find-does-not-mutate: expected 30 + src unchanged, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_find_wrong_arg_count(void) {
+    /* 1 arg, 3 args, 0 args. */
+    int exitCode;
+    char *out = runClox(
+        "fun isPositive(x) { return x > 0; }\n"
+        "print array_find([1,2,3]);\n",
+        &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-find-wrong-arg-count-one: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+
+    out = runClox(
+        "fun isPositive(x) { return x > 0; }\n"
+        "print array_find([1,2,3], isPositive, 99);\n",
+        &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-find-wrong-arg-count-three: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+
+    out = runClox("print array_find();\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-find-wrong-arg-count-zero: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_find_wrong_type(void) {
+    /* Source must be array; predicate must be a 1-arg function. */
+    int exitCode;
+    char *out = runClox(
+        "fun isPositive(x) { return x > 0; }\n"
+        "print array_find(\"not an array\", isPositive);\n",
+        &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-find-wrong-type-arr: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+
+    out = runClox("print array_find([1,2,3], 42);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-find-wrong-type-fn: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+
+    out = runClox(
+        "fun zeroArg() { return true; }\n"
+        "print array_find([1,2,3], zeroArg);\n",
+        &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-find-wrong-type-arity: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
 int main(void) {
     test_clock_exists();
     test_number_abs();
@@ -5086,6 +5283,15 @@ int main(void) {
     test_array_all_does_not_mutate();
     test_array_all_wrong_arg_count();
     test_array_all_wrong_type();
+    /* Stage 35: array_find. */
+    test_array_find_finds_match();
+    test_array_find_no_match();
+    test_array_find_empty();
+    test_array_find_short_circuits();
+    test_array_find_first_match_wins();
+    test_array_find_does_not_mutate();
+    test_array_find_wrong_arg_count();
+    test_array_find_wrong_type();
 
     /* Stage 28: array_unique. (the duplicate block — was added by an
      * earlier session along with the Stage 29 ones; keeping it in place
