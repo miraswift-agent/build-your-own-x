@@ -1650,6 +1650,70 @@ static Value arrayUniqueNative(int argCount, Value *args) {
     return OBJ_VAL(result);
 }
 
+/* Stage 40: array_unique_by(arr, keyFn) -> array
+ *
+ * Returns a new array containing only the first occurrence of each
+ * element, where "unique" is determined by the keyFn's return value
+ * rather than the element itself. The keyFn is a 1-arg Lox closure
+ * that takes the element and returns the key. Order is preserved
+ * (the canonical "first-occurrence-of-each-key" rule, matches
+ * lodash's _.uniqBy).
+ *
+ * Implementation: walk the input once; for each element, call the
+ * keyFn to get the key, then scan the keys-so-far and append the
+ * element only if its key is not already present. O(n^2) on the
+ * key comparison; the keyFn is called once per element.
+ *
+ * Architecture: reuses Stage 30's callClosureFromNative(argCount=1)
+ * — the verified 1-arg closure path. No new architecture work. */
+static Value arrayUniqueByNative(int argCount, Value *args) {
+    if (argCount != 2) {
+        runtimeError("array_unique_by() takes 2 arguments (%d given).", argCount);
+        return NIL_VAL;
+    }
+    if (!IS_ARRAY(args[0])) {
+        runtimeError("array_unique_by() argument must be an array.");
+        return NIL_VAL;
+    }
+    if (!IS_CLOSURE(args[1])) {
+        runtimeError("array_unique_by() keyFn must be a function.");
+        return NIL_VAL;
+    }
+    ObjArray *input = AS_ARRAY(args[0]);
+    ObjClosure *keyFn = AS_CLOSURE(args[1]);
+    ObjArray *result = newArray(input->count);
+    push(OBJ_VAL(result));  /* GC: keep alive while filling */
+    /* Stash the keys-so-far in a parallel array on the Lox heap
+     * (a C-side Value array would need a GC-root too; the Lox
+     * heap gives us push/pop GC protection for free). */
+    ObjArray *seenKeys = newArray(input->count);
+    push(OBJ_VAL(seenKeys));  /* GC: keep alive while filling */
+    for (int i = 0; i < input->count; i++) {
+        Value candidate = input->elements[i];
+        /* Compute the key by calling keyFn(candidate). The
+         * stack layout for callClosureFromNative is
+         * [callee, arg1, ..., argN]; push them in order. */
+        push(OBJ_VAL(keyFn));
+        push(candidate);
+        Value key = callClosureFromNative(keyFn, 1);
+        /* Scan the seen keys to check if this key is already present. */
+        bool found = false;
+        for (int j = 0; j < seenKeys->count; j++) {
+            if (valuesEqual(key, seenKeys->elements[j])) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            arrayPush(seenKeys, key);
+            arrayPush(result, candidate);
+        }
+    }
+    pop();  /* seenKeys */
+    pop();  /* result */
+    return OBJ_VAL(result);
+}
+
 /* --- Stage 30: array_filter(arr, predicate) -> array --- */
 /* The first native that invokes user-defined Lox code from C.
  * The shape: 2 args (array, predicate). The predicate is a
@@ -2679,6 +2743,15 @@ void defineNatives(void) {
     name = copyString("array_unique", (int)strlen("array_unique"));
     push(OBJ_VAL(name));
     tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayUniqueNative)));
+    pop();
+
+    /* Stage 40: array_unique_by. Takes an array and a
+     * 1-arg keyFn; deduplicates by the keyFn's return
+     * value (preserving first-occurrence-of-each-key).
+     * Architecture: reuses Stage 30's callClosureFromNative. */
+    name = copyString("array_unique_by", (int)strlen("array_unique_by"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayUniqueByNative)));
     pop();
 
     /* Stage 7: type predicate. */

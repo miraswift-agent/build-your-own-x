@@ -1,0 +1,142 @@
+// Stage 40 example: array-unique-by.lox
+// The "deduplicate by key" primitive. Takes an array and
+// a 1-arg Lox closure (the keyFn: (element) -> key),
+// returns a new array with the first occurrence of each
+// unique key, in order of first-occurrence. The original
+// array is unchanged.
+//
+// This is the natural extension of Stage 28's array_unique
+// (which dedups by element value) to dedup by an arbitrary
+// key. The canonical convention is to preserve the order
+// of first-occurrence-of-each-key (matches lodash's _.uniqBy,
+// not the native JS method; native JS has no uniqBy).
+//
+// Architecture: reuses Stage 30's callClosureFromNative
+// (1-arg closure path, verified in Stages 30-36). No new
+// architecture work.
+
+print "=== basic: dedup by negation ===";
+// [1, -1, 2, -2, 1, -1] by (-x) -> keys [-1, 1, -2, 2,
+// -1, 1] -> first-occurrence-of-each-key
+// -> [1, -1, 2, -2]
+// The by-key behavior: 1 and -1 are distinct (their keys
+// are -1 and 1, both new), so both survive. 2 and -2 are
+// distinct (their keys are -2 and 2, both new), so both
+// survive. The trailing 1 and -1 are dropped because
+// their keys are already in the seen set.
+fun negate(x) { return 0 - x; }
+var arr = [1, -1, 2, -2, 1, -1];
+var deduped = array_unique_by(arr, negate);
+print array_get(deduped, 0);
+print array_get(deduped, 1);
+print array_get(deduped, 2);
+print array_get(deduped, 3);
+print array_length(deduped);
+// Output:
+//   1
+//   -1
+//   2
+//   -2
+//   4
+
+print "=== dedup by first element of pair ===";
+// Pairs: [1, "a"], [2, "b"], [1, "c"], [3, "a"]
+// by first element -> keys 1, 2, 1, 3
+// -> [ [1, "a"], [2, "b"], [3, "a"] ]
+// (The 4th pair [1, "c"] is dropped because key 1 is
+// already in the seen set; its content differs from
+// [1, "a"] but the keyFn only looks at the first
+// element, so it's considered a duplicate.)
+fun first(pair) { return array_get(pair, 0); }
+var pairs = [[1, "a"], [2, "b"], [1, "c"], [3, "a"]];
+var unique = array_unique_by(pairs, first);
+print array_get(array_get(unique, 0), 0);
+print array_get(array_get(unique, 0), 1);
+print array_get(array_get(unique, 1), 0);
+print array_get(array_get(unique, 1), 1);
+print array_get(array_get(unique, 2), 0);
+print array_get(array_get(unique, 2), 1);
+print array_length(unique);
+// Output:
+//   1
+//   a
+//   2
+//   b
+//   3
+//   a
+//   3
+
+print "=== dedup by constant: collapses to first ===";
+// All keys are 0, so only the first element survives.
+fun constant(x) { return 0; }
+var all = [1, 2, 3, 4, 5];
+var collapsed = array_unique_by(all, constant);
+print array_get(collapsed, 0);
+print array_length(collapsed);
+// Output:
+//   1
+//   1
+
+print "=== dedup by identity: same as array_unique ===";
+// When the keyFn is the identity, array_unique_by
+// produces the same result as array_unique. This is
+// the degenerate case (deduplicate by value, not by
+// a derived key), but it's a useful sanity check.
+fun identity(x) { return x; }
+var dupes = [1, 2, 1, 3, 2, 4];
+var noDupes = array_unique_by(dupes, identity);
+print array_get(noDupes, 0);
+print array_get(noDupes, 1);
+print array_get(noDupes, 2);
+print array_get(noDupes, 3);
+print array_length(noDupes);
+// Output:
+//   1
+//   2
+//   3
+//   4
+//   4
+
+print "=== does not mutate source ===";
+// The original array is unchanged. (Verified by
+// printing the original after the call.)
+fun key(x) { return x; }
+var source = [1, 2, 1, 3];
+array_unique_by(source, key);
+print array_get(source, 0);
+print array_get(source, 1);
+print array_get(source, 2);
+print array_get(source, 3);
+print array_length(source);
+// Output:
+//   1
+//   2
+//   1
+//   3
+//   4
+
+print "=== what this stage teaches ===";
+// Stage 40 is the canonical "dedup by custom key"
+// pattern. The use case: when elements are records
+// (or pairs, in clox's case) and the deduplication
+// criterion is a *field* of the record, not the record
+// itself. Without this primitive, the caller would
+// have to:
+//   1. Build a parallel array of keys (manually call
+//      the keyFn for each element)
+//   2. Walk the input and the keys together, checking
+//      if each key is already in a "seen keys" set
+//   3. Build the result array with the surviving
+//      elements
+// That's the "hand-rolled idiom" gap that Stage 40
+// closes. The pattern is general (it works for any
+// keyFn that returns a value supporting valuesEqual),
+// and the order-preservation rule is canonical
+// (matches lodash's _.uniqBy).
+//
+// The architecture: callClosureFromNative(closure,
+// argCount) is the verified 1-arg closure path. The
+// keyFn is called once per element. The seen-keys
+// array lives on the Lox heap (a parallel C array
+// would also need a GC root; using a Lox array gives
+// us push/pop GC protection for free).

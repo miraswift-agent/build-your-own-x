@@ -3634,6 +3634,212 @@ static void test_array_unique_wrong_type(void) {
     free(out);
 }
 
+/* --- Stage 40: array_unique_by(arr, keyFn) -> array --- */
+/* Extends Stage 28's array_unique to deduplicate by a key
+ * function. The keyFn is a 1-arg Lox closure that takes
+ * the element and returns the key. The result is a new
+ * array containing the first occurrence of each unique
+ * key, in the order of first-occurrence. The original
+ * array is not mutated. JS reference: lodash's `_.uniqBy`
+ * (not the native JS method; native JS has no uniqBy).
+ * Python reference: more_itertools.uniqify.
+ * Architecture: reuses Stage 30's callClosureFromNative
+ * (argCount=1, verified path). No new architecture work. */
+static void test_array_unique_by_basic(void) {
+    /* Deduplicate by the negation of the value: [1, -1, 2,
+     * -2, 1, -1] by (-x) -> keys are [-1, 1, -2, 2, -1, 1]
+     * -> first-occurrence-of-each-key
+     * -> [1, -1, 2, -2] (key -1 first, then 1, then -2,
+     * then 2). This tests the "by key" distinction
+     * (the result is different from array_unique, which
+     * would give [1, -1, 2, -2] by the same input — same
+     * result here, but the keyFn is doing the work). */
+    int exitCode;
+    char *out = runClox(
+        "fun keyFn(x) { return 0 - x; }\n"
+        "var arr = [1, -1, 2, -2, 1, -1];\n"
+        "var result = array_unique_by(arr, keyFn);\n"
+        "print array_get(result, 0);\n"
+        "print array_get(result, 1);\n"
+        "print array_get(result, 2);\n"
+        "print array_get(result, 3);\n"
+        "print array_length(result);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-unique-by-basic: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "1\n-1\n2\n-2\n4\n")) {
+        fail("stdlib/array-unique-by-basic: expected '1\\n-1\\n2\\n-2\\n4\\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_unique_by_preserves_order(void) {
+    /* First-occurrence-wins with a keyFn that always
+     * returns the same value: [1, 2, 3, 4] with keyFn
+     * returning 0 -> [1] (all keys are 0, only the first
+     * element survives). This verifies the
+     * "first-occurrence-wins" rule when the keyFn
+     * collapses everything to a single key. */
+    int exitCode;
+    char *out = runClox(
+        "fun keyFn(x) { return 0; }\n"
+        "var arr = [1, 2, 3, 4];\n"
+        "var result = array_unique_by(arr, keyFn);\n"
+        "print array_get(result, 0);\n"
+        "print array_length(result);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-unique-by-preserves-order: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "1\n1\n")) {
+        fail("stdlib/array-unique-by-preserves-order: expected '1\\n1\\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_unique_by_empty(void) {
+    /* Empty array returns empty array, no closure calls. */
+    int exitCode;
+    char *out = runClox(
+        "fun keyFn(x) { return x; }\n"
+        "var result = array_unique_by([], keyFn);\n"
+        "print array_length(result);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-unique-by-empty: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "0\n")) {
+        fail("stdlib/array-unique-by-empty: expected '0\\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_unique_by_single(void) {
+    /* Single-element array returns [that element]. */
+    int exitCode;
+    char *out = runClox(
+        "fun keyFn(x) { return x; }\n"
+        "var result = array_unique_by([42], keyFn);\n"
+        "print array_get(result, 0);\n"
+        "print array_length(result);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-unique-by-single: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "42\n1\n")) {
+        fail("stdlib/array-unique-by-single: expected '42\\n1\\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_unique_by_does_not_mutate(void) {
+    /* The source array is unchanged. */
+    int exitCode;
+    char *out = runClox(
+        "fun keyFn(x) { return x; }\n"
+        "var arr = [1, 2, 1, 3];\n"
+        "array_unique_by(arr, keyFn);\n"
+        "print array_get(arr, 0);\n"
+        "print array_get(arr, 1);\n"
+        "print array_get(arr, 2);\n"
+        "print array_get(arr, 3);\n"
+        "print array_length(arr);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-unique-by-does-not-mutate: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "1\n2\n1\n3\n4\n")) {
+        fail("stdlib/array-unique-by-does-not-mutate: expected source unchanged, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_unique_by_wrong_arg_count(void) {
+    /* array_unique_by takes 2 args (arr, keyFn). 0, 1, 3 args error. */
+    int exitCode;
+    char *out;
+    out = runClox("array_unique_by();\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-unique-by-wrong-arg-count/0: expected nonzero exit, got 0 (output: %s)", out);
+        free(out);
+        return;
+    }
+    free(out);
+    out = runClox("var arr = [1, 2, 3]; fun f(x) { return x; } array_unique_by(arr);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-unique-by-wrong-arg-count/1: expected nonzero exit, got 0 (output: %s)", out);
+        free(out);
+        return;
+    }
+    free(out);
+    out = runClox("var arr = [1, 2, 3]; fun f(x) { return x; } array_unique_by(arr, f, 99);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-unique-by-wrong-arg-count/3: expected nonzero exit, got 0 (output: %s)", out);
+        free(out);
+        return;
+    }
+    free(out);
+    pass();
+}
+
+static void test_array_unique_by_wrong_type(void) {
+    /* array_unique_by on a non-array is a runtime error;
+     * array_unique_by with a non-closure keyFn is a runtime error. */
+    int exitCode;
+    char *out;
+    out = runClox("fun f(x) { return x; } array_unique_by(\"hello\", f);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-unique-by-wrong-type/non-array: expected nonzero exit, got 0 (output: %s)", out);
+        free(out);
+        return;
+    }
+    free(out);
+    out = runClox("var arr = [1, 2, 3]; array_unique_by(arr, 42);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-unique-by-wrong-type/non-closure: expected nonzero exit, got 0 (output: %s)", out);
+        free(out);
+        return;
+    }
+    free(out);
+    pass();
+}
+
+static void test_array_unique_by_typed_keys(void) {
+    /* Deduplicate by an explicit key extractor: array of objects
+     * where the key is the first field. Since clox doesn't have
+     * objects with field access, we use nested arrays instead.
+     * [ [1, "a"], [2, "b"], [1, "c"], [3, "a"] ] by first element
+     * -> keys are 1, 2, 1, 3 -> first-occurrence-of-each-key
+     * -> [ [1, "a"], [2, "b"], [3, "a"] ] */
+    int exitCode;
+    char *out = runClox(
+        "fun keyFn(pair) { return array_get(pair, 0); }\n"
+        "var arr = [[1, \"a\"], [2, \"b\"], [1, \"c\"], [3, \"a\"]];\n"
+        "var result = array_unique_by(arr, keyFn);\n"
+        "print array_get(array_get(result, 0), 0);\n"
+        "print array_get(array_get(result, 0), 1);\n"
+        "print array_get(array_get(result, 1), 0);\n"
+        "print array_get(array_get(result, 1), 1);\n"
+        "print array_get(array_get(result, 2), 0);\n"
+        "print array_get(array_get(result, 2), 1);\n"
+        "print array_length(result);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-unique-by-typed-keys: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "1\na\n2\nb\n3\na\n3\n")) {
+        fail("stdlib/array-unique-by-typed-keys: expected '1\\na\\n2\\nb\\n3\\na\\n3\\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
 /* --- Stage 29: string_split(s, delim, limit) --- */
 /* Extends Stage 13's string_split with a max-split-count
  * parameter. The shape: 2 args (Stage 13) splits on every
@@ -5886,6 +6092,15 @@ int main(void) {
     test_array_unique_mixed_types();
     test_array_unique_wrong_arg_count();
     test_array_unique_wrong_type();
+    /* Stage 40: array_unique_by with keyFn. */
+    test_array_unique_by_basic();
+    test_array_unique_by_preserves_order();
+    test_array_unique_by_empty();
+    test_array_unique_by_single();
+    test_array_unique_by_does_not_mutate();
+    test_array_unique_by_wrong_arg_count();
+    test_array_unique_by_wrong_type();
+    test_array_unique_by_typed_keys();
     /* Stage 29: string_split with limit. */
     test_string_split_with_limit();
     test_string_split_limit_zero();
