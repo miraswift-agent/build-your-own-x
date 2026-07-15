@@ -4488,6 +4488,104 @@ static void test_is_string_wrong_arg_count(void) {
     free(out2);
 }
 
+static void test_is_number_true(void) {
+    /* Stage 46: is_number(value) -> bool. Returns
+     * true iff the value is a number. The 3rd type
+     * predicate (after is_array in Stage 44 and
+     * is_string in Stage 45). Complements typeof:
+     * the caller doesn't have to compare a string
+     * to determine number-ness. */
+    int exitCode;
+    char *out = runClox(
+        "print is_number(0);\n"
+        "print is_number(42);\n"
+        "print is_number(3.14);\n"
+        "print is_number(-7);\n"
+        "print is_number(-3.14);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/is-number-true: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "true\ntrue\ntrue\ntrue\ntrue\n")) {
+        fail("stdlib/is-number-true: expected 'true' 5 times, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_is_number_false(void) {
+    /* is_number() returns false for every non-number
+     * type. The "type predicate" should be exhaustive:
+     * true for numbers, false for everything else. */
+    int exitCode;
+    char *out = runClox(
+        "print is_number(true);\n"
+        "print is_number(false);\n"
+        "print is_number(nil);\n"
+        "print is_number(\"42\");\n"
+        "print is_number(\"hello\");\n"
+        "print is_number(\"\");\n"
+        "print is_number([]);\n"
+        "print is_number([1, 2, 3]);\n"
+        "print is_number(clock);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/is-number-false: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "false\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\n")) {
+        fail("stdlib/is-number-false: expected 'false' 9 times, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_is_number_does_not_coerce(void) {
+    /* is_number() must NOT coerce. The string "42"
+     * is a string, not a number (even though
+     * string_to_number("42") == 42, the inverse
+     * doesn't hold). The empty array is an array,
+     * not a number. The boolean false is a boolean,
+     * not a number. The alternative (truthy coerces)
+     * is JS-style but loses type information. */
+    int exitCode;
+    char *out = runClox(
+        "print is_number(\"42\");\n"
+        "print is_number(\"3.14\");\n"
+        "print is_number([]);\n"
+        "print is_number(false);\n"
+        "print is_number(nil);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/is-number-does-not-coerce: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "false\nfalse\nfalse\nfalse\nfalse\n")) {
+        fail("stdlib/is-number-does-not-coerce: expected 'false' 5 times, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_is_number_wrong_arg_count(void) {
+    /* Defensive: native function should handle wrong
+     * arg count. 0 args, 2 args both error. */
+    int exitCode;
+    char *out1 = runClox("print is_number();\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/is-number-wrong-arg-count-0: expected non-zero exit for 0 args");
+    } else {
+        pass();
+    }
+    free(out1);
+
+    char *out2 = runClox("print is_number(1, 2);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/is-number-wrong-arg-count-2: expected non-zero exit for 2 args");
+    } else {
+        pass();
+    }
+    free(out2);
+}
+
 static void test_array_group_by_three_groups(void) {
     /* Three distinct keys, in the order they first appear.
      * Numbers by signum: keyFn(x) = x > 0 (positive vs.
@@ -7110,6 +7208,10 @@ int main(void) {
     test_is_string_false();
     test_is_string_does_not_coerce();
     test_is_string_wrong_arg_count();
+    test_is_number_true();
+    test_is_number_false();
+    test_is_number_does_not_coerce();
+    test_is_number_wrong_arg_count();
     /* Stage 29: string_split with limit. */
     test_string_split_with_limit();
     test_string_split_limit_zero();

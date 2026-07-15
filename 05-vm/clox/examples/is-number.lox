@@ -1,0 +1,179 @@
+// Stage 46 example: is-number.lox
+// The "is this value a number?" type predicate. The
+// shape: 1 arg, 1 return value (a bool). True iff the
+// value is a number; false for every other type.
+//
+// Stage 46 is the 3rd type predicate after Stage 44's
+// is_array and Stage 45's is_string. The "type
+// predicate" pattern is now established with 3 of 5+
+// natives (is_array, is_string, is_number).
+//
+// Future stages will add is_bool, is_nil, is_function.
+// After all 5+ type predicates are added, the caller
+// has a complete type-checking toolbox.
+
+print "=== is_number on numbers: true ===";
+// is_number returns true for numbers (positive,
+// negative, zero, integer-valued doubles).
+print is_number(0);
+print is_number(42);
+print is_number(3.14);
+print is_number(-7);
+print is_number(-3.14);
+// Output:
+//   true
+//   true
+//   true
+//   true
+//   true
+
+print "=== is_number on non-numbers: false ===";
+// is_number returns false for every non-number type.
+// Test across all primitive types and at least one
+// function (the native clock()).
+print is_number(true);
+print is_number(false);
+print is_number(nil);
+print is_number("42");
+print is_number("hello");
+print is_number("");
+print is_number([]);
+print is_number([1, 2, 3]);
+print is_number(clock);
+// Output:
+//   false
+//   false
+//   false
+//   false
+//   false
+//   false
+//   false
+//   false
+//   false
+
+print "=== is_number does not coerce ===";
+// is_number must NOT coerce. The string "42" is a
+// string, not a number (even though
+// string_to_number("42") == 42, the inverse doesn't
+// hold). The empty array is an array, not a number.
+// The boolean false is a boolean, not a number. The
+// alternative (truthy coerces) is JS-style but loses
+// type information.
+print is_number("42");
+print is_number("3.14");
+print is_number([]);
+print is_number(false);
+print is_number(nil);
+// Output:
+//   false
+//   false
+//   false
+//   false
+//   false
+
+print "=== compose with is_array and is_string ===";
+// Combine is_number with is_array (Stage 44) and
+// is_string (Stage 45) for a complete type dispatch
+// on the most common types. The three natives are
+// complementary:
+// - is_number(x) is the number predicate
+// - is_string(x) is the string predicate (Stage 45)
+// - is_array(x) is the array predicate (Stage 44)
+fun describe(x) {
+    if (is_number(x)) { return "number"; }
+    if (is_string(x)) { return "string"; }
+    if (is_array(x))  { return "array"; }
+    return typeof(x);
+}
+print describe(42);
+print describe("hello");
+print describe([1, 2, 3]);
+print describe(true);
+print describe(nil);
+// Output:
+//   number
+//   string
+//   array
+//   bool
+//   nil
+
+print "=== pattern: arithmetic with type guard ===";
+// Real-world use case: a function that does
+// arithmetic but wants to guard against non-numeric
+// input. Without is_number, the caller would have to
+// use typeof(x) == "number" or string_to_number + a
+// validity check. Stage 46 makes it ergonomic:
+// is_number(x) is the predicate.
+fun safe_double(x) {
+    if (!is_number(x)) {
+        return nil;
+    }
+    return x * 2;
+}
+print safe_double(21);
+print safe_double(3.14);
+print safe_double("hello");
+print safe_double([1, 2, 3]);
+print safe_double(nil);
+// Output:
+//   42
+//   6.28
+//   nil
+//   nil
+//   nil
+
+print "=== pattern: sum of array with type guard ===";
+// Another use case: summing a numeric array but
+// guarding against mixed-type input. Stage 46 +
+// Stage 31's array_reduce.
+fun safe_sum(arr) {
+    var total = 0;
+    for (var i = 0; i < array_length(arr); i = i + 1) {
+        var item = array_get(arr, i);
+        if (is_number(item)) {
+            total = total + item;
+        }
+    }
+    return total;
+}
+print safe_sum([1, 2, 3, 4, 5]);
+print safe_sum([1, "two", 3, "four", 5]);
+print safe_sum([]);
+print safe_sum(["a", "b", "c"]);
+// Output:
+//   15
+//   9
+//   0
+//   0
+
+print "=== what this stage teaches ===";
+// (a) "The type predicate family is now 3-strong:
+//     is_array (Stage 44), is_string (Stage 45),
+//     is_number (Stage 46). The pattern is
+//     established. Future stages will add is_bool,
+//     is_nil, is_function.
+//
+// (b) "Numbers in clox are doubles, not ints." The
+//     is_number(x) check passes for any double —
+//     0, 42, 3.14, -7, etc. The alternative (separate
+//     int and float predicates) is JS-style but
+//     clox has only one number type.
+//
+// (c) "Type predicates don't coerce" — the discipline
+//     from Stages 44/45 carries forward. The string
+//     "42" is a string, not a number (even though
+//     string_to_number("42") == 42, the inverse
+//     doesn't hold).
+//
+// (d) "Type predicates compose with control flow" —
+//     the canonical use case is "guard against
+//     non-numeric input before arithmetic". Stage 46
+//     makes it ergonomic: is_number(x) is the
+//     predicate.
+//
+// (e) "Bug caught: 0 bugs in Stage 46" — the Stage 44
+//     push/pop lesson was applied. The new is_number
+//     registration has 1 push and 1 pop, balanced
+//     (vs. Stage 44's duplicate-pop bug that broke
+//     221 tests). Stage 46 is 3rd-consec-zero-bug in
+//     the new streak.

@@ -2720,6 +2720,26 @@ static Value isStringNative(int argCount, Value *args) {
     return BOOL_VAL(false);
 }
 
+static Value isNumberNative(int argCount, Value *args) {
+    if (argCount != 1) {
+        runtimeError("is_number() takes 1 argument (%d given).", argCount);
+        return NIL_VAL;
+    }
+    /* The "type predicate" pattern (Stage 46, after
+     * Stage 44's is_array and Stage 45's is_string).
+     * Inspect the Value's type tag directly. For
+     * clox, a number is represented as a double
+     * inside a Value (not an Obj). The alternative
+     * is a separate "is_number" VM opcode, but a
+     * native keeps the VM unchanged and is consistent
+     * with typeof() and is_array() and is_string().
+     * Returns a bool (BOOL_VAL, not OBJ_VAL). */
+    if (IS_NUMBER(args[0])) {
+        return BOOL_VAL(true);
+    }
+    return BOOL_VAL(false);
+}
+
 void defineNatives(void) {
     /* Existing from stage 05. */
     ObjString *name = copyString("clock", (int)strlen("clock"));
@@ -3172,5 +3192,19 @@ void defineNatives(void) {
     name = copyString("is_string", (int)strlen("is_string"));
     push(OBJ_VAL(name));
     tableSet(&vm.globals, name, OBJ_VAL(newNative(isStringNative)));
+    pop();
+
+    /* Stage 46: type predicate. is_number(value)
+     * returns true iff the value is a number. The
+     * 3rd type predicate after Stage 44's is_array
+     * and Stage 45's is_string. Closes a gap (the
+     * caller had to use typeof(x) == "number" to
+     * determine number-ness). ~10 lines, no new
+     * architecture, no user-code dispatch. The
+     * push/pop count is balanced: 1 push for the
+     * name, 1 pop after tableSet. */
+    name = copyString("is_number", (int)strlen("is_number"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(isNumberNative)));
     pop();
 }
