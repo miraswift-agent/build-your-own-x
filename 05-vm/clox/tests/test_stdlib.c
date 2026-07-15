@@ -2549,6 +2549,140 @@ static void test_string_repeat_wrong_arg_count(void) {
     free(out);
 }
 
+/* --- Stage 22 tests: string_pad_start --- */
+
+static void test_string_pad_start_basic(void) {
+    /* string_pad_start(s, width, fill) -> string. Pad s on the left
+     * with copies of fill until the result is at least width chars.
+     * Default Python convention: s already wider than width is unchanged. */
+    int exitCode;
+    char *out = runClox(
+        "print string_pad_start(\"5\", 3, \"0\");\n"   /* "005" */
+        "print string_pad_start(\"42\", 5, \"0\");\n"  /* "00042" */
+        "print string_pad_start(\"x\", 4, \"ab\");\n"  /* "abax" */
+        "print string_pad_start(\"hi\", 6, \"-=\");\n",/* "-=-=hi" (width 6, fill "-=" repeats 2x = 4 chars + "hi" = 6) */
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/pad-start: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "005\n")
+            || !contains(out, "00042\n")
+            || !contains(out, "abax\n")
+            || !contains(out, "-=-=hi\n")) {
+        fail("stdlib/pad-start: expected padded strings in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_pad_start_already_wide(void) {
+    /* s already >= width -> return s unchanged (no truncation, no error). */
+    int exitCode;
+    char *out = runClox(
+        "print string_pad_start(\"hello\", 3, \"0\");\n"   /* "hello" */
+        "print string_pad_start(\"abc\", 3, \"x\");\n",    /* "abc" (exact) */
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/pad-start-wide: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "hello\n")
+            || !contains(out, "abc\n")
+            || contains(out, "00hello")
+            || contains(out, "xabc")) {
+        fail("stdlib/pad-start-wide: expected s unchanged when wide enough, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_pad_start_empty_s(void) {
+    /* Empty s -> result is just fill repeated to width. */
+    int exitCode;
+    char *out = runClox(
+        "var r = string_pad_start(\"\", 4, \"x\");\n"
+        "print string_length(r);\n"
+        "print(r);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/pad-start-empty-s: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "4\n")
+            || !contains(out, "xxxx\n")) {
+        fail("stdlib/pad-start-empty-s: expected 'xxxx' length 4, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_pad_start_width_zero(void) {
+    /* width = 0 -> s unchanged. The "pad to zero" idiom. */
+    int exitCode;
+    char *out = runClox(
+        "var r = string_pad_start(\"hi\", 0, \"x\");\n"
+        "print(r);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/pad-start-width-zero: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "hi\n")
+            || contains(out, "xhi")) {
+        fail("stdlib/pad-start-width-zero: expected 'hi' unchanged, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_pad_start_negative_errors(void) {
+    /* Negative width -> runtime error (matches string_repeat /
+     * string_substring's discipline: bad numeric input is a runtime
+     * error, not silent). */
+    int exitCode;
+    char *out = runClox("print string_pad_start(\"x\", -1, \"0\");\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/pad-start-negative: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_pad_start_empty_fill_errors(void) {
+    /* Empty fill -> runtime error. Padding with nothing is nonsensical;
+     * if you wanted to truncate, use string_substring. */
+    int exitCode;
+    char *out = runClox("print string_pad_start(\"x\", 5, \"\");\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/pad-start-empty-fill: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_pad_start_wrong_type(void) {
+    /* Non-string first arg -> runtime error. */
+    int exitCode;
+    char *out = runClox("print string_pad_start(42, 5, \"0\");\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/pad-start-wrong-type-s: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_pad_start_wrong_arg_count(void) {
+    /* Wrong arity (1 arg) -> runtime error. */
+    int exitCode;
+    char *out = runClox("print string_pad_start(\"x\");\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/pad-start-wrong-arg-count: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
 int main(void) {
     test_clock_exists();
     test_number_abs();
@@ -2692,6 +2826,16 @@ int main(void) {
     test_string_repeat_negative_errors();
     test_string_repeat_wrong_type();
     test_string_repeat_wrong_arg_count();
+
+    /* Stage 22: string_pad_start. */
+    test_string_pad_start_basic();
+    test_string_pad_start_already_wide();
+    test_string_pad_start_empty_s();
+    test_string_pad_start_width_zero();
+    test_string_pad_start_negative_errors();
+    test_string_pad_start_empty_fill_errors();
+    test_string_pad_start_wrong_type();
+    test_string_pad_start_wrong_arg_count();
 
     printf("%d passed, %d failed\n", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;

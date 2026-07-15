@@ -429,6 +429,86 @@ static Value stringRepeatNative(int argCount, Value *args) {
     return OBJ_VAL(result);
 }
 
+/* --- Stage 22: string_pad_start --- */
+/* string_pad_start(s, width, fill) -> string. Pad s on the left with
+ * copies of fill until the result is at least width characters.
+ * If s->length >= width, returns s unchanged (Python convention:
+ * never truncate, never error on "already wide enough"). Negative
+ * width is a runtime error (matches string_repeat / string_substring's
+ * discipline: bad numeric input is a runtime error, not silent).
+ * Empty fill is a runtime error: padding with nothing is
+ * nonsensical; if the caller wanted to truncate, they should use
+ * string_substring. Fractional width is truncated to int (matches
+ * string_repeat / string_substring's cast). Single allocation: one
+ * output buffer of (width) bytes, filled in three passes (fill
+ * copies first, then s copy) — no intermediate ObjStrings, no GC
+ * pressure. If width > s->length, the total length is width and we
+ * repeat fill to make up the difference. Overflow guard: the total
+ * output size is bounded by width (a runtime int), which is already
+ * bounded by INT_MAX. */
+static Value stringPadStartNative(int argCount, Value *args) {
+    if (argCount != 3) {
+        runtimeError("string_pad_start() takes 3 arguments (%d given).", argCount);
+        return NIL_VAL;
+    }
+    if (!IS_STRING(args[0])) {
+        runtimeError("string_pad_start() argument 0 must be a string.");
+        return NIL_VAL;
+    }
+    if (!IS_NUMBER(args[1])) {
+        runtimeError("string_pad_start() argument 1 must be a number.");
+        return NIL_VAL;
+    }
+    if (!IS_STRING(args[2])) {
+        runtimeError("string_pad_start() argument 2 must be a string.");
+        return NIL_VAL;
+    }
+    ObjString *s = AS_STRING(args[0]);
+    double wD = AS_NUMBER(args[1]);
+    ObjString *fill = AS_STRING(args[2]);
+    int width = (int)wD;
+    if (wD < 0) {
+        runtimeError("string_pad_start() argument 1 must be non-negative.");
+        return NIL_VAL;
+    }
+    if (fill->length == 0) {
+        runtimeError("string_pad_start() argument 2 must be a non-empty string.");
+        return NIL_VAL;
+    }
+    if (s->length >= width) {
+        /* Already wide enough; return s unchanged. Returning the
+         * input ObjString pointer is the same pattern string_substring
+         * uses for its no-clamp-needed path. */
+        return OBJ_VAL(s);
+    }
+    /* Need to pad: total length is width, of which s->length is the
+     * tail and (width - s->length) is the prefix of fill copies.
+     * (width - s->length) is positive because of the s->length >=
+     * width check above, and bounded by width (an int). */
+    int padLen = width - s->length;
+    char *buf = ALLOCATE(char, width + 1);
+    /* Fill the prefix with copies of fill. padLen / fill->length
+     * is the number of full copies; padLen % fill->length is the
+     * remainder (a partial fill at the end of the prefix). */
+    int fullCopies = padLen / fill->length;
+    int remainder = padLen - fullCopies * fill->length;
+    int pos = 0;
+    for (int i = 0; i < fullCopies; i++) {
+        memcpy(buf + pos, fill->chars, fill->length);
+        pos += fill->length;
+    }
+    if (remainder > 0) {
+        memcpy(buf + pos, fill->chars, remainder);
+        pos += remainder;
+    }
+    /* Append s. */
+    memcpy(buf + pos, s->chars, s->length);
+    buf[width] = '\0';
+    ObjString *result = copyString(buf, width);
+    FREE_ARRAY(char, buf, width + 1);
+    return OBJ_VAL(result);
+}
+
 static Value numberFloorNative(int argCount, Value *args) {
     if (argCount != 1) {
         runtimeError("number_floor() takes 1 argument (%d given).", argCount);
@@ -1294,6 +1374,12 @@ void defineNatives(void) {
     name = copyString("string_repeat", (int)strlen("string_repeat"));
     push(OBJ_VAL(name));
     tableSet(&vm.globals, name, OBJ_VAL(newNative(stringRepeatNative)));
+    pop();
+
+    /* Stage 22: string_pad_start. */
+    name = copyString("string_pad_start", (int)strlen("string_pad_start"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(stringPadStartNative)));
     pop();
 
     /* Stage 13: string_split / string_join — compose the new array

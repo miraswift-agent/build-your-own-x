@@ -1,0 +1,10 @@
+// Stage 22: string_pad_start — print a vertical list of numbers, all
+// padded to the same width on the left. Demonstrates the natural use
+// case: zero-padded numeric formatting without a sprintf-style API.
+var items = [1, 22, 333, 4444, 55555];
+var maxLen = 5;  // max string_length of any padded item
+for (var i = 0; i < array_length(items); i = i + 1) {
+    var s = string(items[i]);
+    var padded = string_pad_start(s, maxLen, "0");
+    print(padded);
+}
