@@ -1,0 +1,203 @@
+// Stage 50 example: array-zip-longest.lox
+// Like Stage 37's array_zip, but pads the shorter
+// array with a default. The "pad with default"
+// semantic is a new pattern (Stage 50 introduces an
+// optional 3rd arg to a native).
+//
+// The shape: 2 or 3 args (the optional 3rd is the
+// fill value; defaults to nil). The new wrinkle:
+// first time a clox native has an optional positional
+// parameter. The discipline: handle the optional arg
+// correctly (if argCount > 2, use args[2]; else use
+// NIL_VAL as the default).
+
+print "=== array_zip_longest without fill (default nil) ===";
+// When the 3rd arg is absent, the fill defaults to
+// nil. The result is the longer array's length, with
+// the shorter's missing slots filled with nil.
+var a1 = [1, 2, 3];
+var a2 = ["a", "b"];
+var zipped = array_zip_longest(a1, a2);
+fun s(v) { if (is_string(v)) { return v; } if (is_nil(v)) { return "nil"; } if (is_array(v)) { return "arr"; } return string(v); }
+for (var i = 0; i < array_length(zipped); i = i + 1) {
+    print s(array_get(array_get(zipped, i), 0)) + "-" + s(array_get(array_get(zipped, i), 1));
+}
+// Output:
+//   1-a
+//   2-b
+//   3-nil
+
+print "=== array_zip_longest with a fill value ===";
+// When the 3rd arg is provided, the fill replaces
+// nil. Useful for padding the shorter array with a
+// sentinel value.
+var a3 = [1, 2, 3, 4];
+var a4 = [10, 20];
+var zipped2 = array_zip_longest(a3, a4, 0);
+for (var i = 0; i < array_length(zipped2); i = i + 1) {
+    print s(array_get(array_get(zipped2, i), 0)) + "-" + s(array_get(array_get(zipped2, i), 1));
+}
+// Output:
+//   1-10
+//   2-20
+//   3-0
+//   4-0
+
+print "=== array_zip_longest with a string fill ===";
+// The fill can be any type: number, string, bool,
+// array. The fill's type is preserved.
+var a5 = ["alpha", "beta"];
+var a6 = [1];
+var zipped3 = array_zip_longest(a5, a6, "X");
+for (var i = 0; i < array_length(zipped3); i = i + 1) {
+    print s(array_get(array_get(zipped3, i), 0)) + "-" + s(array_get(array_get(zipped3, i), 1));
+}
+// Output:
+//   alpha-1
+//   beta-X
+
+print "=== array_zip_longest with equal-length arrays ===";
+// When both arrays are the same length, the fill is
+// never used. The result equals array_zip (Stage
+// 37).
+var a7 = [1, 2, 3];
+var a8 = ["a", "b", "c"];
+var zipped4 = array_zip_longest(a7, a8, "X");
+for (var i = 0; i < array_length(zipped4); i = i + 1) {
+    print s(array_get(array_get(zipped4, i), 0)) + "-" + s(array_get(array_get(zipped4, i), 1));
+}
+// Output:
+//   1-a
+//   2-b
+//   3-c
+
+print "=== array_zip_longest with empty arrays ===";
+// When at least one array is empty, the result is
+// the longer array with the shorter's slots filled.
+// Two empty arrays produce an empty result.
+var zipped5 = array_zip_longest([1, 2, 3], [], 0);
+for (var i = 0; i < array_length(zipped5); i = i + 1) {
+    print s(array_get(array_get(zipped5, i), 0)) + "-" + s(array_get(array_get(zipped5, i), 1));
+}
+var zipped6 = array_zip_longest([], [], 0);
+print array_length(zipped6);
+var zipped7 = array_zip_longest([], [1, 2], 0);
+for (var i = 0; i < array_length(zipped7); i = i + 1) {
+    print s(array_get(array_get(zipped7, i), 0)) + "-" + s(array_get(array_get(zipped7, i), 1));
+}
+// Output:
+//   1-0
+//   2-0
+//   3-0
+//   0
+//   0-1
+//   0-2
+
+print "=== pattern: pad a table to uniform rows ===";
+// Real-world use case: a list of rows with
+// different lengths. The caller wants a uniform
+// grid (every row has the same number of columns).
+// array_zip_longest makes this ergonomic: zip
+// each row with a fill, and the result is a
+// uniform grid.
+var row1 = [1, 2, 3];
+var row2 = [4, 5];
+var row3 = [6, 7, 8, 9];
+var zipped_rows = array_zip_longest(row1, row2, 0);
+for (var i = 0; i < array_length(zipped_rows); i = i + 1) {
+    print s(array_get(array_get(zipped_rows, i), 0)) + "-" + s(array_get(array_get(zipped_rows, i), 1));
+}
+var zipped_rows2 = array_zip_longest(zipped_rows, row3, 0);
+for (var i = 0; i < array_length(zipped_rows2); i = i + 1) {
+    print s(array_get(array_get(zipped_rows2, i), 0)) + "-" + s(array_get(array_get(zipped_rows2, i), 1));
+}
+// Output:
+//   1-4
+//   2-5
+//   3-0
+//   arr-6
+//   arr-7
+//   arr-8
+//   0-9
+
+print "=== pattern: build a key-value lookup ===";
+// Real-world use case: a list of keys and a list
+// of values with different lengths. The caller
+// wants a key-value lookup where missing values
+// are filled with a default. array_zip_longest
+// makes this ergonomic: zip the keys with the
+// values, and the result is a list of [key,
+// value] pairs.
+var keys = ["name", "age", "city"];
+var values = ["Alice", 30];
+var pairs = array_zip_longest(keys, values, "unknown");
+fun describe(pair) {
+    return s(array_get(pair, 0)) + "=" + s(array_get(pair, 1));
+}
+for (var i = 0; i < array_length(pairs); i = i + 1) {
+    print describe(array_get(pairs, i));
+}
+// Output:
+//   name=Alice
+//   age=30
+//   city=unknown
+
+print "=== what this stage teaches ===";
+// (a) "First clox native with an optional positional
+//     parameter" — array_zip_longest takes 2 or 3
+//     args. The 3rd arg is the fill value; defaults
+//     to nil when absent. The discipline: handle
+//     the optional arg correctly (if argCount > 2,
+//     use args[2]; else use NIL_VAL as the default).
+//
+// (b) "Stage 44's push/pop lesson was applied for
+//     the 6th consecutive stage" — 0 impl bugs in
+//     Stage 50. The new array_zip_longest
+//     registration has 1 push and 1 pop, balanced
+//     (vs. Stage 44's duplicate-pop bug). The
+//     discipline: **count pushes and pops after
+//     every registration.** The 5-second cost of
+//     counting is much less than the cost of a
+//     221-test failure. Stage 50 is 7th-consec-
+//     zero-impl-bug in the new streak.
+//
+// (c) "Test-bug caught: 18th-19th test-bugs in
+//     50-stage history." The first test had a
+//     variable-name typo (`out` instead of `out1`)
+//     and the second test had a `string()` only-
+//     takes-numbers miss. The fix was a test edit.
+//     The discipline: **clox's `string()` is
+//     number-to-string only** (Stage 17 lesson);
+//     for booleans/strings/nils, use a separate
+//     helper or print statements.
+//
+// (d) "Example-bug discipline applied" — 0 example
+//     bugs caught in this turn (the example is
+//     fresh). The discipline: **verify the example
+//     output against the comments BEFORE commit**
+//     (13-occurrence pattern, the worst-class bug).
+//
+// (e) "Type-predicate family is now COMPLETE" —
+//     Stages 44-49 added is_array, is_string,
+//     is_number, is_bool, is_nil, is_function. The
+//     Stage 50 example uses is_string and is_nil to
+//     pretty-print a value. **The type-predicate
+//     pattern enables ergonomic type-aware code.**
+//
+// (f) "Parallel arrays GC pattern" — Stage 42
+//     lesson. The result array is pushed BEFORE
+//     the inner loop, so any allocation in the
+//     inner loop (e.g., the pair array) doesn't
+//     sweep away the result. The pair array is
+//     pushed and popped within each iteration,
+//     keeping the GC accounting balanced.
+//
+// (g) "Optional 3rd arg pattern" — for the first
+//     time, a clox native has an optional
+//     positional parameter. The pattern is reusable
+//     for future natives (e.g., `array_repeat(arr,
+//     n, separator?)`, `array_join(arr,
+//     separator?)`, `string_pad_start(s, n,
+//     char?)`). The discipline: **handle the
+//     optional arg correctly; use NIL_VAL as the
+//     default.**

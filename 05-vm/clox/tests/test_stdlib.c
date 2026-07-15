@@ -4908,6 +4908,137 @@ static void test_is_function_wrong_arg_count(void) {
     free(out2);
 }
 
+static void test_array_zip_longest_basic(void) {
+    /* Stage 50: array_zip_longest(arr1, arr2,
+     * fill?) -> array. Like Stage 37's array_zip
+     * but pads the shorter with a default. Without
+     * a 3rd arg, the fill is nil. Mirrors
+     * Python's itertools.zip_longest() and JS's
+     * Lodash's zipWithDefault. */
+    int exitCode;
+    char *out = runClox(
+        "fun s(v) { if (is_string(v)) { return v; } if (is_nil(v)) { return \"nil\"; } return string(v); }\n"
+        "var a1 = [1, 2, 3];\n"
+        "var a2 = [\"a\", \"b\"];\n"
+        "var zipped = array_zip_longest(a1, a2);\n"
+        "for (var i = 0; i < array_length(zipped); i = i + 1) {\n"
+        "    print s(array_get(array_get(zipped, i), 0)) + \"-\" + s(array_get(array_get(zipped, i), 1));\n"
+        "}\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-zip-longest-basic: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "1-a\n2-b\n3-nil\n")) {
+        fail("stdlib/array-zip-longest-basic: expected '1-a\\n2-b\\n3-nil\\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_zip_longest_with_fill(void) {
+    /* With a 3rd arg, the fill replaces nil. */
+    int exitCode;
+    char *out = runClox(
+        "fun s(v) { if (is_string(v)) { return v; } if (is_nil(v)) { return \"nil\"; } return string(v); }\n"
+        "var a1 = [1, 2, 3, 4];\n"
+        "var a2 = [10, 20];\n"
+        "var zipped = array_zip_longest(a1, a2, 0);\n"
+        "for (var i = 0; i < array_length(zipped); i = i + 1) {\n"
+        "    print s(array_get(array_get(zipped, i), 0)) + \"-\" + s(array_get(array_get(zipped, i), 1));\n"
+        "}\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-zip-longest-with-fill: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "1-10\n2-20\n3-0\n4-0\n")) {
+        fail("stdlib/array-zip-longest-with-fill: expected '1-10\\n2-20\\n3-0\\n4-0\\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_zip_longest_equal_length(void) {
+    /* When both arrays are the same length, no fill
+     * is needed. The result equals array_zip. */
+    int exitCode;
+    char *out = runClox(
+        "fun s(v) { if (is_string(v)) { return v; } if (is_nil(v)) { return \"nil\"; } return string(v); }\n"
+        "var a1 = [1, 2, 3];\n"
+        "var a2 = [\"a\", \"b\", \"c\"];\n"
+        "var zipped = array_zip_longest(a1, a2, \"X\");\n"
+        "for (var i = 0; i < array_length(zipped); i = i + 1) {\n"
+        "    print s(array_get(array_get(zipped, i), 0)) + \"-\" + s(array_get(array_get(zipped, i), 1));\n"
+        "}\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-zip-longest-equal-length: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "1-a\n2-b\n3-c\n")) {
+        fail("stdlib/array-zip-longest-equal-length: expected '1-a\\n2-b\\n3-c\\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_zip_longest_empty(void) {
+    /* When at least one array is empty, the result
+     * is the longer array with the shorter's slots
+     * filled. Two empty arrays produce an empty
+     * result. */
+    int exitCode;
+    char *out1 = runClox(
+        "fun s(v) { if (is_string(v)) { return v; } if (is_nil(v)) { return \"nil\"; } return string(v); }\n"
+        "var a1 = [1, 2, 3];\n"
+        "var a2 = [];\n"
+        "var zipped = array_zip_longest(a1, a2, 0);\n"
+        "for (var i = 0; i < array_length(zipped); i = i + 1) {\n"
+        "    print s(array_get(array_get(zipped, i), 0)) + \"-\" + s(array_get(array_get(zipped, i), 1));\n"
+        "}\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-zip-longest-empty-1: expected exit 0, got %d (output: %s)", exitCode, out1);
+    } else if (!contains(out1, "1-0\n2-0\n3-0\n")) {
+        fail("stdlib/array-zip-longest-empty-1: expected '1-0\\n2-0\\n3-0\\n', got '%s'", out1);
+    } else {
+        pass();
+    }
+    free(out1);
+
+    char *out2 = runClox(
+        "var zipped = array_zip_longest([], [], 0);\n"
+        "print array_length(zipped);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-zip-longest-both-empty: expected exit 0, got %d (output: %s)", exitCode, out2);
+    } else if (!contains(out2, "0\n")) {
+        fail("stdlib/array-zip-longest-both-empty: expected '0\\n', got '%s'", out2);
+    } else {
+        pass();
+    }
+    free(out2);
+}
+
+static void test_array_zip_longest_wrong_arg_count(void) {
+    /* Defensive: 1 arg, 4 args both error. 2-3 args
+     * are valid. */
+    int exitCode;
+    char *out1 = runClox("var z = array_zip_longest([1, 2]);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-zip-longest-wrong-arg-count-1: expected non-zero exit for 1 arg");
+    } else {
+        pass();
+    }
+    free(out1);
+
+    char *out2 = runClox("var z = array_zip_longest([1], [2], 0, 99);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-zip-longest-wrong-arg-count-4: expected non-zero exit for 4 args");
+    } else {
+        pass();
+    }
+    free(out2);
+}
+
 static void test_array_group_by_three_groups(void) {
     /* Three distinct keys, in the order they first appear.
      * Numbers by signum: keyFn(x) = x > 0 (positive vs.
@@ -7546,6 +7677,11 @@ int main(void) {
     test_is_function_false();
     test_is_function_does_not_coerce();
     test_is_function_wrong_arg_count();
+    test_array_zip_longest_basic();
+    test_array_zip_longest_with_fill();
+    test_array_zip_longest_equal_length();
+    test_array_zip_longest_empty();
+    test_array_zip_longest_wrong_arg_count();
     /* Stage 29: string_split with limit. */
     test_string_split_with_limit();
     test_string_split_limit_zero();

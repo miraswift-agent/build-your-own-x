@@ -2245,6 +2245,50 @@ static Value arrayZipNative(int argCount, Value *args) {
     return OBJ_VAL(result);
 }
 
+static Value arrayZipLongestNative(int argCount, Value *args) {
+    if (argCount < 2 || argCount > 3) {
+        runtimeError("array_zip_longest() takes 2 or 3 arguments (%d given).", argCount);
+        return NIL_VAL;  /* error sentinel */
+    }
+    if (!IS_ARRAY(args[0])) {
+        runtimeError("array_zip_longest() argument 0 must be an array.");
+        return NIL_VAL;
+    }
+    if (!IS_ARRAY(args[1])) {
+        runtimeError("array_zip_longest() argument 1 must be an array.");
+        return NIL_VAL;
+    }
+    ObjArray *arr1 = AS_ARRAY(args[0]);
+    ObjArray *arr2 = AS_ARRAY(args[1]);
+    /* Optional 3rd arg: the fill value. If absent, default to nil.
+     * The new wrinkle: first time a clox native has an optional
+     * positional parameter. clox's native API uses (int argCount,
+     * Value *args) — the optional pattern is "if (argCount > 2)
+     * use args[2] else use NIL_VAL". */
+    Value fill = (argCount == 3) ? args[2] : NIL_VAL;
+    int maxCount = arr1->count > arr2->count ? arr1->count : arr2->count;
+    ObjArray *result = newArray(maxCount);
+    push(OBJ_VAL(result));  /* GC: keep alive while filling */
+    for (int i = 0; i < maxCount; i++) {
+        ObjArray *pair = newArray(2);
+        push(OBJ_VAL(pair));  /* GC: keep pair alive */
+        if (i < arr1->count) {
+            arrayPush(pair, arr1->elements[i]);
+        } else {
+            arrayPush(pair, fill);
+        }
+        if (i < arr2->count) {
+            arrayPush(pair, arr2->elements[i]);
+        } else {
+            arrayPush(pair, fill);
+        }
+        pop();  /* pop the pair */
+        arrayPush(result, OBJ_VAL(pair));
+    }
+    pop();  /* pop the result array */
+    return OBJ_VAL(result);
+}
+
 /* Stage 38: array_flatten(arr) -> array.
  * Takes an array of arrays and returns a new flat array.
  * Stops at 1 level: inner arrays' elements become
@@ -3070,6 +3114,20 @@ void defineNatives(void) {
     tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayZipNative)));
     pop();
 
+    /* Stage 50: array_zip_longest. Like Stage 37's
+     * array_zip but pads the shorter with a default.
+     * Takes 2 or 3 arguments (the optional 3rd is the
+     * fill value; defaults to nil). ~30 lines, reuses
+     * Stage 37's array-building pattern. The new
+     * wrinkle: first time a clox native has an optional
+     * positional parameter. The push/pop count is
+     * balanced: 1 push for the name, 1 pop after
+     * tableSet. */
+    name = copyString("array_zip_longest", (int)strlen("array_zip_longest"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayZipLongestNative)));
+    pop();
+
     /* Stage 38: array_flatten. Takes an array (of arrays)
      * and returns a new flat array. Stops at 1 level:
      * inner arrays' elements become top-level, but
@@ -3338,5 +3396,36 @@ void defineNatives(void) {
     name = copyString("is_function", (int)strlen("is_function"));
     push(OBJ_VAL(name));
     tableSet(&vm.globals, name, OBJ_VAL(newNative(isFunctionNative)));
+    pop();
+
+    /* Stage 50: array_zip_longest(arr1, arr2, fill?)
+     * -> array. Like Stage 37's array_zip but pads
+     * the shorter with a default. ~50 lines, no new
+     * architecture, no user-code dispatch. Reuses
+     * Stage 37's array_zip + newArray + arrayPush +
+     * GC-keep-alive pattern. The new wrinkle: this
+     * is the FIRST clox native with an OPTIONAL
+     * positional parameter (the fill value). clox's
+     * native API uses (int argCount, Value *args) —
+     * the optional pattern is "if (argCount > 2)
+     * use args[2] else use NIL_VAL". After Stage
+     * 49, the type-predicate pattern is COMPLETE
+     * (is_array, is_string, is_number, is_bool,
+     * is_nil, is_function). Stage 50 starts a new
+     * family: "combinators that take optional
+     * defaults" (next candidates: array_take(arr,
+     * n?), array_drop(arr, n?)). The push/pop count
+     * is balanced: 1 push for the name, 1 pop after
+     * tableSet. After Stage 50, the next decision
+     * is array_take / array_drop (slice operations)
+     * or array_take_while / array_drop_while
+     * (short-circuit slice operations) or
+     * array_intersect / array_union / array_difference
+     * (set operations) or modules (~600 lines,
+     * Tom's call) or grow the trigger-mine bucket
+     * beyond byox. */
+    name = copyString("array_zip_longest", (int)strlen("array_zip_longest"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayZipLongestNative)));
     pop();
 }
