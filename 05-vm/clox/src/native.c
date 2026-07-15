@@ -217,6 +217,87 @@ static Value stringToNumberNative(int argCount, Value *args) {
     }
 }
 
+/* --- Stage 26: string_to_int --- */
+/* string_to_int(s) -> number. A NEW native (not an extension of
+ * string_to_number) — distinct conceptual purpose: integer-only
+ * parse. Always uses strtol with base 10 (no float path, no base
+ * parameter). Closes the '42 vs 42.0' question: string_to_int("42.5")
+ * errors (strtol stops at the '.', so endptr == startptr is false,
+ * but mid-string stop is treated as "no integer parsed"), and
+ * string_to_int("42") returns 42.0 (a double, since clox's number
+ * type is double — the user's intent is integer, the type is still
+ * double).
+ *
+ * Same strict-error contract as Stage 24/25: empty input, no chars
+ * consumed, and overflow to LONG_MIN / LONG_MAX all error. No NaN,
+ * no Infinity. The function does NOT trim — if the user wants
+ * trim-then-parse, they compose string_trim (Stage 9) with
+ * string_to_int.
+ *
+ * Design decisions: (1) "42.5" errors (strtol stops at the '.',
+ * we treat mid-string stop as "no integer parsed"). This matches
+ * Python's int("42.5") error shape, not JavaScript's parseInt
+ * ("42.5") === 42 silent-truncate. The discipline: parser natives
+ * are loud on garbage, not lenient. (2) Always base 10 — no
+ * auto-detect, no base parameter. If the user wants base 16
+ * parsing, they use string_to_number(s, 16). The two natives
+ * have distinct conceptual purposes. (3) No allocation: strtol
+ * returns a long directly; NUMBER_VAL is a tagged-union wrap. */
+static Value stringToIntNative(int argCount, Value *args) {
+    if (argCount != 1) {
+        runtimeError("string_to_int() takes 1 argument (%d given).", argCount);
+        return NIL_VAL;
+    }
+    if (!IS_STRING(args[0])) {
+        runtimeError("string_to_int() argument must be a string.");
+        return NIL_VAL;
+    }
+    ObjString *s = AS_STRING(args[0]);
+    /* strtol with base 10. The strictness rule: all characters
+     * must be consumed. strtol's default behavior is "consume as
+     * much as possible, ignore the rest" — e.g. strtol("42abc")
+     * returns 42 with endptr pointing to "abc". We override that
+     * to error on any non-trailing-EOF: string_to_int("42abc")
+     * errors, not silently returns 42. This matches Python's
+     * int("42abc") error shape, not JavaScript's parseInt("42abc")
+     * === 42 silent-truncate.
+     *
+     * The check is: endptr must point to the trailing null byte
+     * (i.e., all of s->chars was consumed). If endptr points
+     * mid-string (e.g. "42.5", "42abc", "  42"), error. This
+     * catches:
+     *   - "42.5"   endptr at "."
+     *   - "42abc"  endptr at "abc"
+     *   - "  42"   endptr at "  42" (strtol skips leading WS by
+     *              default; we want strict, no leading WS)
+     *   - "3.14"   endptr at "."
+     *   - ""       endptr at s->chars
+     *   - "abc"    endptr at s->chars
+     *
+     * Note: we do NOT allow leading '+' for negative numbers
+     * (strtol accepts "+42" as 42; we follow the C convention
+     * but it's a minor difference from the strict integer
+     * parser). If a stricter check is needed in a future stage,
+     * a custom hand-rolled parser is the way (no leading '+', no
+     * leading WS). */
+    char *endptr;
+    errno = 0;
+    long result = strtol(s->chars, &endptr, 10);
+    if (endptr == s->chars || endptr != s->chars + s->length) {
+        /* Either no characters consumed (empty, "abc", "  ") or
+         * some but not all characters consumed ("42.5", "42abc",
+         * "  42"). Both error the same way: "could not parse an
+         * integer from the input." */
+        runtimeError("string_to_int() could not parse an integer from the input.");
+        return NIL_VAL;
+    }
+    if (errno == ERANGE) {
+        runtimeError("string_to_int() input is out of range (overflow).");
+        return NIL_VAL;
+    }
+    return NUMBER_VAL((double)result);
+}
+
 static Value stringUpperNative(int argCount, Value *args) {
     if (argCount != 1) {
         runtimeError("string_upper() takes 1 argument (%d given).", argCount);
@@ -1562,6 +1643,14 @@ void defineNatives(void) {
     name = copyString("string_to_number", (int)strlen("string_to_number"));
     push(OBJ_VAL(name));
     tableSet(&vm.globals, name, OBJ_VAL(newNative(stringToNumberNative)));
+    pop();
+
+    /* Stage 26: string_to_int. The integer-only parse, a NEW
+     * native (not an extension of string_to_number). Closes the
+     * '42 vs 42.0' question. */
+    name = copyString("string_to_int", (int)strlen("string_to_int"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(stringToIntNative)));
     pop();
 
     /* Stage 13: string_split / string_join — compose the new array

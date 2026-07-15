@@ -3111,6 +3111,156 @@ static void test_string_to_number_base_wrong_arg_count(void) {
     free(out);
 }
 
+/* --- Stage 26: string_to_int(s) --- */
+/* A NEW native (not an extension of string_to_number). Always
+ * uses strtol with base 10 — no float path, no base parameter.
+ * Closes the '42 vs 42.0' question: string_to_int("42.5") errors
+ * (strtol stops at the '.'), string_to_int("42") returns 42.
+ * Returns 42.0 (a double, since clox's number type is double), not
+ * 42 as an integer — the user's *intent* is integer; the *type* is
+ * still double. Same strict-error contract: empty input, no chars
+ * consumed, and overflow to LONG_MIN / LONG_MAX all error. */
+
+static void test_string_to_int_positive(void) {
+    /* "42" -> 42; adding 1 gives 43. The basic round-trip. */
+    int exitCode;
+    char *out = runClox(
+        "var n = string_to_int(\"42\");\n"
+        "print n;\n"
+        "print n + 1;\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/to-int-positive: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "42\n")
+            || !contains(out, "43\n")) {
+        fail("stdlib/to-int-positive: expected '42' and '43' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_to_int_negative(void) {
+    /* "-7" -> -7; multiplying by 2 gives -14. The signed-int case. */
+    int exitCode;
+    char *out = runClox(
+        "var n = string_to_int(\"-7\");\n"
+        "print n;\n"
+        "print n * 2;\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/to-int-negative: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "-7\n")
+            || !contains(out, "-14\n")) {
+        fail("stdlib/to-int-negative: expected '-7' and '-14' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_to_int_round_trip(void) {
+    /* string(string_to_int("42")) -> "42"; same for "-7" and "0".
+     * The whole point of Stage 26: integer parse + string format
+     * is the new closure. */
+    int exitCode;
+    char *out = runClox(
+        "print string(string_to_int(\"42\"));\n"
+        "print string(string_to_int(\"-7\"));\n"
+        "print string(string_to_int(\"0\"));\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/to-int-round-trip: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "42\n")
+            || !contains(out, "-7\n")
+            || !contains(out, "0\n")) {
+        fail("stdlib/to-int-round-trip: expected '42', '-7', '0' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_to_int_float_errors(void) {
+    /* "42.5" -> runtime error. strtol stops at the '.', so endptr
+     * would be mid-string; we treat that as "no chars consumed"
+     * (matches Python's int("42.5") error shape). "3.14" also
+     * errors. */
+    int exitCode;
+    char *out = runClox("print string_to_int(\"42.5\");\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/to-int-float-error: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+
+    out = runClox("print string_to_int(\"3.14\");\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/to-int-float-second-error: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_to_int_empty_errors(void) {
+    /* "" -> runtime error. */
+    int exitCode;
+    char *out = runClox("print string_to_int(\"\");\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/to-int-empty-error: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_to_int_non_numeric_errors(void) {
+    /* "abc" -> runtime error. */
+    int exitCode;
+    char *out = runClox("print string_to_int(\"abc\");\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/to-int-non-numeric: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_to_int_wrong_type(void) {
+    /* Non-string arg -> runtime error. */
+    int exitCode;
+    char *out = runClox("print string_to_int(42);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/to-int-wrong-type: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_to_int_wrong_arg_count(void) {
+    /* 0 args -> runtime error. 2 args -> error. The function takes
+     * exactly 1 arg. */
+    int exitCode;
+    char *out = runClox("print string_to_int();\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/to-int-wrong-arg-count-zero: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+
+    out = runClox("print string_to_int(\"42\", 10);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/to-int-wrong-arg-count-two: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
 int main(void) {
     test_clock_exists();
     test_number_abs();
@@ -3292,6 +3442,15 @@ int main(void) {
     test_string_to_number_base_invalid();
     test_string_to_number_base_wrong_type();
     test_string_to_number_base_wrong_arg_count();
+    /* Stage 26: string_to_int. */
+    test_string_to_int_positive();
+    test_string_to_int_negative();
+    test_string_to_int_round_trip();
+    test_string_to_int_float_errors();
+    test_string_to_int_empty_errors();
+    test_string_to_int_non_numeric_errors();
+    test_string_to_int_wrong_type();
+    test_string_to_int_wrong_arg_count();
 
     printf("%d passed, %d failed\n", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;

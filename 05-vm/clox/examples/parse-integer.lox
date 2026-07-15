@@ -1,0 +1,48 @@
+// Stage 26 example: parse-integer.lox
+// Composes Stage 26's string_to_int(s) with Stage 17's string(n)
+// for the integer round-trip idiom. Real-world use cases: parsing
+// config files that have integer values, CLI argument parsing,
+// CSV column processing where the column is known to be integers.
+
+print "=== integer round-trip ===";
+// string(string_to_int("42")) -> "42" (the new closure)
+print string(string_to_int("42"));
+print string(string_to_int("-7"));
+print string(string_to_int("0"));
+print string(string_to_int("1000000"));
+
+print "=== negative + arithmetic ===";
+// Parse a negative number and use it in arithmetic.
+var balance = string_to_int("-500");
+print "balance = " + string(balance);  // -500
+print "balance + 1000 = " + string(balance + 1000);  // 500
+
+print "=== loop summing integers ===";
+// Sum a comma-separated list of integers. Composes Stage 13's
+// string_split + Stage 26's string_to_int + Stage 12a's array
+// length / array_get. The 'sum a CSV column of integers' idiom.
+var csv = "10,20,30,40";
+var parts = string_split(csv, ",");
+var sum = 0;
+for (var i = 0; i < array_length(parts); i = i + 1) {
+    sum = sum + string_to_int(array_get(parts, i));
+}
+print "sum of '" + csv + "' = " + string(sum);  // 100
+
+print "=== strict-error contract ===";
+// Uncommenting any of the next lines would error at runtime:
+//   string_to_int("42.5")     // mid-string stop, strtol reads "42"
+//   string_to_int("3.14")     // same
+//   string_to_int("42abc")    // mid-string stop, strtol reads "42"
+//   string_to_int("  42")     // leading whitespace not allowed
+//   string_to_int("")         // empty string
+//   string_to_int("abc")      // no digits
+//   string_to_int(42)         // wrong type
+//   string_to_int("42", 10)   // 2 args, takes 1
+// The discipline: parse-integer is loud on garbage. If the input
+// doesn't fully parse, it errors. This matches Python's int()
+// behavior, not JavaScript's parseInt() (which silently truncates).
+//
+// For decimal floats, use string_to_number(s) (Stage 24).
+// For multi-base parsing, use string_to_number(s, base) (Stage 25).
+// For strict integer parse, use string_to_int(s) (Stage 26).
