@@ -5361,6 +5361,164 @@ static void test_array_drop_wrong_type(void) {
     free(out2);
 }
 
+static void test_array_take_while_basic(void) {
+    /* Stage 53: array_take_while(arr, predicate).
+     * Take elements from the start of an array
+     * while the predicate is truthy. Stops at the
+     * first element where the predicate is falsy.
+     * ~30 lines, reuses Stage 30's
+     * user-code-dispatch pattern + Stage 33's
+     * short-circuit pattern. The new wrinkle:
+     * short-circuit slice (user-code-dispatch
+     * meets slice). */
+    int exitCode;
+    char *out = runClox(
+        "fun is_positive(x) { return x > 0; }\n"
+        "var arr = [1, 2, 3, -1, 4, 5];\n"
+        "var taken = array_take_while(arr, is_positive);\n"
+        "for (var i = 0; i < array_length(taken); i = i + 1) {\n"
+        "    print string(array_get(taken, i));\n"
+        "}\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-take-while-basic: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "1\n2\n3\n")) {
+        fail("stdlib/array-take-while-basic: expected '1\\n2\\n3\\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_take_while_all_match(void) {
+    /* When all elements match, returns the full
+     * array. */
+    int exitCode;
+    char *out = runClox(
+        "fun is_short(s) { return string_length(s) < 5; }\n"
+        "var arr = [\"hi\", \"hey\", \"yo\"];\n"
+        "var taken = array_take_while(arr, is_short);\n"
+        "for (var i = 0; i < array_length(taken); i = i + 1) {\n"
+        "    print array_get(taken, i);\n"
+        "}\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-take-while-all-match: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "hi\nhey\nyo\n")) {
+        fail("stdlib/array-take-while-all-match: expected 'hi\\nhey\\nyo\\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_take_while_none_match(void) {
+    /* When the first element doesn't match,
+     * returns an empty array (no elements taken). */
+    int exitCode;
+    char *out = runClox(
+        "fun is_positive(x) { return x > 0; }\n"
+        "var arr = [-1, -2, 1, 2];\n"
+        "var taken = array_take_while(arr, is_positive);\n"
+        "print array_length(taken);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-take-while-none-match: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "0\n")) {
+        fail("stdlib/array-take-while-none-match: expected '0\\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_take_while_empty(void) {
+    /* When the array is empty, returns an empty
+     * array. */
+    int exitCode;
+    char *out = runClox(
+        "fun always_true(x) { return true; }\n"
+        "var taken = array_take_while([], always_true);\n"
+        "print array_length(taken);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-take-while-empty: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "0\n")) {
+        fail("stdlib/array-take-while-empty: expected '0\\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_take_while_does_not_mutate(void) {
+    /* The source array is not mutated. */
+    int exitCode;
+    char *out = runClox(
+        "fun is_positive(x) { return x > 0; }\n"
+        "var arr = [1, 2, -1, 3, 4];\n"
+        "var taken = array_take_while(arr, is_positive);\n"
+        "print \"arr.len:\" + string(array_length(arr));\n"
+        "print \"arr.0:\" + string(array_get(arr, 0));\n"
+        "print \"arr.2:\" + string(array_get(arr, 2));\n"
+        "print \"taken.len:\" + string(array_length(taken));\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-take-while-does-not-mutate: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "arr.len:5\n") || !contains(out, "arr.0:1\n")
+            || !contains(out, "arr.2:-1\n") || !contains(out, "taken.len:2\n")) {
+        fail("stdlib/array-take-while-does-not-mutate: expected arr.len:5, arr.0:1, arr.2:-1, taken.len:2, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_take_while_wrong_arg_count(void) {
+    /* Defensive: 1 arg, 3 args both error. 2 args
+     * is the only valid count. */
+    int exitCode;
+    char *out1 = runClox("var t = array_take_while([1, 2, 3]);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-take-while-wrong-arg-count-1: expected non-zero exit for 1 arg");
+    } else {
+        pass();
+    }
+    free(out1);
+
+    char *out2 = runClox("var t = array_take_while([1], is_positive, 99);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-take-while-wrong-arg-count-3: expected non-zero exit for 3 args");
+    } else {
+        pass();
+    }
+    free(out2);
+}
+
+static void test_array_take_while_wrong_type(void) {
+    /* Defensive: 1st arg must be an array, 2nd arg
+     * must be a function. */
+    int exitCode;
+    char *out1 = runClox(
+        "fun f(x) { return true; }\n"
+        "var t = array_take_while(42, f);\n",
+        &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-take-while-wrong-type-arr: expected non-zero exit for non-array 1st arg");
+    } else {
+        pass();
+    }
+    free(out1);
+
+    char *out2 = runClox("var t = array_take_while([1, 2], 99);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-take-while-wrong-type-fn: expected non-zero exit for non-function 2nd arg");
+    } else {
+        pass();
+    }
+    free(out2);
+}
+
 static void test_array_group_by_three_groups(void) {
     /* Three distinct keys, in the order they first appear.
      * Numbers by signum: keyFn(x) = x > 0 (positive vs.
@@ -8019,6 +8177,13 @@ int main(void) {
     test_array_drop_composes_with_take();
     test_array_drop_wrong_arg_count();
     test_array_drop_wrong_type();
+    test_array_take_while_basic();
+    test_array_take_while_all_match();
+    test_array_take_while_none_match();
+    test_array_take_while_empty();
+    test_array_take_while_does_not_mutate();
+    test_array_take_while_wrong_arg_count();
+    test_array_take_while_wrong_type();
     /* Stage 29: string_split with limit. */
     test_string_split_with_limit();
     test_string_split_limit_zero();

@@ -2449,6 +2449,54 @@ static Value arrayFlattenNative(int argCount, Value *args) {
     return OBJ_VAL(result);
 }
 
+static Value arrayTakeWhileNative(int argCount, Value *args) {
+    if (argCount != 2) {
+        runtimeError("array_take_while() takes 2 arguments (%d given).", argCount);
+        return NIL_VAL;  /* error sentinel */
+    }
+    if (!IS_ARRAY(args[0])) {
+        runtimeError("array_take_while() argument 0 must be an array.");
+        return NIL_VAL;
+    }
+    if (!IS_CLOSURE(args[1])) {
+        runtimeError("array_take_while() argument 1 must be a function.");
+        return NIL_VAL;
+    }
+    ObjArray *src = AS_ARRAY(args[0]);
+    ObjClosure *predicate = AS_CLOSURE(args[1]);
+    if (predicate->function->arity != 1) {
+        runtimeError("array_take_while() predicate must take 1 argument (got %d).",
+                     predicate->function->arity);
+        return NIL_VAL;
+    }
+
+    /* The new wrinkle: short-circuit slice
+     * (user-code-dispatch meets slice). Iterate
+     * from the start, calling the predicate on
+     * each element. Stop as soon as the predicate
+     * is falsy; the elements up to (but not
+     * including) the first falsy element are
+     * taken. */
+    ObjArray *result = newArray(0);
+    push(OBJ_VAL(result));  /* GC: keep alive while filling */
+    for (int i = 0; i < src->count; i++) {
+        push(OBJ_VAL(predicate));  /* callee */
+        push(src->elements[i]);    /* arg 1 */
+        Value predResult = callClosureFromNative(predicate, 1);
+        /* clox's truthy rule: only false and nil are falsy. */
+        if ((IS_BOOL(predResult) && !AS_BOOL(predResult)) || IS_NIL(predResult)) {
+            /* Predicate is falsy: short-circuit, stop.
+             * Pop the result array before returning to
+             * keep the GC stack balanced. */
+            pop();
+            return OBJ_VAL(result);
+        }
+        arrayPush(result, src->elements[i]);
+    }
+    pop();  /* pop the result array */
+    return OBJ_VAL(result);
+}
+
 /* Stage 41: array_chunk(arr, size) -> array.
  * Chunks an array into fixed-size sub-arrays. The
  * shape: 2 args (array, size). The size is the chunk
@@ -3529,5 +3577,23 @@ void defineNatives(void) {
     name = copyString("array_drop", (int)strlen("array_drop"));
     push(OBJ_VAL(name));
     tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayDropNative)));
+    pop();
+
+    /* Stage 53: array_take_while. Take elements
+     * from the start of an array while the
+     * predicate is truthy. Short-circuits at the
+     * first falsy. ~30 lines, reuses Stage 30's
+     * user-code-dispatch pattern + Stage 33's
+     * short-circuit pattern. The new wrinkle:
+     * short-circuit slice (user-code-dispatch
+     * meets slice). The push/pop count is
+     * balanced: 1 push for the name, 1 pop after
+     * tableSet. The function body has 1 push
+     * (the result), 1 pop after the loop, and an
+     * additional pop on the short-circuit return
+     * path. */
+    name = copyString("array_take_while", (int)strlen("array_take_while"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayTakeWhileNative)));
     pop();
 }
