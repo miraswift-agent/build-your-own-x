@@ -4394,6 +4394,100 @@ static void test_is_array_wrong_arg_count(void) {
     free(out2);
 }
 
+static void test_is_string_true(void) {
+    /* Stage 45: is_string(value) -> bool. Returns
+     * true iff the value is a string. The next type
+     * predicate (after is_array in Stage 44).
+     * Complements typeof: the caller doesn't have to
+     * compare a string to determine string-ness. */
+    int exitCode;
+    char *out = runClox(
+        "print is_string(\"\");\n"
+        "print is_string(\"hello\");\n"
+        "print is_string(\"a b c\");\n"
+        "print is_string(\"42\");\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/is-string-true: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "true\ntrue\ntrue\ntrue\n")) {
+        fail("stdlib/is-string-true: expected 'true' 4 times, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_is_string_false(void) {
+    /* is_string() returns false for every non-string
+     * type. The "type predicate" should be exhaustive:
+     * true for strings, false for everything else. */
+    int exitCode;
+    char *out = runClox(
+        "print is_string(true);\n"
+        "print is_string(false);\n"
+        "print is_string(nil);\n"
+        "print is_string(42);\n"
+        "print is_string(3.14);\n"
+        "print is_string([]);\n"
+        "print is_string([1, 2, 3]);\n"
+        "print is_string(clock);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/is-string-false: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "false\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\n")) {
+        fail("stdlib/is-string-false: expected 'false' 8 times, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_is_string_does_not_coerce(void) {
+    /* is_string() must NOT coerce. The number 42 is
+     * a number, not a string (even though the string
+     * "42" parses to 42, the inverse doesn't hold).
+     * The empty array is an array, not a string. The
+     * alternative (truthy coerces) is JS-style but
+     * loses type information. */
+    int exitCode;
+    char *out = runClox(
+        "print is_string(42);\n"
+        "print is_string(0);\n"
+        "print is_string([]);\n"
+        "print is_string(false);\n"
+        "print is_string(nil);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/is-string-does-not-coerce: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "false\nfalse\nfalse\nfalse\nfalse\n")) {
+        fail("stdlib/is-string-does-not-coerce: expected 'false' 5 times, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_is_string_wrong_arg_count(void) {
+    /* Defensive: native function should handle wrong
+     * arg count. 0 args, 2 args both error. */
+    int exitCode;
+    char *out1 = runClox("print is_string();\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/is-string-wrong-arg-count-0: expected non-zero exit for 0 args");
+    } else {
+        pass();
+    }
+    free(out1);
+
+    char *out2 = runClox("print is_string(\"a\", \"b\");\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/is-string-wrong-arg-count-2: expected non-zero exit for 2 args");
+    } else {
+        pass();
+    }
+    free(out2);
+}
+
 static void test_array_group_by_three_groups(void) {
     /* Three distinct keys, in the order they first appear.
      * Numbers by signum: keyFn(x) = x > 0 (positive vs.
@@ -7012,6 +7106,10 @@ int main(void) {
     test_is_array_false();
     test_is_array_does_not_coerce();
     test_is_array_wrong_arg_count();
+    test_is_string_true();
+    test_is_string_false();
+    test_is_string_does_not_coerce();
+    test_is_string_wrong_arg_count();
     /* Stage 29: string_split with limit. */
     test_string_split_with_limit();
     test_string_split_limit_zero();
