@@ -1,0 +1,167 @@
+// Stage 41 example: array-chunk.lox
+// The "chunk an array into fixed-size sub-arrays" native.
+// Takes an array and a size; returns an array of arrays
+// (the chunks). The last chunk may be shorter if the
+// input length isn't a multiple of size. No user-code
+// dispatch (no closure); no new architecture.
+//
+// Canonical convention: "ceil(count / size) chunks,
+// the last chunk may be shorter" (matches Python's
+// grouper recipes, lodash's _.chunk, Rust's chunks).
+// size <= 0 errors. Empty input returns empty array
+// of chunks.
+
+print "=== basic: chunks of 2 on a 5-element array ===";
+// [1, 2, 3, 4, 5] with size 2 -> [[1, 2], [3, 4], [5]]
+// The last chunk is shorter (1 element) because 5 is
+// not a multiple of 2.
+var arr = [1, 2, 3, 4, 5];
+var chunks = array_chunk(arr, 2);
+print array_length(chunks);
+print array_length(array_get(chunks, 0));
+print array_get(array_get(chunks, 0), 0);
+print array_get(array_get(chunks, 0), 1);
+print array_length(array_get(chunks, 1));
+print array_get(array_get(chunks, 1), 0);
+print array_get(array_get(chunks, 1), 1);
+print array_length(array_get(chunks, 2));
+print array_get(array_get(chunks, 2), 0);
+// Output:
+//   3
+//   2
+//   1
+//   2
+//   2
+//   3
+//   4
+//   1
+//   5
+
+print "=== evenly divisible: chunks of 3 on 6 elements ===";
+// [1, 2, 3, 4, 5, 6] with size 3 -> [[1, 2, 3], [4, 5, 6]]
+// Both chunks are exactly size 3 (6 / 3 = 2, exact).
+var even = [1, 2, 3, 4, 5, 6];
+var even_chunks = array_chunk(even, 3);
+print array_length(even_chunks);
+print array_length(array_get(even_chunks, 0));
+print array_get(array_get(even_chunks, 0), 0);
+print array_get(array_get(even_chunks, 0), 1);
+print array_get(array_get(even_chunks, 0), 2);
+print array_length(array_get(even_chunks, 1));
+print array_get(array_get(even_chunks, 1), 0);
+print array_get(array_get(even_chunks, 1), 1);
+print array_get(array_get(even_chunks, 1), 2);
+// Output:
+//   2
+//   3
+//   1
+//   2
+//   3
+//   3
+//   4
+//   5
+//   6
+
+print "=== size 1: every element is its own chunk ===";
+// [1, 2, 3] with size 1 -> [[1], [2], [3]] (3 chunks)
+var ones = [1, 2, 3];
+var one_chunks = array_chunk(ones, 1);
+print array_length(one_chunks);
+print array_get(array_get(one_chunks, 0), 0);
+print array_get(array_get(one_chunks, 1), 0);
+print array_get(array_get(one_chunks, 2), 0);
+// Output:
+//   3
+//   1
+//   2
+//   3
+
+print "=== size > length: one chunk shorter than size ===";
+// [1, 2, 3] with size 4 -> [[1, 2, 3]] (one chunk of 3,
+// shorter than the requested 4)
+var small = [1, 2, 3];
+var one_big = array_chunk(small, 4);
+print array_length(one_big);
+print array_length(array_get(one_big, 0));
+print array_get(array_get(one_big, 0), 0);
+print array_get(array_get(one_big, 0), 1);
+print array_get(array_get(one_big, 0), 2);
+// Output:
+//   1
+//   3
+//   1
+//   2
+//   3
+
+print "=== empty input: empty array of chunks ===";
+// [] with any size -> [] (no chunks)
+var empty = array_chunk([], 2);
+print array_length(empty);
+// Output: 0
+
+print "=== does not mutate the source ===";
+// array_chunk returns a new array of arrays; the source
+// is unchanged. Same "non-mutating" pattern as Stage 38's
+// array_flatten, Stage 40's array_unique_by, etc.
+var src = [10, 20, 30, 40];
+array_chunk(src, 2);
+print array_length(src);
+print array_get(src, 0);
+print array_get(src, 1);
+print array_get(src, 2);
+print array_get(src, 3);
+// Output:
+//   4
+//   10
+//   20
+//   30
+//   40
+
+print "=== composes with array_flatten (the inverse-ish) ===";
+// array_chunk followed by array_flatten returns the
+// input (when length is a multiple of size). For [1..6]
+// with size 2: chunk -> [[1,2], [3,4], [5,6]], then
+// flatten -> [1, 2, 3, 4, 5, 6].
+var orig = [1, 2, 3, 4, 5, 6];
+var round_trip = array_flatten(array_chunk(orig, 2));
+print array_length(round_trip);
+print array_get(round_trip, 0);
+print array_get(round_trip, 1);
+print array_get(round_trip, 2);
+print array_get(round_trip, 3);
+print array_get(round_trip, 4);
+print array_get(round_trip, 5);
+// Output:
+//   6
+//   1
+//   2
+//   3
+//   4
+//   5
+//   6
+
+print "=== what this stage teaches ===";
+// (a) "Shape transform with a parameter" is a new pattern
+//     in the toolkit. Stage 38's array_flatten takes one
+//     arg and produces a 1D array; Stage 41's array_chunk
+//     takes two args (arr + size) and produces a 2D
+//     array. The new wrinkle: parameter-driven shape
+//     transforms.
+//
+// (b) "ceil(count / size) chunks, the last may be shorter"
+//     is the canonical convention. JS (lodash's _.chunk),
+//     Python (itertools), and Rust (slice::chunks) all
+//     agree. The "size > length returns one shorter chunk"
+//     edge case is a natural consequence: 3 elements with
+//     size 4 produces [[1, 2, 3]], not an error.
+//
+// (c) "size <= 0 errors" is the right default. The
+//     alternative (size == 0 returns empty, size < 0
+//     errors) adds complexity for no benefit. The
+//     discipline: when a new native has a parameter
+//     with a natural domain (size > 0), enforce it.
+//
+// (d) "First native that returns array of arrays" — the
+//     caller may need to flatten the result to iterate
+//     the elements, or iterate the chunks themselves.
+//     The 2D structure is a new shape in clox's stdlib.

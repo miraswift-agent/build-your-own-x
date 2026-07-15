@@ -3840,6 +3840,246 @@ static void test_array_unique_by_typed_keys(void) {
     free(out);
 }
 
+/* --- Stage 41: array_chunk(arr, size) -> array --- */
+/* Chunks an array into fixed-size sub-arrays. The shape:
+ * 2 args (array, size). The size is the chunk size; the
+ * result is an array of arrays. The last chunk may be
+ * shorter if the input length isn't a multiple of size.
+ * Empty array returns empty array (no chunks). size <= 0
+ * errors. size > length returns one chunk (the input).
+ * No user-code dispatch (no closure). Pre-count +
+ * pre-allocate pattern (same as Stage 38 array_flatten). */
+static void test_array_chunk_basic(void) {
+    /* Chunks of 2: [1, 2, 3, 4, 5] -> [[1, 2], [3, 4], [5]]
+     * (the last chunk is shorter because 5 is not a
+     * multiple of 2). */
+    int exitCode;
+    char *out = runClox(
+        "var arr = [1, 2, 3, 4, 5];\n"
+        "var chunks = array_chunk(arr, 2);\n"
+        "print array_length(chunks);\n"
+        "print array_length(array_get(chunks, 0));\n"
+        "print array_get(array_get(chunks, 0), 0);\n"
+        "print array_get(array_get(chunks, 0), 1);\n"
+        "print array_length(array_get(chunks, 1));\n"
+        "print array_get(array_get(chunks, 1), 0);\n"
+        "print array_get(array_get(chunks, 1), 1);\n"
+        "print array_length(array_get(chunks, 2));\n"
+        "print array_get(array_get(chunks, 2), 0);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-chunk-basic: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "3\n2\n1\n2\n2\n3\n4\n1\n5\n")) {
+        fail("stdlib/array-chunk-basic: expected chunked output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_chunk_evenly_divisible(void) {
+    /* Chunks of 3 on a 6-element array: [1,2,3,4,5,6] -> [[1,2,3], [4,5,6]] */
+    int exitCode;
+    char *out = runClox(
+        "var arr = [1, 2, 3, 4, 5, 6];\n"
+        "var chunks = array_chunk(arr, 3);\n"
+        "print array_length(chunks);\n"
+        "print array_length(array_get(chunks, 0));\n"
+        "print array_get(array_get(chunks, 0), 0);\n"
+        "print array_get(array_get(chunks, 0), 1);\n"
+        "print array_get(array_get(chunks, 0), 2);\n"
+        "print array_length(array_get(chunks, 1));\n"
+        "print array_get(array_get(chunks, 1), 0);\n"
+        "print array_get(array_get(chunks, 1), 1);\n"
+        "print array_get(array_get(chunks, 1), 2);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-chunk-evenly-divisible: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "2\n3\n1\n2\n3\n3\n4\n5\n6\n")) {
+        fail("stdlib/array-chunk-evenly-divisible: expected [[1,2,3],[4,5,6]], got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_chunk_size_one(void) {
+    /* Chunks of 1: [1, 2, 3] -> [[1], [2], [3]] */
+    int exitCode;
+    char *out = runClox(
+        "var arr = [1, 2, 3];\n"
+        "var chunks = array_chunk(arr, 1);\n"
+        "print array_length(chunks);\n"
+        "print array_get(array_get(chunks, 0), 0);\n"
+        "print array_get(array_get(chunks, 1), 0);\n"
+        "print array_get(array_get(chunks, 2), 0);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-chunk-size-one: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "3\n1\n2\n3\n")) {
+        fail("stdlib/array-chunk-size-one: expected [[1],[2],[3]], got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_chunk_size_equals_length(void) {
+    /* Chunks of length: [1, 2, 3] with size 3 -> [[1, 2, 3]] (one chunk) */
+    int exitCode;
+    char *out = runClox(
+        "var arr = [1, 2, 3];\n"
+        "var chunks = array_chunk(arr, 3);\n"
+        "print array_length(chunks);\n"
+        "print array_length(array_get(chunks, 0));\n"
+        "print array_get(array_get(chunks, 0), 0);\n"
+        "print array_get(array_get(chunks, 0), 1);\n"
+        "print array_get(array_get(chunks, 0), 2);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-chunk-size-equals-length: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "1\n3\n1\n2\n3\n")) {
+        fail("stdlib/array-chunk-size-equals-length: expected [[1,2,3]], got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_chunk_size_greater_than_length(void) {
+    /* Chunks of length+1: [1, 2, 3] with size 4 -> [[1, 2, 3]] (one chunk, shorter than size) */
+    int exitCode;
+    char *out = runClox(
+        "var arr = [1, 2, 3];\n"
+        "var chunks = array_chunk(arr, 4);\n"
+        "print array_length(chunks);\n"
+        "print array_length(array_get(chunks, 0));\n"
+        "print array_get(array_get(chunks, 0), 0);\n"
+        "print array_get(array_get(chunks, 0), 1);\n"
+        "print array_get(array_get(chunks, 0), 2);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-chunk-size-greater-than-length: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "1\n3\n1\n2\n3\n")) {
+        fail("stdlib/array-chunk-size-greater-than-length: expected [[1,2,3]], got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_chunk_empty(void) {
+    /* Empty array returns empty array of chunks. */
+    int exitCode;
+    char *out = runClox(
+        "var chunks = array_chunk([], 2);\n"
+        "print array_length(chunks);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-chunk-empty: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "0\n")) {
+        fail("stdlib/array-chunk-empty: expected 0 chunks, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_chunk_does_not_mutate(void) {
+    /* The source array is unchanged. */
+    int exitCode;
+    char *out = runClox(
+        "var arr = [1, 2, 3, 4];\n"
+        "array_chunk(arr, 2);\n"
+        "print array_length(arr);\n"
+        "print array_get(arr, 0);\n"
+        "print array_get(arr, 1);\n"
+        "print array_get(arr, 2);\n"
+        "print array_get(arr, 3);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-chunk-does-not-mutate: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "4\n1\n2\n3\n4\n")) {
+        fail("stdlib/array-chunk-does-not-mutate: expected source unchanged, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_chunk_wrong_arg_count(void) {
+    /* array_chunk takes 2 args. 0, 1, 3 args error. */
+    int exitCode;
+    char *out;
+    out = runClox("array_chunk();\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-chunk-wrong-arg-count/0: expected nonzero exit, got 0 (output: %s)", out);
+        free(out);
+        return;
+    }
+    free(out);
+    out = runClox("array_chunk([1,2,3]);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-chunk-wrong-arg-count/1: expected nonzero exit, got 0 (output: %s)", out);
+        free(out);
+        return;
+    }
+    free(out);
+    out = runClox("array_chunk([1,2,3], 2, 99);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-chunk-wrong-arg-count/3: expected nonzero exit, got 0 (output: %s)", out);
+        free(out);
+        return;
+    }
+    free(out);
+    pass();
+}
+
+static void test_array_chunk_wrong_type(void) {
+    /* Non-array first arg, non-number second arg. */
+    int exitCode;
+    char *out;
+    out = runClox("array_chunk(\"hello\", 2);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-chunk-wrong-type/non-array: expected nonzero exit, got 0 (output: %s)", out);
+        free(out);
+        return;
+    }
+    free(out);
+    out = runClox("array_chunk([1,2,3], \"two\");\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-chunk-wrong-type/non-number: expected nonzero exit, got 0 (output: %s)", out);
+        free(out);
+        return;
+    }
+    free(out);
+    pass();
+}
+
+static void test_array_chunk_size_zero(void) {
+    /* size == 0 is an error (can't chunk into 0-size pieces). */
+    int exitCode;
+    char *out = runClox("array_chunk([1, 2, 3], 0);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-chunk-size-zero: expected nonzero exit, got 0 (output: %s)", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_chunk_size_negative(void) {
+    /* size < 0 is an error. */
+    int exitCode;
+    char *out = runClox("array_chunk([1, 2, 3], -1);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-chunk-size-negative: expected nonzero exit, got 0 (output: %s)", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
 /* --- Stage 29: string_split(s, delim, limit) --- */
 /* Extends Stage 13's string_split with a max-split-count
  * parameter. The shape: 2 args (Stage 13) splits on every
@@ -6101,6 +6341,18 @@ int main(void) {
     test_array_unique_by_wrong_arg_count();
     test_array_unique_by_wrong_type();
     test_array_unique_by_typed_keys();
+    /* Stage 41: array_chunk. */
+    test_array_chunk_basic();
+    test_array_chunk_evenly_divisible();
+    test_array_chunk_size_one();
+    test_array_chunk_size_equals_length();
+    test_array_chunk_size_greater_than_length();
+    test_array_chunk_empty();
+    test_array_chunk_does_not_mutate();
+    test_array_chunk_wrong_arg_count();
+    test_array_chunk_wrong_type();
+    test_array_chunk_size_zero();
+    test_array_chunk_size_negative();
     /* Stage 29: string_split with limit. */
     test_string_split_with_limit();
     test_string_split_limit_zero();

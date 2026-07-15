@@ -2327,6 +2327,79 @@ static Value arrayFlattenNative(int argCount, Value *args) {
     return OBJ_VAL(result);
 }
 
+/* Stage 41: array_chunk(arr, size) -> array.
+ * Chunks an array into fixed-size sub-arrays. The
+ * shape: 2 args (array, size). The size is the chunk
+ * size (must be > 0). The result is an array of
+ * arrays; the last chunk may be shorter if the input
+ * length isn't a multiple of size. Empty input returns
+ * an empty array (no chunks). size > length returns
+ * one chunk (the input as a single sub-array).
+ * size <= 0 errors. size must be a number.
+ *
+ * No user-code dispatch (no closure). Architecture
+ * reuses Stage 12 (arrays as first-class heap values)
+ * and Stage 38's pre-count + pre-allocate pattern.
+ *
+ * The new wrinkle: this is the first native that
+ * returns "array of arrays" (a 2D structure). The
+ * caller may need to flatten the result to iterate
+ * the elements, or iterate the chunks themselves.
+ *
+ * Edge cases:
+ * - array_chunk([], n) -> [] (empty array of chunks)
+ * - array_chunk([1], 1) -> [[1]] (one chunk of size 1)
+ * - array_chunk([1,2,3], 4) -> [[1,2,3]] (one chunk, shorter than size)
+ * - array_chunk([1,2,3,4], 0) -> ERROR (size must be > 0)
+ * - array_chunk([1,2,3,4], -1) -> ERROR (size must be > 0)
+ */
+static Value arrayChunkNative(int argCount, Value *args) {
+    if (argCount != 2) {
+        runtimeError("array_chunk() takes 2 arguments (%d given).", argCount);
+        return NIL_VAL;
+    }
+    if (!IS_ARRAY(args[0])) {
+        runtimeError("array_chunk() argument must be an array.");
+        return NIL_VAL;
+    }
+    if (!IS_NUMBER(args[1])) {
+        runtimeError("array_chunk() size must be a number.");
+        return NIL_VAL;
+    }
+    int size = (int)AS_NUMBER(args[1]);
+    if (size <= 0) {
+        runtimeError("array_chunk() size must be > 0 (got %d).", size);
+        return NIL_VAL;
+    }
+    ObjArray *src = AS_ARRAY(args[0]);
+    /* Pre-count: ceil(count / size) chunks. */
+    int numChunks = (src->count + size - 1) / size;
+    if (src->count == 0) {
+        numChunks = 0;  /* empty input -> no chunks */
+    }
+    ObjArray *result = newArray(numChunks);
+    push(OBJ_VAL(result));  /* GC: keep alive while filling */
+    for (int i = 0; i < numChunks; i++) {
+        int chunkStart = i * size;
+        int chunkEnd = chunkStart + size;
+        if (chunkEnd > src->count) {
+            chunkEnd = src->count;  /* last chunk may be shorter */
+        }
+        ObjArray *chunk = newArray(chunkEnd - chunkStart);
+        /* GC: push the chunk before filling. The
+         * outer result is already on the stack (above),
+         * so the chunk is doubly protected. */
+        push(OBJ_VAL(chunk));
+        for (int j = chunkStart; j < chunkEnd; j++) {
+            arrayPush(chunk, src->elements[j]);
+        }
+        pop();  /* chunk */
+        arrayPush(result, OBJ_VAL(chunk));
+    }
+    pop();  /* result */
+    return OBJ_VAL(result);
+}
+
 static Value typeofNative(int argCount, Value *args) {
     if (argCount != 1) {
         runtimeError("typeof() takes 1 argument (%d given).", argCount);
@@ -2631,6 +2704,17 @@ void defineNatives(void) {
     name = copyString("array_flatten", (int)strlen("array_flatten"));
     push(OBJ_VAL(name));
     tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayFlattenNative)));
+    pop();
+
+    /* Stage 41: array_chunk. Takes an array and a
+     * size; returns an array of arrays (the chunks).
+     * The last chunk may be shorter if the input
+     * length isn't a multiple of size. No user-code
+     * dispatch; reuses Stage 12 (arrays) and Stage 38
+     * (pre-count + pre-allocate) unchanged. */
+    name = copyString("array_chunk", (int)strlen("array_chunk"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayChunkNative)));
     pop();
 
     /* Stage 10: more number operations. */
