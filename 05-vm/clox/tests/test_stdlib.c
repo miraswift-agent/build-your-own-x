@@ -6171,6 +6171,281 @@ static void test_array_union_wrong_type(void) {
     free(out2);
 }
 
+static void test_array_difference_basic(void) {
+    /* [1,2,3] - [2,4] -> [1,3]. 2 matches and is
+     * dropped; 1, 3 not in arr2, kept. Order of
+     * first appearance in arr1 preserved. */
+    int exitCode;
+    char *out = runClox(
+        "var d = array_difference([1, 2, 3], [2, 4]);\n"
+        "for (var i = 0; i < array_length(d); i = i + 1) {\n"
+        "    print string(array_get(d, i));\n"
+        "}\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-difference-basic: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "1\n3\n")) {
+        fail("stdlib/array-difference-basic: expected '1\\n3\\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_difference_empty_inputs(void) {
+    /* 3 sub-cases: arr1 empty, arr2 empty, both
+     * empty. Empty arr1 -> empty result (nothing
+     * to keep). Empty arr2 -> arr1 (nothing to
+     * subtract). Both empty -> empty. */
+    int exitCode;
+    char *out1 = runClox(
+        "var d = array_difference([], [1, 2, 3]);\n"
+        "print array_length(d);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-difference-empty-arr1: expected exit 0, got %d (output: %s)", exitCode, out1);
+    } else if (!contains(out1, "0\n")) {
+        fail("stdlib/array-difference-empty-arr1: expected '0\\n', got '%s'", out1);
+    } else {
+        pass();
+    }
+    free(out1);
+
+    char *out2 = runClox(
+        "var d = array_difference([1, 2, 3], []);\n"
+        "for (var i = 0; i < array_length(d); i = i + 1) {\n"
+        "    print string(array_get(d, i));\n"
+        "}\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-difference-empty-arr2: expected exit 0, got %d (output: %s)", exitCode, out2);
+    } else if (!contains(out2, "1\n2\n3\n")) {
+        fail("stdlib/array-difference-empty-arr2: expected '1\\n2\\n3\\n', got '%s'", out2);
+    } else {
+        pass();
+    }
+    free(out2);
+
+    char *out3 = runClox(
+        "var d = array_difference([], []);\n"
+        "print array_length(d);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-difference-empty-both: expected exit 0, got %d (output: %s)", exitCode, out3);
+    } else if (!contains(out3, "0\n")) {
+        fail("stdlib/array-difference-empty-both: expected '0\\n', got '%s'", out3);
+    } else {
+        pass();
+    }
+    free(out3);
+}
+
+static void test_array_difference_no_overlap(void) {
+    /* [1,2,3] - [4,5,6] -> [1,2,3]. Nothing in
+     * arr2 matches arr1, so all arr1 elements are
+     * kept. */
+    int exitCode;
+    char *out = runClox(
+        "var d = array_difference([1, 2, 3], [4, 5, 6]);\n"
+        "for (var i = 0; i < array_length(d); i = i + 1) {\n"
+        "    print string(array_get(d, i));\n"
+        "}\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-difference-no-overlap: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "1\n2\n3\n")) {
+        fail("stdlib/array-difference-no-overlap: expected '1\\n2\\n3\\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_difference_full_overlap(void) {
+    /* [1,2,3] - [1,2,3] -> []. Every arr1 element
+     * is matched by an arr2 element (with equal
+     * counts), so all are dropped. */
+    int exitCode;
+    char *out = runClox(
+        "var d = array_difference([1, 2, 3], [1, 2, 3]);\n"
+        "print array_length(d);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-difference-full-overlap: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "0\n")) {
+        fail("stdlib/array-difference-full-overlap: expected '0\\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_difference_multiset(void) {
+    /* [1,1,2] - [1] -> [1,2]. One 1 matched and
+     * dropped, one 1 kept (the "extra" one), 2
+     * kept (not in arr2). The multiset semantics:
+     * 1's count = max(0, 2-1) = 1, 2's count =
+     * max(0, 1-0) = 1. */
+    int exitCode;
+    char *out = runClox(
+        "var d = array_difference([1, 1, 2], [1]);\n"
+        "for (var i = 0; i < array_length(d); i = i + 1) {\n"
+        "    print string(array_get(d, i));\n"
+        "}\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-difference-multiset: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "1\n2\n")) {
+        fail("stdlib/array-difference-multiset: expected '1\\n2\\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_difference_arr1_dominates(void) {
+    /* [1,1,1,1] - [1,2] -> [1,1,1]. One 1
+     * matched and dropped (consumed by arr2),
+     * three 1's kept (the "extras" beyond
+     * arr2's count), 2 has no arr1 copies so
+     * it's irrelevant to the result. */
+    int exitCode;
+    char *out = runClox(
+        "var d = array_difference([1, 1, 1, 1], [1, 2]);\n"
+        "for (var i = 0; i < array_length(d); i = i + 1) {\n"
+        "    print string(array_get(d, i));\n"
+        "}\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-difference-arr1-dominates: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "1\n1\n1\n")) {
+        fail("stdlib/array-difference-arr1-dominates: expected '1\\n1\\n1\\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_difference_arr2_dominates(void) {
+    /* [1,2] - [1,1,1,1] -> [2]. One 1 matched
+     * and dropped, 2 not in arr2, kept. The 3
+     * "extra" 1's in arr2 are ignored (multiset
+     * difference is one-directional). */
+    int exitCode;
+    char *out = runClox(
+        "var d = array_difference([1, 2], [1, 1, 1, 1]);\n"
+        "for (var i = 0; i < array_length(d); i = i + 1) {\n"
+        "    print string(array_get(d, i));\n"
+        "}\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-difference-arr2-dominates: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "2\n")) {
+        fail("stdlib/array-difference-arr2-dominates: expected '2\\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_difference_strings(void) {
+    /* Same multiset semantics work for strings.
+     * ["a", "b", "a"] - ["a"] -> ["b", "a"].
+     * The first "a" matches and is dropped; the
+     * second "a" is kept (the "extra" one
+     * beyond arr2's count); "b" is kept (not in
+     * arr2). Order: first appearance in arr1
+     * with matched elems removed. The b comes
+     * first because the first a was dropped. */
+    int exitCode;
+    char *out = runClox(
+        "var d = array_difference([\"a\", \"b\", \"a\"], [\"a\"]);\n"
+        "for (var i = 0; i < array_length(d); i = i + 1) {\n"
+        "    print array_get(d, i);\n"
+        "}\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-difference-strings: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "b\na\n")) {
+        fail("stdlib/array-difference-strings: expected 'b\\na\\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_difference_does_not_mutate(void) {
+    /* Verifies that arr1 and arr2 are not
+     * mutated. The impl walks the inputs as
+     * read-only sources; only the `remaining`
+     * working copy is mutated. */
+    int exitCode;
+    char *out = runClox(
+        "var a1 = [1, 2, 3];\n"
+        "var a2 = [2, 4];\n"
+        "var d = array_difference(a1, a2);\n"
+        "print array_length(a1);\n"
+        "print string(array_get(a1, 0));\n"
+        "print string(array_get(a1, 1));\n"
+        "print string(array_get(a1, 2));\n"
+        "print array_length(a2);\n"
+        "print string(array_get(a2, 0));\n"
+        "print string(array_get(a2, 1));\n"
+        "print array_length(d);\n"
+        "print string(array_get(d, 0));\n"
+        "print string(array_get(d, 1));\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-difference-does-not-mutate: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "3\n1\n2\n3\n2\n2\n4\n2\n1\n3\n")) {
+        fail("stdlib/array-difference-does-not-mutate: expected '3\\n1\\n2\\n3\\n2\\n2\\n4\\n2\\n1\\n3\\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_difference_wrong_arg_count(void) {
+    /* 1 arg + 3 args both error. */
+    int exitCode;
+    char *out1 = runClox("var d = array_difference([1, 2]);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-difference-wrong-arg-count-1arg: expected non-zero exit for 1 arg");
+    } else {
+        pass();
+    }
+    free(out1);
+
+    char *out2 = runClox("var d = array_difference([1, 2], [3], [4]);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-difference-wrong-arg-count-3args: expected non-zero exit for 3 args");
+    } else {
+        pass();
+    }
+    free(out2);
+}
+
+static void test_array_difference_wrong_type(void) {
+    /* Non-array 1st arg + non-array 2nd arg both
+     * error. */
+    int exitCode;
+    char *out1 = runClox("var d = array_difference(42, [1, 2]);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-difference-wrong-type-arr1: expected non-zero exit for non-array 1st arg");
+    } else {
+        pass();
+    }
+    free(out1);
+
+    char *out2 = runClox("var d = array_difference([1, 2], 99);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-difference-wrong-type-arr2: expected non-zero exit for non-array 2nd arg");
+    } else {
+        pass();
+    }
+    free(out2);
+}
+
 static void test_array_group_by_three_groups(void) {
     /* Three distinct keys, in the order they first appear.
      * Numbers by signum: keyFn(x) = x > 0 (positive vs.
@@ -8868,6 +9143,18 @@ int main(void) {
     test_array_union_does_not_mutate();
     test_array_union_wrong_arg_count();
     test_array_union_wrong_type();
+    /* Stage 57: array_difference. */
+    test_array_difference_basic();
+    test_array_difference_empty_inputs();
+    test_array_difference_no_overlap();
+    test_array_difference_full_overlap();
+    test_array_difference_multiset();
+    test_array_difference_arr1_dominates();
+    test_array_difference_arr2_dominates();
+    test_array_difference_strings();
+    test_array_difference_does_not_mutate();
+    test_array_difference_wrong_arg_count();
+    test_array_difference_wrong_type();
     /* Stage 29: string_split with limit. */
     test_string_split_with_limit();
     test_string_split_limit_zero();

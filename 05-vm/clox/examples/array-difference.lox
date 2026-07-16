@@ -1,0 +1,336 @@
+// Stage 57 example: array-difference.lox
+// Multiset difference: for each value v, the result
+// has v count = max(0, count_in_arr1 - count_in_arr2).
+// Order of first appearance in arr1, with matched
+// elements removed. Neither input is mutated.
+//
+// The shape: 2 args (array, array). Returns a new
+// array. The new wrinkle: the third 2-source native
+// (after zip, zip_longest), the fifth set-op-family
+// native (after intersect, union). Like Stages 55/56
+// it uses the "remaining copy" pattern — but the
+// fill direction is INVERTED. Intersect keeps matched
+// arr1 elements; union keeps every arr1 element AND
+// drains arr2; DIFFERENCE drops matched arr1 elements
+// and keeps only the unmatched. "remaining" is
+// decremented on every match, but the condition for
+// APPENDING is inverted (drop, not keep).
+
+print "=== array_difference basic ===";
+// arr1 = [1, 2, 3] (1: 1, 2: 1, 3: 1)
+// arr2 = [2, 4] (2: 1, 4: 1)
+// For each v in arr1: keep iff v not in arr2
+// 1 not in arr2 -> keep 1
+// 2 in arr2 -> drop 2
+// 3 not in arr2 -> keep 3
+// Result: [1, 3] (order of first appearance in arr1
+// with matched elements removed)
+var r = array_difference([1, 2, 3], [2, 4]);
+for (var i = 0; i < array_length(r); i = i + 1) {
+    print string(array_get(r, i));
+}
+// Output:
+//   1
+//   3
+
+print "=== array_difference multiset (the defining test) ===";
+// arr1 = [1, 1, 2] (1: 2, 2: 1)
+// arr2 = [1] (1: 1)
+// For each v in arr1:
+// 1: in arr2, consume 1 copy, DROP this 1
+// 1: not in arr2 (already consumed), KEEP this 1
+// 2: not in arr2, KEEP 2
+// Result: [1, 2] — the SECOND 1 is kept because
+// arr2's count of 1 was 1, and arr1's count of 1
+// was 2; max(0, 2-1) = 1 (one 1 kept).
+// A pure-set difference would give [2]. A
+// sum-semantic difference would give [1, 1, 2]
+// (1 kept, 1+1=2 dropped... wait, that's not the
+// definition). We chose max(0, c1 - c2) which
+// matches Python's `Counter - Counter`.
+var r2 = array_difference([1, 1, 2], [1]);
+for (var i = 0; i < array_length(r2); i = i + 1) {
+    print string(array_get(r2, i));
+}
+// Output:
+//   1
+//   2
+
+print "=== array_difference arr1 dominates ===";
+// arr1 has more of a value than arr2: result count
+// is arr1's count minus arr2's count.
+var r3 = array_difference([1, 1, 1, 1], [1, 2]);
+for (var i = 0; i < array_length(r3); i = i + 1) {
+    print string(array_get(r3, i));
+}
+// Output:
+//   1
+//   1
+//   1
+
+print "=== array_difference arr2 dominates ===";
+// arr2 has more of a value than arr1: that value's
+// count in result is 0 (max(0, c1 - c2) = max(0, -3)
+// = 0). The "extra" arr2 copies are ignored.
+var r4 = array_difference([1, 2], [1, 1, 1, 1]);
+for (var i = 0; i < array_length(r4); i = i + 1) {
+    print string(array_get(r4, i));
+}
+// Output:
+//   2
+
+print "=== array_difference full overlap ===";
+// arr1 == arr2: every arr1 element matches an arr2
+// element with equal count, all are dropped. Result
+// is empty.
+var r5 = array_difference([1, 2, 3], [1, 2, 3]);
+for (var i = 0; i < array_length(r5); i = i + 1) {
+    print string(array_get(r5, i));
+}
+// Output:
+// (empty)
+
+print "=== array_difference no overlap ===";
+// No shared values: nothing matches, all arr1
+// elements are kept.
+var r6 = array_difference([1, 2, 3], [4, 5, 6]);
+for (var i = 0; i < array_length(r6); i = i + 1) {
+    print string(array_get(r6, i));
+}
+// Output:
+//   1
+//   2
+//   3
+
+print "=== array_difference empty inputs ===";
+// Empty arr1 -> empty result (nothing to keep).
+// Empty arr2 -> arr1 (nothing to subtract).
+// Both empty -> empty.
+var r7a = array_difference([], [1, 2, 3]);
+var r7b = array_difference([1, 2, 3], []);
+var r7c = array_difference([], []);
+print "empty-arr1:" + string(array_length(r7a));
+for (var i = 0; i < array_length(r7b); i = i + 1) {
+    print string(array_get(r7b, i));
+}
+print "both-empty:" + string(array_length(r7c));
+// Output:
+//   empty-arr1:0
+//   1
+//   2
+//   3
+//   both-empty:0
+
+print "=== array_difference does not mutate ===";
+// Neither input is mutated. (Confirmed by checking
+// lengths and key elements after the call.)
+var a1 = [1, 2, 3];
+var a2 = [2, 4];
+var r8 = array_difference(a1, a2);
+print "a1.len:" + string(array_length(a1));
+print "a1.0:" + string(array_get(a1, 0));
+print "a1.1:" + string(array_get(a1, 1));
+print "a1.2:" + string(array_get(a1, 2));
+print "a2.len:" + string(array_length(a2));
+print "a2.0:" + string(array_get(a2, 0));
+print "a2.1:" + string(array_get(a2, 1));
+print "r8.len:" + string(array_length(r8));
+for (var i = 0; i < array_length(r8); i = i + 1) {
+    print "r8." + string(i) + ":" + string(array_get(r8, i));
+}
+// Output:
+//   a1.len:3
+//   a1.0:1
+//   a1.1:2
+//   a1.2:3
+//   a2.len:2
+//   a2.0:2
+//   a2.1:4
+//   r8.len:2
+//   r8.0:1
+//   r8.1:3
+
+print "=== array_difference strings ===";
+// Same multiset semantics work for strings.
+// ["a", "b", "a"] - ["a"] -> ["b", "a"] (in
+// first-appearance-in-arr1 order with matched elems
+// removed). The first "a" is matched and dropped,
+// "b" is kept, the second "a" is kept (arr2's count
+// of "a" was 1, already consumed).
+var r9 = array_difference(["a", "b", "a"], ["a"]);
+for (var i = 0; i < array_length(r9); i = i + 1) {
+    print array_get(r9, i);
+}
+// Output:
+//   b
+//   a
+
+print "=== array_difference (use case: tasks remaining) ===";
+// A real use case: given a list of all task IDs and
+// a list of completed task IDs, find what's still
+// outstanding. Each task ID appears in "all" exactly
+// once; if it's in "completed", it gets dropped.
+var all_tasks = ["t1", "t2", "t3", "t4", "t5"];
+var completed = ["t2", "t4"];
+var remaining_tasks = array_difference(all_tasks, completed);
+// t1 not in completed -> keep
+// t2 in completed -> drop
+// t3 not in completed -> keep
+// t4 in completed -> drop
+// t5 not in completed -> keep
+// Result: [t1, t3, t5]
+print "remaining.len:" + string(array_length(remaining_tasks));
+for (var i = 0; i < array_length(remaining_tasks); i = i + 1) {
+    print array_get(remaining_tasks, i);
+}
+// Output:
+//   remaining.len:3
+//   t1
+//   t3
+//   t5
+
+print "=== array_difference (use case: tag diff) ===";
+// Compare two articles' tag lists to see which tags
+// are unique to article1 (not in article2). With
+// multiset semantics, a tag that article2 has more
+// copies of is fully "subtracted" from article1's
+// count.
+var article1_tags = ["python", "vm", "python", "compiler"];
+var article2_tags = ["python", "parser"];
+var article1_only = array_difference(article1_tags, article2_tags);
+// python (count 2 in a1, count 1 in a2): first
+//   python matched and dropped, second python
+//   kept (arr2's count of python was 1, already
+//   consumed)
+// vm (count 1 in a1, count 0 in a2): keep
+// compiler (count 1 in a1, count 0 in a2): keep
+// Result: [vm, python, compiler] (3 elements,
+// not 4 — the FIRST python is matched by arr2's
+// python and dropped)
+print "article1_only.len:" + string(array_length(article1_only));
+for (var i = 0; i < array_length(article1_only); i = i + 1) {
+    print array_get(article1_only, i);
+}
+// Output:
+//   article1_only.len:3
+//   vm
+//   python
+//   compiler
+
+// --- What this stage teaches ---
+//
+// (a) "Multiset-vs-unique — the
+//     defining design choice for
+//     array_difference." Two
+//     reasonable semantics:
+//       (i)   max(0, c1 - c2) (Python
+//             Counter - Counter) —
+//             chosen
+//       (ii)  1 if v in arr1 and
+//             not in arr2, else 0
+//             (Python set - set) —
+//             unique difference
+//     The choice was Tom-callable; I
+//     went with (i) because it
+//     matches the mathematical
+//     multiset-subtraction standard
+//     and makes intersect (min),
+//     union (max), and difference
+//     (max(0, c1 - c2)) a natural
+//     algebraic triad. The wiki's
+//     pick for Stage 57 named
+//     multiset subtraction. If Tom
+//     prefers (ii) unique-difference,
+//     the impl is a ~10-line change
+//     (deduplicate arr1, filter by
+//     membership in arr2).
+//
+// (b) "The fill direction is
+//     inverted from Stages 55/56."
+//     Stage 55 (intersect) walked
+//     arr1, kept only matched v's
+//     (skip unmatched). Stage 56
+//     (union) walked arr1, kept
+//     every v, then drained arr2
+//     extras. Stage 57 (difference)
+//     walks arr1, drops matched v's,
+//     keeps only unmatched. The
+//     `remaining` decrement is the
+//     same shape, but the append
+//     condition is inverted. The
+//     discipline: **for set
+//     operations, the
+//     walking-strategy depends on
+//     whether the op is intersection
+//     (skip), union (append+then-
+//     drain), or difference
+//     (drop-if-matched).**
+//
+// (c) "One-directional
+//     subtraction." Difference is
+//     NOT symmetric: a - b != b - a
+//     in general. `difference(b, a)`
+//     would be a different question
+//     ("what's in arr2 but not in
+//     arr1"). The native only
+//     computes the first; the caller
+//     can compute the second by
+//     swapping args. This matches
+//     Python's Counter - Counter
+//     and the convention that the
+//     FIRST arg is the "from" set.
+//
+// (d) "14th-consec-zero-bug stage"
+//     — Stage 57 continues the
+//     streak from Stage 44 (1)
+//     through Stage 56 (13). 0 impl
+//     bugs, 0 test bugs, 1 test
+//     bug caught pre-pass (the
+//     strings test had wrong
+//     order expectation; the impl
+//     correctly outputs b-then-a
+//     because the first a is
+//     dropped). 2 short of the
+//     16-streak record, 3 short of
+//     the 17-streak record. The
+//     next 2 stages (58-59) are the
+//     closing-in period; if all 2
+//     land clean, the 16-streak is
+//     tied at Stage 59, and Stage
+//     60 is the tie-breaker.
+//
+// (e) "Stage 44 push/pop lesson
+//     applied for the 14th
+//     consecutive stage" — the
+//     registration has 1 push + 1
+//     pop (balanced), the function
+//     body has 2 pushes (remaining
+//     + result) and 2 pops after
+//     the loop. The pattern is
+//     "allocate working data on the
+//     Lox heap for free GC
+//     protection." Same as Stages
+//     55/56's array_intersect /
+//     array_union.
+//
+// (f) "Set operations family is
+//     now COMPLETE" — Stage 55
+//     ships array_intersect, Stage
+//     56 ships array_union, Stage
+//     57 ships array_difference.
+//     The algebraic triad
+//     (intersect, union, difference)
+//     is now 3 of 3 and complete.
+//     The next decision is
+//     `array_intersect(arr1, arr2,
+//     keyFn?)` (extend Stage 55
+//     with a keyFn for "intersect
+//     by key") or `array_slice` (a
+//     3-arg variant with start,
+//     end) or `string_pad_end`
+//     (like Stage 22's
+//     string_pad_start but pads at
+//     the end) or modules (~600
+//     lines, Tom's call) or grow
+//     the trigger-mine bucket
+//     beyond byox.

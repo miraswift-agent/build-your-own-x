@@ -2831,6 +2831,127 @@ static Value arrayUnionNative(int argCount, Value *args) {
     return OBJ_VAL(result);
 }
 
+/* Stage 57: array_difference(arr1, arr2) -> array.
+ * Returns the multiset difference: result count of
+ * each value v = max(0, count_in_arr1(v) -
+ * count_in_arr2(v)). This is the third "set
+ * operations" family native (intersect, union,
+ * difference), completing the algebraic triad.
+ *
+ * Algorithm: build a "remaining" copy of arr2,
+ * walk arr1, and for each v: if v is in remaining,
+ * consume one copy of v (decrement) AND do NOT
+ * append to result; if v is not in remaining, append
+ * v to result. The result is arr1 with each v's count
+ * reduced by min(c1(v), c2(v)) — the v's that are
+ * "matched by arr2" are dropped, the v's that are
+ * "extra in arr1 beyond arr2's count" are kept.
+ *
+ * The fill direction is the inverse of Stages 55/56.
+ * Stage 55 (intersect) walked arr1, kept only
+ * matched v's. Stage 56 (union) walked arr1, kept
+ * every v, then drained arr2 extras. Stage 57
+ * (difference) walks arr1, drops matched v's,
+ * keeps unmatched v's. `remaining` is decremented
+ * on every match (like Stage 55/56) but the
+ * condition for appending is inverted.
+ *
+ * Python's Counter - Counter uses max(0, c1 - c2).
+ *
+ * No user-code dispatch (no closure). Architecture
+ * reuses Stage 12 (heap-allocated ObjArrays),
+ * Stage 30 (push/pop discipline), Stage 40
+ * (valuesEqual comparison), Stage 55 (the
+ * "remaining copy" pattern), Stage 56 (the
+ * "decrement remaining" loop). 2 pushes in the
+ * function body (remaining, result), 2 pops after
+ * the loop.
+ *
+ * Edge cases (multiset-correctness):
+ * - array_difference([], x) -> [] (no arr1 elements to keep)
+ * - array_difference(x, []) -> x (no arr2 elements to subtract)
+ * - array_difference([1,2,3], [2,4]) -> [1,3] (2 matched and dropped)
+ * - array_difference([1,1,2], [1]) -> [1,2] (one 1 dropped, one 1 kept, 2 kept)
+ * - array_difference([1], [1,1,1]) -> [] (1 matched and dropped)
+ * - array_difference([1,2,3], [4,5,6]) -> [1,2,3] (nothing matched, all kept)
+ * - array_difference([1,1,1,1], [1,2]) -> [1,1,1] (one 1 dropped, 2 has no arr1 copies)
+ * - array_difference([1,2], [1,1,1,1]) -> [2] (one 1 dropped, 2 kept, 3 arr2 1's ignored)
+ *
+ * The semantics are NOT the same as a unique-set
+ * difference (`{1,2,3} - {2,4} = {1,3}`): a multiset
+ * difference on [1,1,2,3] - [1] = [1,2,3] (one
+ * 1 is dropped, but the OTHER 1 is kept). The
+ * rationale for multiset (matches Stage 55/56): a
+ * unique-set difference composes trivially from
+ * `array_unique + array_filter`, but a multiset
+ * difference has no short composition path.
+ * Following Stage 55's "the native lives at the
+ * gap" rationale. Tom-callable: if Tom prefers
+ * unique-set semantics, the change is ~10 lines
+ * (deduplicate arr1, deduplicate arr2, then
+ * filter arr1 by membership in arr2 — losing
+ * multiplicity information).
+ */
+static Value arrayDifferenceNative(int argCount, Value *args) {
+    if (argCount != 2) {
+        runtimeError("array_difference() takes 2 arguments (%d given).", argCount);
+        return NIL_VAL;  /* error sentinel */
+    }
+    if (!IS_ARRAY(args[0])) {
+        runtimeError("array_difference() argument 0 must be an array.");
+        return NIL_VAL;
+    }
+    if (!IS_ARRAY(args[1])) {
+        runtimeError("array_difference() argument 1 must be an array.");
+        return NIL_VAL;
+    }
+    ObjArray *arr1 = AS_ARRAY(args[0]);
+    ObjArray *arr2 = AS_ARRAY(args[1]);
+
+    /* Build a "remaining" copy of arr2 that we
+     * decrement as matches from arr1 are found. Same
+     * pattern as Stage 55/56. */
+    ObjArray *remaining = newArray(arr2->count);
+    push(OBJ_VAL(remaining));  /* GC: keep alive while filling */
+    for (int i = 0; i < arr2->count; i++) {
+        arrayPush(remaining, arr2->elements[i]);
+    }
+    ObjArray *result = newArray(0);
+    push(OBJ_VAL(result));  /* GC: keep alive while filling */
+    /* Walk arr1. For each v: if v in remaining,
+     * consume one copy of v from remaining AND do NOT
+     * append to result. If v not in remaining, append
+     * v to result. The result is arr1 with each v's
+     * count reduced by min(c1(v), c2(v)) — the v's
+     * that are "matched by arr2" are dropped, the
+     * v's that are "extra in arr1 beyond arr2's count"
+     * are kept. The arr2 entries that are NOT in arr1
+     * are ignored (the multiset difference is
+     * one-directional: a v in arr2 with c2(v) > c1(v)
+     * doesn't appear in the result). */
+    for (int i = 0; i < arr1->count; i++) {
+        Value elem = arr1->elements[i];
+        bool matched = false;
+        for (int j = 0; j < remaining->count; j++) {
+            if (valuesEqual(elem, remaining->elements[j])) {
+                /* Match. Remove from remaining by shifting. */
+                for (int k = j; k < remaining->count - 1; k++) {
+                    remaining->elements[k] = remaining->elements[k + 1];
+                }
+                remaining->count--;
+                matched = true;
+                break;  /* only consume ONE occurrence per arr1 elem */
+            }
+        }
+        if (!matched) {
+            arrayPush(result, elem);  /* not matched — keep it */
+        }
+    }
+    pop();  /* pop the result array */
+    pop();  /* pop the remaining array */
+    return OBJ_VAL(result);
+}
+
 /* Stage 41: array_chunk(arr, size) -> array.
  * Chunks an array into fixed-size sub-arrays. The
  * shape: 2 args (array, size). The size is the chunk
@@ -3983,5 +4104,17 @@ void defineNatives(void) {
     name = copyString("array_union", (int)strlen("array_union"));
     push(OBJ_VAL(name));
     tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayUnionNative)));
+    pop();
+    /* Stage 57: array_difference. Third set
+     * operation, completing the algebraic triad
+     * (intersect, union, difference). Same
+     * "remaining copy" pattern as Stage 55/56, but
+     * the condition for appending is inverted
+     * (matched arr1 elems are DROPPED, not kept).
+     * The push/pop count is balanced: 1 push for
+     * the name, 1 pop after tableSet. */
+    name = copyString("array_difference", (int)strlen("array_difference"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayDifferenceNative)));
     pop();
 }
