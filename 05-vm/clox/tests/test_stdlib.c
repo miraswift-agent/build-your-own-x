@@ -5918,6 +5918,259 @@ static void test_array_intersect_wrong_type(void) {
     free(out2);
 }
 
+static void test_array_union_basic(void) {
+    /* Stage 56: array_union(arr1, arr2).
+     * Multiset union: result count of each
+     * value = max(count_in_arr1, count_in_arr2).
+     * Order of first appearance in arr1, then
+     * first appearance in arr2 of values not yet
+     * in result. ~80 lines, no user-code dispatch,
+     * no new architecture. The new wrinkle: the
+     * fourth 2-source native, "mutate a working
+     * copy" shape, but the fill direction is
+     * different from Stage 55 (one walks, one
+     * drains). */
+    int exitCode;
+    char *out = runClox(
+        "var r = array_union([1, 2, 3], [3, 4, 5]);\n"
+        "for (var i = 0; i < array_length(r); i = i + 1) {\n"
+        "    print string(array_get(r, i));\n"
+        "}\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-union-basic: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "1\n2\n3\n4\n5\n")) {
+        fail("stdlib/array-union-basic: expected '1\\n2\\n3\\n4\\n5\\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_union_empty_inputs(void) {
+    /* Empty + anything: the non-empty one. Two
+     * empties: empty. */
+    int exitCode;
+    char *out1 = runClox(
+        "var r = array_union([], [1, 2, 3]);\n"
+        "for (var i = 0; i < array_length(r); i = i + 1) {\n"
+        "    print string(array_get(r, i));\n"
+        "}\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-union-empty-inputs: a) expected exit 0, got %d (output: %s)", exitCode, out1);
+    } else if (!contains(out1, "1\n2\n3\n")) {
+        fail("stdlib/array-union-empty-inputs: a) expected '1\\n2\\n3\\n', got '%s'", out1);
+    } else {
+        pass();
+    }
+    free(out1);
+
+    char *out2 = runClox(
+        "var r = array_union([1, 2, 3], []);\n"
+        "for (var i = 0; i < array_length(r); i = i + 1) {\n"
+        "    print string(array_get(r, i));\n"
+        "}\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-union-empty-inputs: b) expected exit 0, got %d (output: %s)", exitCode, out2);
+    } else if (!contains(out2, "1\n2\n3\n")) {
+        fail("stdlib/array-union-empty-inputs: b) expected '1\\n2\\n3\\n', got '%s'", out2);
+    } else {
+        pass();
+    }
+    free(out2);
+
+    char *out3 = runClox(
+        "var r = array_union([], []);\n"
+        "print array_length(r);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-union-empty-inputs: c) expected exit 0, got %d (output: %s)", exitCode, out3);
+    } else if (!contains(out3, "0\n")) {
+        fail("stdlib/array-union-empty-inputs: c) expected '0\\n', got '%s'", out3);
+    } else {
+        pass();
+    }
+    free(out3);
+}
+
+static void test_array_union_no_overlap(void) {
+    /* No shared values: result is concatenation
+     * of arr1 then arr2. */
+    int exitCode;
+    char *out = runClox(
+        "var r = array_union([1, 2], [3, 4]);\n"
+        "for (var i = 0; i < array_length(r); i = i + 1) {\n"
+        "    print string(array_get(r, i));\n"
+        "}\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-union-no-overlap: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "1\n2\n3\n4\n")) {
+        fail("stdlib/array-union-no-overlap: expected '1\\n2\\n3\\n4\\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_union_full_overlap(void) {
+    /* arr1 == arr2: result is a copy of arr1
+     * (max(1,1) = 1 per value). */
+    int exitCode;
+    char *out = runClox(
+        "var r = array_union([1, 2, 3], [1, 2, 3]);\n"
+        "for (var i = 0; i < array_length(r); i = i + 1) {\n"
+        "    print string(array_get(r, i));\n"
+        "}\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-union-full-overlap: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "1\n2\n3\n")) {
+        fail("stdlib/array-union-full-overlap: expected '1\\n2\\n3\\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_union_multiset(void) {
+    /* Multiset union: count of v in result =
+     * max(count_in_arr1, count_in_arr2).
+     * intersect([1,1,2], [1,2,2]) = [1,2] (min).
+     * union([1,1,2], [1,2,2]) = [1,1,2,2] (max).
+     * 1: max(2,1)=2; 2: max(1,2)=2. */
+    int exitCode;
+    char *out = runClox(
+        "var r = array_union([1, 1, 2], [1, 2, 2]);\n"
+        "for (var i = 0; i < array_length(r); i = i + 1) {\n"
+        "    print string(array_get(r, i));\n"
+        "}\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-union-multiset: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "1\n1\n2\n2\n")) {
+        fail("stdlib/array-union-multiset: expected '1\\n1\\n2\\n2\\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_union_arr1_dominates(void) {
+    /* arr1 has more of a value than arr2:
+     * result count = arr1's count. */
+    int exitCode;
+    char *out = runClox(
+        "var r = array_union([1, 1, 1, 1], [1, 2]);\n"
+        "for (var i = 0; i < array_length(r); i = i + 1) {\n"
+        "    print string(array_get(r, i));\n"
+        "}\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-union-arr1-dominates: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "1\n1\n1\n1\n2\n")) {
+        fail("stdlib/array-union-arr1-dominates: expected '1\\n1\\n1\\n1\\n2\\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_union_arr2_dominates(void) {
+    /* arr2 has more of a value than arr1:
+     * result count = arr2's count. The extras
+     * from arr2 come AFTER arr1's first-occurrence
+     * walk (because they're in `remaining` at the
+     * end). */
+    int exitCode;
+    char *out = runClox(
+        "var r = array_union([1, 2], [1, 1, 1, 1]);\n"
+        "for (var i = 0; i < array_length(r); i = i + 1) {\n"
+        "    print string(array_get(r, i));\n"
+        "}\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-union-arr2-dominates: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "1\n2\n1\n1\n1\n")) {
+        fail("stdlib/array-union-arr2-dominates: expected '1\\n2\\n1\\n1\\n1\\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_union_does_not_mutate(void) {
+    /* Neither input is mutated. Verify by
+     * checking arr1 and arr2 contents after
+     * the union. */
+    int exitCode;
+    char *out = runClox(
+        "var a1 = [1, 1, 2];\n"
+        "var a2 = [1, 2, 2];\n"
+        "var r = array_union(a1, a2);\n"
+        "print array_length(a1);\n"
+        "print string(array_get(a1, 0));\n"
+        "print string(array_get(a1, 1));\n"
+        "print string(array_get(a1, 2));\n"
+        "print array_length(a2);\n"
+        "print string(array_get(a2, 0));\n"
+        "print string(array_get(a2, 1));\n"
+        "print string(array_get(a2, 2));\n"
+        "print array_length(r);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-union-does-not-mutate: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "3\n1\n1\n2\n3\n1\n2\n2\n4\n")) {
+        fail("stdlib/array-union-does-not-mutate: expected '3\\n1\\n1\\n2\\n3\\n1\\n2\\n2\\n4\\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_union_wrong_arg_count(void) {
+    /* Defensive: 2 args required, not 1 or 3. */
+    int exitCode;
+    char *out1 = runClox("var t = array_union([1, 2]);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-union-wrong-arg-count-1: expected non-zero exit for 1 arg");
+    } else {
+        pass();
+    }
+    free(out1);
+
+    char *out2 = runClox("var t = array_union([1], [2], [3]);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-union-wrong-arg-count-3: expected non-zero exit for 3 args");
+    } else {
+        pass();
+    }
+    free(out2);
+}
+
+static void test_array_union_wrong_type(void) {
+    /* Defensive: 1st arg must be an array,
+     * 2nd arg must be an array. */
+    int exitCode;
+    char *out1 = runClox("var t = array_union(42, [1, 2]);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-union-wrong-type-arr1: expected non-zero exit for non-array 1st arg");
+    } else {
+        pass();
+    }
+    free(out1);
+
+    char *out2 = runClox("var t = array_union([1, 2], 99);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-union-wrong-type-arr2: expected non-zero exit for non-array 2nd arg");
+    } else {
+        pass();
+    }
+    free(out2);
+}
+
 static void test_array_group_by_three_groups(void) {
     /* Three distinct keys, in the order they first appear.
      * Numbers by signum: keyFn(x) = x > 0 (positive vs.
@@ -8603,6 +8856,18 @@ int main(void) {
     test_array_intersect_does_not_mutate();
     test_array_intersect_wrong_arg_count();
     test_array_intersect_wrong_type();
+    /* Stage 56: array_union. Multiset union
+     * (count = max(c1, c2)). */
+    test_array_union_basic();
+    test_array_union_empty_inputs();
+    test_array_union_no_overlap();
+    test_array_union_full_overlap();
+    test_array_union_multiset();
+    test_array_union_arr1_dominates();
+    test_array_union_arr2_dominates();
+    test_array_union_does_not_mutate();
+    test_array_union_wrong_arg_count();
+    test_array_union_wrong_type();
     /* Stage 29: string_split with limit. */
     test_string_split_with_limit();
     test_string_split_limit_zero();

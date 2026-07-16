@@ -2698,6 +2698,139 @@ static Value arrayIntersectNative(int argCount, Value *args) {
     return OBJ_VAL(result);
 }
 
+/* Stage 56: array_union(arr1, arr2) -> array.
+ * Multiset union of two arrays. The shape: 2 args
+ * (array, array). Returns a new array containing
+ * the multiset union of arr1 and arr2. For each
+ * value v, the result has v count = max(count_in_arr1,
+ * count_in_arr2). This matches Python's
+ * collections.Counter | Counter semantics (and the
+ * standard mathematical definition of multiset
+ * union: c_union(v) = max(c1(v), c2(v))).
+ *
+ * Multiset semantics in a list language: a unique-
+ * union composes trivially from `array_unique(arr1) +
+ * filter-unique-from-arr2`, but a multiset-union has
+ * no short composition path (e.g., `array_union(
+ * [1,1,2], [1,1,2])` should be `[1,1,2]`, not `[1,2]
+ * or [1,1,1,1,2,2]`). The native lives at the gap.
+ *
+ * The new wrinkle: this is the fourth 2-source native
+ * (after Stage 37 zip, Stage 50 zip_longest, Stage 55
+ * intersect). Like Stage 55, it uses the "remaining
+ * copy" pattern (mutate a working copy of arr2). The
+ * difference: Stage 55 decrements `remaining` and
+ * skips unmatched arr1 elements (intersection).
+ * Stage 56 appends every arr1 element AND decrements
+ * `remaining`, then appends the leftover `remaining`
+ * (the arr2 values not yet in result). The shape is
+ * the "remaining copy" pattern from Stage 55, but
+ * the fill direction is different — one walks, one
+ * drains.
+ *
+ * NOTE on semantics: the wiki's pick for Stage 56
+ * contained an ambiguous spec ("count = count1 +
+ * count2" vs "deduplicated by min-count"). I chose
+ * `max(count1, count2)` because that's the standard
+ * multiset-union definition (Python's `Counter |
+ * Counter`). If Tom prefers the sum semantics
+ * (`count = count1 + count2`, Python's `Counter +
+ * Counter`), it's a 1-line change in the second
+ * walk (just remove the decrement in the first
+ * walk, then append the full arr2). If Tom prefers
+ * the unique-union semantics (count = 1 if v in
+ * either input, 0 otherwise), the impl is ~10 lines
+ * simpler (a single pass with a "seen" set). The
+ * close-out doc flags this as a Tom-callable
+ * decision; the morning-briefing will surface it.
+ *
+ * No user-code dispatch (no closure). Architecture
+ * reuses Stage 12 (heap-allocated ObjArrays),
+ * Stage 30 (push/pop GC protection), Stage 40
+ * (valuesEqual comparison), Stage 55 (the
+ * "remaining copy" pattern).
+ *
+ * Edge cases:
+ * - array_union([], []) -> []
+ * - array_union([1,2,3], []) -> [1,2,3]
+ * - array_union([], [1,2,3]) -> [1,2,3]
+ * - array_union([1,2,3], [4,5,6]) -> [1,2,3,4,5,6]
+ * - array_union([1,1,2], [1,2,2]) -> [1,1,2,2]
+ *   (a's max = max(2,1)=2, b's max = max(1,2)=2)
+ * - array_union([1,2,3], [1,2,3]) -> [1,2,3]
+ *   (no duplicates; each max = 1)
+ * - does not mutate either input
+ * - value comparison uses clox's valuesEqual()
+ */
+static Value arrayUnionNative(int argCount, Value *args) {
+    if (argCount != 2) {
+        runtimeError("array_union() takes 2 arguments (%d given).", argCount);
+        return NIL_VAL;  /* error sentinel */
+    }
+    if (!IS_ARRAY(args[0])) {
+        runtimeError("array_union() argument 0 must be an array.");
+        return NIL_VAL;
+    }
+    if (!IS_ARRAY(args[1])) {
+        runtimeError("array_union() argument 1 must be an array.");
+        return NIL_VAL;
+    }
+    ObjArray *arr1 = AS_ARRAY(args[0]);
+    ObjArray *arr2 = AS_ARRAY(args[1]);
+
+    /* Build a "remaining" copy of arr2 that we
+     * decrement as matches from arr1 are found. By
+     * the end of the arr1 walk, `remaining` holds
+     * the arr2 values that are NOT yet in the result
+     * (either v not in arr1, or v appears more times
+     * in arr2 than in arr1). Storing on the Lox heap
+     * (as an ObjArray) gets us push/pop GC protection
+     * for free. */
+    ObjArray *remaining = newArray(arr2->count);
+    push(OBJ_VAL(remaining));  /* GC: keep alive while filling */
+    for (int i = 0; i < arr2->count; i++) {
+        arrayPush(remaining, arr2->elements[i]);
+    }
+    ObjArray *result = newArray(0);
+    push(OBJ_VAL(result));  /* GC: keep alive while filling */
+    /* Walk arr1. For each v, append to result AND
+     * remove one occurrence of v from remaining (if
+     * present). If v not in remaining, nothing to
+     * remove. By end of this loop, result has each v
+     * exactly count_in_arr1 times, and `remaining`
+     * holds the arr2 values with count > count_in_arr1
+     * (or count = count_in_arr1 if v not in arr1 but
+     * in arr2, leaving the full arr2 entries). */
+    for (int i = 0; i < arr1->count; i++) {
+        Value elem = arr1->elements[i];
+        arrayPush(result, elem);
+        for (int j = 0; j < remaining->count; j++) {
+            if (valuesEqual(elem, remaining->elements[j])) {
+                /* Match. Remove from remaining by shifting. */
+                for (int k = j; k < remaining->count - 1; k++) {
+                    remaining->elements[k] = remaining->elements[k + 1];
+                }
+                remaining->count--;
+                break;  /* only remove ONE occurrence per arr1 elem */
+            }
+        }
+    }
+    /* Append whatever's left in remaining. These are
+     * the arr2 values that are NOT yet in result
+     * (count_in_arr2 > count_in_arr1, OR v not in
+     * arr1). By the max(c1, c2) rule, we add them
+     * all. The first-appearance-in-arr2 order is
+     * preserved (because `remaining` is filled in
+     * arr2-order and only decremented, never
+     * reordered). */
+    for (int i = 0; i < remaining->count; i++) {
+        arrayPush(result, remaining->elements[i]);
+    }
+    pop();  /* pop the result array */
+    pop();  /* pop the remaining array */
+    return OBJ_VAL(result);
+}
+
 /* Stage 41: array_chunk(arr, size) -> array.
  * Chunks an array into fixed-size sub-arrays. The
  * shape: 2 args (array, size). The size is the chunk
@@ -3841,5 +3974,14 @@ void defineNatives(void) {
     name = copyString("array_intersect", (int)strlen("array_intersect"));
     push(OBJ_VAL(name));
     tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayIntersectNative)));
+    pop();
+    /* Stage 56: array_union. Same "remaining copy"
+     * pattern as Stage 55, but the fill direction is
+     * different (one walks, one drains). The push/
+     * pop count is balanced: 1 push for the name,
+     * 1 pop after tableSet. */
+    name = copyString("array_union", (int)strlen("array_union"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayUnionNative)));
     pop();
 }
