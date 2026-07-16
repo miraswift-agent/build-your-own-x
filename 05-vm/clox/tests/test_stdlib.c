@@ -5519,6 +5519,191 @@ static void test_array_take_while_wrong_type(void) {
     free(out2);
 }
 
+static void test_array_drop_while_basic(void) {
+    /* Stage 54: array_drop_while(arr, predicate).
+     * Drop elements from the start of an array
+     * while the predicate is truthy; return the
+     * rest. Complement of Stage 53's
+     * array_take_while. ~80 lines, reuses
+     * Stage 53's user-code-dispatch +
+     * short-circuit pattern. The new wrinkle:
+     * short-circuit drop. */
+    int exitCode;
+    char *out = runClox(
+        "fun is_positive(x) { return x > 0; }\n"
+        "var arr = [1, 2, 3, -1, 4, 5];\n"
+        "var dropped = array_drop_while(arr, is_positive);\n"
+        "for (var i = 0; i < array_length(dropped); i = i + 1) {\n"
+        "    print string(array_get(dropped, i));\n"
+        "}\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-drop-while-basic: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "-1\n4\n5\n")) {
+        fail("stdlib/array-drop-while-basic: expected '-1\\n4\\n5\\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_drop_while_all_match(void) {
+    /* When all elements match the predicate,
+     * everything is dropped. Returns an empty
+     * array. */
+    int exitCode;
+    char *out = runClox(
+        "fun is_short(s) { return string_length(s) < 5; }\n"
+        "var arr = [\"hi\", \"hey\", \"yo\"];\n"
+        "var dropped = array_drop_while(arr, is_short);\n"
+        "print array_length(dropped);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-drop-while-all-match: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "0\n")) {
+        fail("stdlib/array-drop-while-all-match: expected '0\\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_drop_while_none_match(void) {
+    /* When the first element doesn't match
+     * the predicate, nothing is dropped.
+     * Returns a copy of the full array. */
+    int exitCode;
+    char *out = runClox(
+        "fun is_positive(x) { return x > 0; }\n"
+        "var arr = [-1, 1, 2, -3];\n"
+        "var dropped = array_drop_while(arr, is_positive);\n"
+        "for (var i = 0; i < array_length(dropped); i = i + 1) {\n"
+        "    print string(array_get(dropped, i));\n"
+        "}\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-drop-while-none-match: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "-1\n1\n2\n-3\n")) {
+        fail("stdlib/array-drop-while-none-match: expected '-1\\n1\\n2\\n-3\\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_drop_while_empty(void) {
+    /* When the array is empty, returns an
+     * empty array. */
+    int exitCode;
+    char *out = runClox(
+        "fun always_false(x) { return false; }\n"
+        "var dropped = array_drop_while([], always_false);\n"
+        "print array_length(dropped);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-drop-while-empty: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "0\n")) {
+        fail("stdlib/array-drop-while-empty: expected '0\\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_drop_while_does_not_mutate(void) {
+    /* The source array is not mutated. */
+    int exitCode;
+    char *out = runClox(
+        "fun is_positive(x) { return x > 0; }\n"
+        "var arr = [1, 2, -1, 3, 4];\n"
+        "var dropped = array_drop_while(arr, is_positive);\n"
+        "print \"arr.len:\" + string(array_length(arr));\n"
+        "print \"arr.0:\" + string(array_get(arr, 0));\n"
+        "print \"arr.1:\" + string(array_get(arr, 1));\n"
+        "print \"dropped.len:\" + string(array_length(dropped));\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-drop-while-does-not-mutate: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "arr.len:5\n") || !contains(out, "arr.0:1\n")
+            || !contains(out, "arr.1:2\n") || !contains(out, "dropped.len:3\n")) {
+        fail("stdlib/array-drop-while-does-not-mutate: expected arr.len:5, arr.0:1, arr.1:2, dropped.len:3, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_drop_while_composes_with_take_while(void) {
+    /* Stage 53 + Stage 54 form a natural pair:
+     * take_while + drop_while should reproduce
+     * the input array exactly (predicate-aware
+     * head/tail split). */
+    int exitCode;
+    char *out = runClox(
+        "fun is_positive(x) { return x > 0; }\n"
+        "var arr = [1, 2, 3, -1, 4, 5];\n"
+        "var prefix = array_take_while(arr, is_positive);\n"
+        "var suffix = array_drop_while(arr, is_positive);\n"
+        "print \"prefix.len:\" + string(array_length(prefix));\n"
+        "print \"suffix.len:\" + string(array_length(suffix));\n"
+        "print \"arr.len:\" + string(array_length(arr));\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-drop-while-composes-with-take-while: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "prefix.len:3\n") || !contains(out, "suffix.len:3\n")
+            || !contains(out, "arr.len:6\n")) {
+        fail("stdlib/array-drop-while-composes-with-take-while: expected prefix.len:3, suffix.len:3, arr.len:6, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_drop_while_wrong_arg_count(void) {
+    /* Defensive: 1 arg, 3 args both error.
+     * 2 args is the only valid count. */
+    int exitCode;
+    char *out1 = runClox("var t = array_drop_while([1, 2, 3]);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-drop-while-wrong-arg-count-1: expected non-zero exit for 1 arg");
+    } else {
+        pass();
+    }
+    free(out1);
+
+    char *out2 = runClox("var t = array_drop_while([1], is_positive, 99);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-drop-while-wrong-arg-count-3: expected non-zero exit for 3 args");
+    } else {
+        pass();
+    }
+    free(out2);
+}
+
+static void test_array_drop_while_wrong_type(void) {
+    /* Defensive: 1st arg must be an array,
+     * 2nd arg must be a function. */
+    int exitCode;
+    char *out1 = runClox(
+        "fun f(x) { return true; }\n"
+        "var t = array_drop_while(42, f);\n",
+        &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-drop-while-wrong-type-arr: expected non-zero exit for non-array 1st arg");
+    } else {
+        pass();
+    }
+    free(out1);
+
+    char *out2 = runClox("var t = array_drop_while([1, 2], 99);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-drop-while-wrong-type-fn: expected non-zero exit for non-function 2nd arg");
+    } else {
+        pass();
+    }
+    free(out2);
+}
+
 static void test_array_group_by_three_groups(void) {
     /* Three distinct keys, in the order they first appear.
      * Numbers by signum: keyFn(x) = x > 0 (positive vs.
@@ -8184,6 +8369,15 @@ int main(void) {
     test_array_take_while_does_not_mutate();
     test_array_take_while_wrong_arg_count();
     test_array_take_while_wrong_type();
+    /* Stage 54: array_drop_while. */
+    test_array_drop_while_basic();
+    test_array_drop_while_all_match();
+    test_array_drop_while_none_match();
+    test_array_drop_while_empty();
+    test_array_drop_while_does_not_mutate();
+    test_array_drop_while_composes_with_take_while();
+    test_array_drop_while_wrong_arg_count();
+    test_array_drop_while_wrong_type();
     /* Stage 29: string_split with limit. */
     test_string_split_with_limit();
     test_string_split_limit_zero();

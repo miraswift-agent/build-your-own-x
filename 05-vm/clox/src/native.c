@@ -2497,6 +2497,106 @@ static Value arrayTakeWhileNative(int argCount, Value *args) {
     return OBJ_VAL(result);
 }
 
+/* Stage 54: array_drop_while(arr, predicate) -> array.
+ * Drop elements from the start of an array while
+ * the predicate is truthy. Return the rest. The
+ * shape: 2 args (array, predicate). The predicate
+ * is a 1-arg Lox closure. The result is a new
+ * array containing the elements from the first
+ * position where the predicate was falsy to the
+ * end. Short-circuits as soon as the predicate
+ * is falsy. Source array is not mutated.
+ *
+ * Reuses Stage 53's short-circuit + user-code-
+ * dispatch pattern. The new wrinkle: this is the
+ * COMPLEMENT of array_take_while. While Stage 53
+ * returns the prefix (up to the first falsy),
+ * Stage 54 returns the suffix (from the first
+ * falsy to the end). Same short-circuit point
+ * (the cut position), opposite result. Together
+ * they form a natural pair for splitting an array
+ * into "leading-matches" and "rest", the
+ * predicate-aware analog of Stage 51/52's
+ * array_take/array_drop head/tail split.
+ *
+ * The architecture: single-pass with a "still
+ * dropping" flag. The flag flips to false the
+ * first time the predicate is falsy. While the
+ * flag is true, we keep iterating (looking for
+ * the cut point) without writing to the result.
+ * After the flip, we append each element to the
+ * result. When the loop ends, all elements from
+ * the first falsy to the end are in the result.
+ *
+ * Edge cases (matches Stage 53's shape):
+ * - array_drop_while([], fn) -> [] (empty)
+ * - array_drop_while(arr, always_true) -> [] (everything dropped, no first falsy ever)
+ * - array_drop_while(arr, always_false) -> copy of arr (first element is falsy immediately)
+ * - array_drop_while(arr, fn) where arr's first element is falsy -> copy of arr
+ *
+ * The push/pop count is balanced: 1 push (the
+ * result), 1 pop after the loop, no early returns
+ * (unlike Stage 53, the loop must run to completion
+ * to gather the suffix — we can't return early
+ * because the result lives in the loop body). The
+ * Stage 44 push/pop lesson applies. */
+static Value arrayDropWhileNative(int argCount, Value *args) {
+    if (argCount != 2) {
+        runtimeError("array_drop_while() takes 2 arguments (%d given).", argCount);
+        return NIL_VAL;  /* error sentinel */
+    }
+    if (!IS_ARRAY(args[0])) {
+        runtimeError("array_drop_while() argument 0 must be an array.");
+        return NIL_VAL;
+    }
+    if (!IS_CLOSURE(args[1])) {
+        runtimeError("array_drop_while() argument 1 must be a function.");
+        return NIL_VAL;
+    }
+    ObjArray *src = AS_ARRAY(args[0]);
+    ObjClosure *predicate = AS_CLOSURE(args[1]);
+    if (predicate->function->arity != 1) {
+        runtimeError("array_drop_while() predicate must take 1 argument (got %d).",
+                     predicate->function->arity);
+        return NIL_VAL;
+    }
+
+    /* The new wrinkle: short-circuit drop
+     * (complement of short-circuit take).
+     * Iterate from the start, calling the
+     * predicate on each element. The "still
+     * dropping" flag flips to false the first
+     * time the predicate is falsy. After the
+     * flip, every element is appended to the
+     * result. The result is the suffix from
+     * the first falsy to the end. */
+    ObjArray *result = newArray(0);
+    push(OBJ_VAL(result));  /* GC: keep alive while filling */
+    bool stillDropping = true;
+    for (int i = 0; i < src->count; i++) {
+        if (stillDropping) {
+            push(OBJ_VAL(predicate));  /* callee */
+            push(src->elements[i]);    /* arg 1 */
+            Value predResult = callClosureFromNative(predicate, 1);
+            /* clox's truthy rule: only false and nil are falsy. */
+            if ((IS_BOOL(predResult) && !AS_BOOL(predResult)) || IS_NIL(predResult)) {
+                /* Predicate is falsy at position i.
+                 * Flip the flag; this element and
+                 * every subsequent element go into
+                 * the result. */
+                stillDropping = false;
+                arrayPush(result, src->elements[i]);
+            }
+            /* else: predicate is truthy, keep
+             * dropping. Element is not appended. */
+        } else {
+            arrayPush(result, src->elements[i]);
+        }
+    }
+    pop();  /* pop the result array */
+    return OBJ_VAL(result);
+}
+
 /* Stage 41: array_chunk(arr, size) -> array.
  * Chunks an array into fixed-size sub-arrays. The
  * shape: 2 args (array, size). The size is the chunk
@@ -3595,5 +3695,26 @@ void defineNatives(void) {
     name = copyString("array_take_while", (int)strlen("array_take_while"));
     push(OBJ_VAL(name));
     tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayTakeWhileNative)));
+    pop();
+
+    /* Stage 54: array_drop_while. Drop
+     * elements from the start while the
+     * predicate is truthy; return the rest.
+     * The complement of Stage 53's
+     * array_take_while. ~80 lines, reuses
+     * Stage 53's user-code-dispatch +
+     * short-circuit pattern (the cut point
+     * is the same, the result is the
+     * complement of the prefix-vs-suffix).
+     * The new wrinkle: short-circuit drop.
+     * The push/pop count is balanced: 1
+     * push for the name, 1 pop after
+     * tableSet. The function body has 1
+     * push (the result), 1 pop after the
+     * loop. The Stage 44 push/pop lesson
+     * applies. */
+    name = copyString("array_drop_while", (int)strlen("array_drop_while"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayDropWhileNative)));
     pop();
 }

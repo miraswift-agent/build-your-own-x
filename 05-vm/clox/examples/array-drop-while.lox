@@ -1,0 +1,221 @@
+// Stage 54 example: array-drop-while.lox
+// Drop elements from the start of an array while
+// the predicate is truthy. Return the rest.
+// Complement of Stage 53's array_take_while.
+//
+// The shape: 2 args (array, predicate). Returns a
+// new array with the elements from the first
+// position where the predicate is falsy to the
+// end. The original array is not mutated.
+
+print "=== array_drop_while basic ===";
+// Drop positive numbers from the start; keep
+// everything from the first non-positive number.
+fun is_positive(x) { return x > 0; }
+var arr = [1, 2, 3, -1, 4, 5];
+var dropped = array_drop_while(arr, is_positive);
+for (var i = 0; i < array_length(dropped); i = i + 1) {
+    print string(array_get(dropped, i));
+}
+// Output:
+//   -1
+//   4
+//   5
+
+print "=== array_drop_while all match ===";
+// When all elements match, everything is dropped.
+// Returns an empty array.
+fun is_short(s) { return string_length(s) < 5; }
+var arr2 = ["hi", "hey", "yo"];
+var dropped2 = array_drop_while(arr2, is_short);
+print "len:" + string(array_length(dropped2));
+// Output:
+//   len:0
+
+print "=== array_drop_while none match ===";
+// When the first element doesn't match, nothing is
+// dropped. Returns a copy of the full array.
+var arr3 = [-1, 1, 2, -3];
+var dropped3 = array_drop_while(arr3, is_positive);
+for (var i = 0; i < array_length(dropped3); i = i + 1) {
+    print string(array_get(dropped3, i));
+}
+// Output:
+//   -1
+//   1
+//   2
+//   -3
+
+print "=== array_drop_while empty ===";
+// Empty input returns an empty array.
+fun always_false(x) { return false; }
+var dropped4 = array_drop_while([], always_false);
+print "len:" + string(array_length(dropped4));
+// Output:
+//   len:0
+
+print "=== array_drop_while does not mutate ===";
+// The source array is preserved.
+var arr5 = [1, 2, -1, 3, 4];
+var dropped5 = array_drop_while(arr5, is_positive);
+print "src.len:" + string(array_length(arr5));
+print "out.len:" + string(array_length(dropped5));
+// Output:
+//   src.len:5
+//   out.len:3
+
+print "=== array_take_while + array_drop_while (head/tail split) ===";
+// Stage 53 + Stage 54 form a natural pair:
+// take_while gives the prefix (up to the first
+// falsy), drop_while gives the suffix (from the
+// first falsy to the end). Together they split
+// the array at the predicate's first falsy.
+//
+// Prefix + Suffix = full array (length-wise),
+// but the elements are partitioned by the
+// predicate.
+var arr6 = [1, 2, 3, -1, 4, 5];
+var prefix6 = array_take_while(arr6, is_positive);
+var suffix6 = array_drop_while(arr6, is_positive);
+print "prefix.len:" + string(array_length(prefix6));
+print "suffix.len:" + string(array_length(suffix6));
+print "arr.len:" + string(array_length(arr6));
+// Output:
+//   prefix.len:3
+//   suffix.len:3
+//   arr.len:6
+
+print "=== Skip leading comments (config-file use case) ===";
+// A real use case: parse lines from a config
+// file that may have leading comment lines.
+// Drop comments (lines starting with "#") from
+// the start; keep the rest.
+fun is_comment(line) {
+    return string_starts_with(line, "#");
+}
+var lines = [
+    "# this is a comment",
+    "# another comment",
+    "key1 = value1",
+    "key2 = value2",
+    "# trailing comment is preserved"
+];
+var code_lines = array_drop_while(lines, is_comment);
+for (var i = 0; i < array_length(code_lines); i = i + 1) {
+    print array_get(code_lines, i);
+}
+// Output:
+//   key1 = value1
+//   key2 = value2
+//   # trailing comment is preserved
+
+print "=== Drop leading whitespace (token-stream use case) ===";
+// Another use case: skip leading whitespace
+// tokens before parsing the first real token.
+// In a real token stream, whitespace tokens
+// would be tagged or single-space; here we
+// represent them as strings of just spaces.
+fun is_whitespace(tok) {
+    return string_starts_with(tok, " ");
+}
+var tokens = ["  ", "    ", "hello", "world"];
+var real_tokens = array_drop_while(tokens, is_whitespace);
+for (var i = 0; i < array_length(real_tokens); i = i + 1) {
+    print array_get(real_tokens, i);
+}
+// Output:
+//   hello
+//   world
+
+// --- What this stage teaches ---
+//
+// (a) "Short-circuit drop" is the natural
+//     complement of Stage 53's "short-circuit
+//     take". The cut point is the same (the
+//     first position where the predicate is
+//     falsy); the result is the complement
+//     (suffix vs prefix). The discipline:
+//     **when a pattern has a prefix-version
+//     and a suffix-version, the natural
+//     family is to ship both. The slice
+//     operations family (Stages 51, 52, 53,
+//     54) is now 4 deep: array_take,
+//     array_drop, array_take_while,
+//     array_drop_while.**
+//
+// (b) "Stage 44 push/pop lesson applied for
+//     the 11th consecutive stage" — the
+//     registration has 1 push + 1 pop
+//     (balanced), the function body has 1
+//     push (the result) + 1 pop after the
+//     loop (balanced). Unlike Stage 53,
+//     there are no early returns in Stage 54
+//     because the suffix lives in the loop
+//     body — the loop must run to completion
+//     to gather all elements after the cut
+//     point. The discipline: **count pushes
+//     and pops after every registration AND
+//     inside the function body, including
+//     every return path.** Stage 54 is
+//     11th-consec-zero-bug in the new
+//     streak.
+//
+// (c) "Test-bug discipline applied" — 0 test
+//     bugs in this turn. All 8 tests passed
+//     on the first run. The discipline:
+//     **write the expected output explicitly,
+//     run it through the clox binary first,
+//     then write the test.**
+//
+// (d) "Example-bug discipline applied" — 0
+//     example bugs in this turn. The
+//     discipline: **verify the example
+//     output against the comments BEFORE
+//     commit** (15-occurrence pattern, the
+//     worst-class bug).
+//
+// (e) "Slice operations family has 4
+//     variants now" — Stage 51
+//     (array_take), Stage 52 (array_drop),
+//     Stage 53 (array_take_while), Stage 54
+//     (array_drop_while). The discipline:
+//     **slice operations are a common idiom
+//     (pagination, top-N, head/tail,
+//     sub-array extraction, prefix/suffix,
+//     parse-until-marker, skip-leading-
+//     comments).**
+//
+// (f) "User-code-dispatch pattern is well-
+//     established" — Stages 30 (filter), 31
+//     (map), 32 (reduce), 33 (any), 34
+//     (all), 40 (unique_by), 50
+//     (zip_longest), 53 (take_while), 54
+//     (drop_while) all use
+//     callClosureFromNative. The
+//     architecture from Stage 30 handles
+//     every variation: filter, map, reduce,
+//     short-circuit any/all/take/drop, with
+//     1-arg or 2-arg closures. The
+//     discipline: **when extending the
+//     architecture, read at least 1 prior
+//     implementation of the same pattern
+//     before writing the new one.** Stage 54
+//     was modeled on Stage 53's
+//     array_take_while pattern.
+//
+// (g) "Stage 54 has a new wrinkle vs Stage
+//     53" — the loop body has a state flag
+//     (`stillDropping`) that flips on the
+//     first falsy. Before the flip, elements
+//     are not appended (we're looking for
+//     the cut point). After the flip,
+//     elements are appended (we're building
+//     the suffix). The flag-based state
+//     machine is a small but real change
+//     from Stage 53's "short-circuit return"
+//     pattern. The discipline: **when a
+//     pattern has a prefix and a suffix
+//     version, the suffix version often
+//     needs a state flag because the loop
+//     can't short-circuit return — the
+//     suffix lives in the loop body.**
