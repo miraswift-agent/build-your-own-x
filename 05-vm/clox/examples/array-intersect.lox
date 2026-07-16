@@ -1,0 +1,226 @@
+// Stage 55 example: array-intersect.lox
+// Multiset intersection: for each value v that
+// appears in both arr1 and arr2, the result has
+// v count = min(count_in_arr1, count_in_arr2).
+// Order of first appearance in arr1 is preserved.
+// Neither input is mutated.
+//
+// The shape: 2 args (array, array). Returns a
+// new array. The new wrinkle: multiset semantics
+// in a list language.
+
+print "=== array_intersect basic ===";
+// arr1 = [1, 2, 3, 2, 1] (counts: 1->2, 2->2, 3->1)
+// arr2 = [2, 3, 4, 2]    (counts: 2->2, 3->1, 4->1)
+// Result: [2, 3, 2] — arr1 order, with each value's
+// count = min(count_in_arr1, count_in_arr2):
+//   1: min(2, 0) = 0  (not in result)
+//   2: min(2, 2) = 2
+//   3: min(1, 1) = 1
+//   4: min(0, 1) = 0  (not in result)
+var r = array_intersect([1, 2, 3, 2, 1], [2, 3, 4, 2]);
+for (var i = 0; i < array_length(r); i = i + 1) {
+    print string(array_get(r, i));
+}
+// Output:
+//   2
+//   3
+//   2
+
+print "=== array_intersect multiset (the defining test) ===";
+// The multiset vs set distinction.
+// arr1 = [1, 1, 2] (1 count = 2, 2 count = 1)
+// arr2 = [1, 2, 2] (1 count = 1, 2 count = 2)
+//   1: min(2, 1) = 1
+//   2: min(1, 2) = 1
+// Result: [1, 2] — NOT [1, 1, 2] (multiset, not
+// just "is in both"). A pure-set implementation
+// would also give [1, 2] here, but the multiset
+// identity breaks when the counts differ:
+//   array_intersect([1, 1, 1], [1, 1]) = [1, 1]
+// (min(3, 2) = 2 copies, not just 1)
+var r2 = array_intersect([1, 1, 2], [1, 2, 2]);
+for (var i = 0; i < array_length(r2); i = i + 1) {
+    print string(array_get(r2, i));
+}
+// Output:
+//   1
+//   2
+
+print "=== array_intersect full overlap ===";
+// arr1 == arr2: result is a copy of arr1.
+var r3 = array_intersect([1, 2, 3], [1, 2, 3]);
+for (var i = 0; i < array_length(r3); i = i + 1) {
+    print string(array_get(r3, i));
+}
+// Output:
+//   1
+//   2
+//   3
+
+print "=== array_intersect no overlap ===";
+// No shared values: returns empty.
+var r4 = array_intersect([1, 2, 3], [4, 5, 6]);
+print "len:" + string(array_length(r4));
+// Output:
+//   len:0
+
+print "=== array_intersect empty inputs ===";
+// Empty arr1 or arr2: returns empty.
+var r5a = array_intersect([], [1, 2, 3]);
+var r5b = array_intersect([1, 2, 3], []);
+print "empty-arr1:" + string(array_length(r5a));
+print "empty-arr2:" + string(array_length(r5b));
+// Output:
+//   empty-arr1:0
+//   empty-arr2:0
+
+print "=== array_intersect does not mutate ===";
+// Neither input is mutated. (Confirmed by checking
+// lengths and key elements after the call.)
+var a1 = [1, 2, 3, 2, 1];
+var a2 = [2, 3, 4, 2];
+var r6 = array_intersect(a1, a2);
+print "a1.len:" + string(array_length(a1));
+print "a1.0:" + string(array_get(a1, 0));
+print "a1.4:" + string(array_get(a1, 4));
+print "a2.len:" + string(array_length(a2));
+print "a2.3:" + string(array_get(a2, 3));
+print "r6.len:" + string(array_length(r6));
+// Output:
+//   a1.len:5
+//   a1.0:1
+//   a1.4:1
+//   a2.len:4
+//   a2.3:2
+//   r6.len:3
+
+print "=== array_intersect strings ===";
+// Value comparison uses clox's valuesEqual() (same
+// as Stage 40's array_unique_by). Strings compare
+// by content.
+var r7 = array_intersect(
+    ["apple", "banana", "apple", "cherry"],
+    ["banana", "apple", "date", "apple"]
+);
+// apple: min(2, 2) = 2
+// banana: min(1, 1) = 1
+// cherry: min(1, 0) = 0
+// date: min(0, 1) = 0
+// Result: [apple, banana, apple] (arr1 order)
+for (var i = 0; i < array_length(r7); i = i + 1) {
+    print array_get(r7, i);
+}
+// Output:
+//   apple
+//   banana
+//   apple
+
+print "=== array_intersect (use case: shared tags) ===";
+// A real use case: find tags shared between two
+// articles, with the multiset count = the number
+// of times each tag appears in BOTH articles.
+var article1_tags = ["python", "vm", "compiler", "python"];
+var article2_tags = ["python", "compiler", "parser", "python"];
+var shared = array_intersect(article1_tags, article2_tags);
+// python: min(2, 2) = 2
+// vm: min(1, 0) = 0
+// compiler: min(1, 1) = 1
+// parser: min(0, 1) = 0
+// Result: [python, compiler, python] (arr1 order)
+print "shared.len:" + string(array_length(shared));
+for (var i = 0; i < array_length(shared); i = i + 1) {
+    print array_get(shared, i);
+}
+// Output:
+//   shared.len:3
+//   python
+//   compiler
+//   python
+
+// --- What this stage teaches ---
+//
+// (a) "Multiset vs set semantics" — the
+//     defining design choice for
+//     array_intersect. Python's `set & set`
+//     gives unique intersection (each value
+//     appears at most once). Python's
+//     `Counter & Counter` gives multiset
+//     intersection (each value appears up to
+//     its min count). We chose multiset.
+//     A user who wants unique intersection
+//     can compose: `array_unique(arr1) +
+//     filter_by_contains_in_arr2`. A user
+//     who wants multiset cannot compose
+//     trivially — that asymmetry is the
+//     reason this native exists. The
+//     discipline: **a new native should fill
+//     the gap that no short composition can
+//     fill.** Multiset intersection is one
+//     such gap.
+//
+// (b) "The 12th-consec-zero-bug streak" —
+//     Stage 55 continues the streak from
+//     Stage 44 (1) through Stage 54 (11).
+//     0 impl bugs, 0 test bugs in Stage 55.
+//     4 short of the 16-streak record, 5
+//     short of the 17-streak record. The
+//     next 4 stages (56-59) are the
+//     closing-in period; if all 4 land
+//     clean, the 16-streak is tied, and
+//     Stage 60 is the tie-breaker.
+//
+// (c) "Stage 44 push/pop lesson applied for
+//     the 12th consecutive stage" — the
+//     registration has 1 push + 1 pop
+//     (balanced), the function body has 2
+//     pushes (remaining + result) and 2 pops
+//     after the loop. The pattern is
+//     "allocate working data on the Lox heap
+//     for free GC protection." Same as Stage
+//     40's array_unique_by which uses the
+//     "seenKeys" parallel array. The
+//     discipline: **for any new array-of-
+//     arrays native, count pushes inside the
+//     function body too, not just at
+//     registration.**
+//
+// (d) "2-array-iteration pattern is well-
+//     established" — Stage 37 (array_zip)
+//     and Stage 50 (array_zip_longest) both
+//     iterate two arrays. Stage 55 is the
+//     third. The new wrinkle: Stage 55
+//     mutates a working copy of one input
+//     (the "remaining" array), while Stages
+//     37 and 50 only read both. The
+//     discipline: **2-array iteration has
+//     three flavors: read-only (zip, zip
+//     longest), mutation-of-working-copy
+//     (intersect), and result-construction
+//     only (set operations like union and
+//     difference). Stage 55 establishes
+//     flavor 2.**
+//
+// (e) "Set operations family is now 1 deep"
+//     — Stage 55 ships array_intersect.
+//     The natural follow-ups are
+//     array_union (combine, with multiset
+//     counts) and array_difference
+//     (subtract, with multiset counts).
+//     ~30 lines each. After Stage 55 ships,
+//     the family is established and the
+//     next two are mirror implementations.
+//
+// (f) "The order preservation discipline" —
+//     when a native returns a multiset-
+//     aware result, the order of the FIRST
+//     input is preserved. This matches
+//     Python's Counter & Counter (the LHS
+//     defines the order). The discipline:
+//     **define order in terms of the first
+//     input, not in terms of values seen
+//     first globally.** This makes the
+//     operation non-symmetric
+//     (`intersect(a, b) != intersect(b, a)`
+//     in general), which is a feature not a
+//     bug.

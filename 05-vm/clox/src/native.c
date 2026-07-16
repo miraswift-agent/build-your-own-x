@@ -2597,6 +2597,107 @@ static Value arrayDropWhileNative(int argCount, Value *args) {
     return OBJ_VAL(result);
 }
 
+/* Stage 55: array_intersect(arr1, arr2) -> array.
+ * The first "set operations" native. Returns a new
+ * array containing the multiset intersection of
+ * arr1 and arr2. For each value v that appears in
+ * both, the result has v count = min(count_in_arr1,
+ * count_in_arr2). The order of first appearance in
+ * arr1 is preserved. Neither input is mutated.
+ *
+ * Shape: 2 args (array, array). No user-code
+ * dispatch. The new wrinkle: multiset semantics
+ * in a list language. Python's `Counter & Counter`
+ * semantics (a values' result count = min of its
+ * counts in the two inputs), not Python's `set`
+ * semantics (which would dedupe to 1 per value).
+ *
+ * JS reference: no direct equivalent (JS Sets are
+ * unique by design). LISP/Clojure reference: the
+ * multiset-intersection shape.
+ *
+ * Algorithm: walk arr1; for each element, scan
+ * a "remaining" copy of arr2 (decremented as
+ * matches are found) and append-on-first-match.
+ * O(n*m) worst case; the cost is the shift on
+ * remove. For typical workloads (small arr2 or
+ * few matches), this is fine.
+ *
+ * Why multiset (count = min) instead of unique
+ * intersection: a unique-intersection native
+ * composes trivially from `array_unique(arr1)`
+ * + filter-by-contains-in-arr2, but a multiset
+ * intersection has no short composition path —
+ * `array_intersect([1,1,2], [1,1,2])` should be
+ * `[1,1,2]`, not `[1,2]`. The set operations
+ * family (intersect, union, difference) is
+ * established here; array_union and
+ * array_difference follow naturally in Stage 56+
+ * with the same multiset semantics.
+ *
+ * Edge cases:
+ * - array_intersect([], anything) -> []
+ * - array_intersect(anything, []) -> []
+ * - array_intersect([1,2,3], [4,5,6]) -> [] (no overlap)
+ * - array_intersect([1,1,2], [1,2,2]) -> [1,2] (a's min = min(2,1)=1, b's min = min(1,2)=1)
+ * - array_intersect([1,2,3], [1,2,3]) -> [1,2,3] (full overlap)
+ * - value comparison uses clox's valuesEqual() (same as Stage 40's array_unique_by)
+ */
+static Value arrayIntersectNative(int argCount, Value *args) {
+    if (argCount != 2) {
+        runtimeError("array_intersect() takes 2 arguments (%d given).", argCount);
+        return NIL_VAL;  /* error sentinel */
+    }
+    if (!IS_ARRAY(args[0])) {
+        runtimeError("array_intersect() argument 0 must be an array.");
+        return NIL_VAL;
+    }
+    if (!IS_ARRAY(args[1])) {
+        runtimeError("array_intersect() argument 1 must be an array.");
+        return NIL_VAL;
+    }
+    ObjArray *arr1 = AS_ARRAY(args[0]);
+    ObjArray *arr2 = AS_ARRAY(args[1]);
+
+    /* Build a "remaining" copy of arr2 that we
+     * decrement as matches are found. Storing it
+     * on the Lox heap (as an ObjArray) gets us
+     * push/pop GC protection for free; the values
+     * are borrowed from arr2, not re-allocated. */
+    ObjArray *remaining = newArray(arr2->count);
+    push(OBJ_VAL(remaining));  /* GC: keep alive while filling */
+    for (int i = 0; i < arr2->count; i++) {
+        arrayPush(remaining, arr2->elements[i]);
+    }
+    ObjArray *result = newArray(0);
+    push(OBJ_VAL(result));  /* GC: keep alive while filling */
+    /* Walk arr1. For each element, find the first
+     * match in remaining, remove it, append to
+     * result. If no match in remaining, skip. */
+    for (int i = 0; i < arr1->count; i++) {
+        Value elem = arr1->elements[i];
+        bool matched = false;
+        for (int j = 0; j < remaining->count; j++) {
+            if (valuesEqual(elem, remaining->elements[j])) {
+                /* Found a match. Append to result and
+                 * remove from remaining by shifting. */
+                arrayPush(result, elem);
+                for (int k = j; k < remaining->count - 1; k++) {
+                    remaining->elements[k] = remaining->elements[k + 1];
+                }
+                remaining->count--;
+                matched = true;
+                break;
+            }
+        }
+        /* If not matched, skip (don't append). */
+        (void)matched;  /* suppress unused-variable warning */
+    }
+    pop();  /* pop the result array */
+    pop();  /* pop the remaining array */
+    return OBJ_VAL(result);
+}
+
 /* Stage 41: array_chunk(arr, size) -> array.
  * Chunks an array into fixed-size sub-arrays. The
  * shape: 2 args (array, size). The size is the chunk
@@ -3716,5 +3817,29 @@ void defineNatives(void) {
     name = copyString("array_drop_while", (int)strlen("array_drop_while"));
     push(OBJ_VAL(name));
     tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayDropWhileNative)));
+    pop();
+
+    /* Stage 55: array_intersect. The first
+     * "set operations" native. Multiset
+     * intersection: result count of each
+     * value = min(count_in_arr1,
+     * count_in_arr2). Order of first
+     * appearance in arr1 is preserved.
+     * ~80 lines, no user-code dispatch,
+     * no new architecture. Reuses Stage
+     * 12 (arrays as first-class heap
+     * values), Stage 30's push/pop
+     * discipline (the function body has
+     * 2 pushes — remaining and result —
+     * and 2 pops after the loop), and
+     * Stage 40's valuesEqual() comparison
+     * (the same comparison array_unique_by
+     * uses). The new wrinkle: multiset
+     * semantics in a list language. The
+     * push/pop count is balanced: 1 push
+     * for the name, 1 pop after tableSet. */
+    name = copyString("array_intersect", (int)strlen("array_intersect"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayIntersectNative)));
     pop();
 }

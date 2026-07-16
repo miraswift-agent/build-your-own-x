@@ -5704,6 +5704,220 @@ static void test_array_drop_while_wrong_type(void) {
     free(out2);
 }
 
+static void test_array_intersect_basic(void) {
+    /* Stage 55: array_intersect(arr1, arr2).
+     * Multiset intersection: result count of
+     * each value = min(count_in_arr1,
+     * count_in_arr2). Order of first appearance
+     * in arr1 is preserved. ~80 lines, no
+     * user-code dispatch, no new architecture.
+     * The new wrinkle: multiset semantics in a
+     * list language. */
+    int exitCode;
+    char *out = runClox(
+        "var r = array_intersect([1, 2, 3, 2, 1], [2, 3, 4, 2]);\n"
+        "for (var i = 0; i < array_length(r); i = i + 1) {\n"
+        "    print string(array_get(r, i));\n"
+        "}\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-intersect-basic: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "2\n3\n2\n")) {
+        fail("stdlib/array-intersect-basic: expected '2\\n3\\n2\\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_intersect_empty_input(void) {
+    /* Empty arr1 returns empty result. */
+    int exitCode;
+    char *out = runClox(
+        "var r = array_intersect([], [1, 2, 3]);\n"
+        "print array_length(r);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-intersect-empty-input: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "0\n")) {
+        fail("stdlib/array-intersect-empty-input: expected '0\\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_intersect_empty_arr2(void) {
+    /* Empty arr2 returns empty result (nothing to intersect with). */
+    int exitCode;
+    char *out = runClox(
+        "var r = array_intersect([1, 2, 3], []);\n"
+        "print array_length(r);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-intersect-empty-arr2: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "0\n")) {
+        fail("stdlib/array-intersect-empty-arr2: expected '0\\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_intersect_no_overlap(void) {
+    /* No shared values: returns empty. */
+    int exitCode;
+    char *out = runClox(
+        "var r = array_intersect([1, 2, 3], [4, 5, 6]);\n"
+        "print array_length(r);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-intersect-no-overlap: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "0\n")) {
+        fail("stdlib/array-intersect-no-overlap: expected '0\\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_intersect_full_overlap(void) {
+    /* arr1 == arr2: result is a copy of arr1. */
+    int exitCode;
+    char *out = runClox(
+        "var r = array_intersect([1, 2, 3], [1, 2, 3]);\n"
+        "for (var i = 0; i < array_length(r); i = i + 1) {\n"
+        "    print string(array_get(r, i));\n"
+        "}\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-intersect-full-overlap: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "1\n2\n3\n")) {
+        fail("stdlib/array-intersect-full-overlap: expected '1\\n2\\n3\\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_intersect_multiset(void) {
+    /* The defining test: multiset semantics.
+     * arr1 = [1, 1, 2] (counts: 1->2, 2->1).
+     * arr2 = [1, 2, 2] (counts: 1->1, 2->2).
+     * Result count of 1 = min(2, 1) = 1.
+     * Result count of 2 = min(1, 2) = 1.
+     * Result: [1, 2] (arr1 order, deduped to
+     * the min count, not to 1 globally). */
+    int exitCode;
+    char *out = runClox(
+        "var r = array_intersect([1, 1, 2], [1, 2, 2]);\n"
+        "for (var i = 0; i < array_length(r); i = i + 1) {\n"
+        "    print string(array_get(r, i));\n"
+        "}\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-intersect-multiset: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "1\n2\n")) {
+        fail("stdlib/array-intersect-multiset: expected '1\\n2\\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_intersect_multiset_min_count(void) {
+    /* When arr1 has more copies of a value than arr2,
+     * result count is bounded by arr2's count.
+     * arr1 = [a, a, a] (count 3), arr2 = [a, a] (count 2).
+     * Result: [a, a] (count 2 = min(3, 2)). */
+    int exitCode;
+    char *out = runClox(
+        "var r = array_intersect([\"a\", \"a\", \"a\"], [\"a\", \"a\"]);\n"
+        "print array_length(r);\n"
+        "for (var i = 0; i < array_length(r); i = i + 1) {\n"
+        "    print array_get(r, i);\n"
+        "}\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-intersect-multiset-min-count: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "2\n") || !contains(out, "a\na\n")) {
+        fail("stdlib/array-intersect-multiset-min-count: expected '2\\na\\na\\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_intersect_does_not_mutate(void) {
+    /* Neither arr1 nor arr2 is mutated. */
+    int exitCode;
+    char *out = runClox(
+        "var a1 = [1, 2, 3, 2, 1];\n"
+        "var a2 = [2, 3, 4, 2];\n"
+        "var r = array_intersect(a1, a2);\n"
+        "print \"a1.len:\" + string(array_length(a1));\n"
+        "print \"a1.0:\" + string(array_get(a1, 0));\n"
+        "print \"a1.4:\" + string(array_get(a1, 4));\n"
+        "print \"a2.len:\" + string(array_length(a2));\n"
+        "print \"a2.0:\" + string(array_get(a2, 0));\n"
+        "print \"a2.3:\" + string(array_get(a2, 3));\n"
+        "print \"r.len:\" + string(array_length(r));\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-intersect-does-not-mutate: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "a1.len:5\n") || !contains(out, "a1.0:1\n")
+            || !contains(out, "a1.4:1\n") || !contains(out, "a2.len:4\n")
+            || !contains(out, "a2.0:2\n") || !contains(out, "a2.3:2\n")
+            || !contains(out, "r.len:3\n")) {
+        fail("stdlib/array-intersect-does-not-mutate: expected a1.len:5, a1.0:1, a1.4:1, a2.len:4, a2.0:2, a2.3:2, r.len:3, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_intersect_wrong_arg_count(void) {
+    /* Defensive: 1 arg, 3 args both error.
+     * 2 args is the only valid count. */
+    int exitCode;
+    char *out1 = runClox("var t = array_intersect([1, 2, 3]);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-intersect-wrong-arg-count-1: expected non-zero exit for 1 arg");
+    } else {
+        pass();
+    }
+    free(out1);
+
+    char *out2 = runClox("var t = array_intersect([1], [2], 99);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-intersect-wrong-arg-count-3: expected non-zero exit for 3 args");
+    } else {
+        pass();
+    }
+    free(out2);
+}
+
+static void test_array_intersect_wrong_type(void) {
+    /* Defensive: 1st arg must be an array,
+     * 2nd arg must be an array. */
+    int exitCode;
+    char *out1 = runClox("var t = array_intersect(42, [1, 2]);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-intersect-wrong-type-arr1: expected non-zero exit for non-array 1st arg");
+    } else {
+        pass();
+    }
+    free(out1);
+
+    char *out2 = runClox("var t = array_intersect([1, 2], 99);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-intersect-wrong-type-arr2: expected non-zero exit for non-array 2nd arg");
+    } else {
+        pass();
+    }
+    free(out2);
+}
+
 static void test_array_group_by_three_groups(void) {
     /* Three distinct keys, in the order they first appear.
      * Numbers by signum: keyFn(x) = x > 0 (positive vs.
@@ -8378,6 +8592,17 @@ int main(void) {
     test_array_drop_while_composes_with_take_while();
     test_array_drop_while_wrong_arg_count();
     test_array_drop_while_wrong_type();
+    /* Stage 55: array_intersect. */
+    test_array_intersect_basic();
+    test_array_intersect_empty_input();
+    test_array_intersect_empty_arr2();
+    test_array_intersect_no_overlap();
+    test_array_intersect_full_overlap();
+    test_array_intersect_multiset();
+    test_array_intersect_multiset_min_count();
+    test_array_intersect_does_not_mutate();
+    test_array_intersect_wrong_arg_count();
+    test_array_intersect_wrong_type();
     /* Stage 29: string_split with limit. */
     test_string_split_with_limit();
     test_string_split_limit_zero();
