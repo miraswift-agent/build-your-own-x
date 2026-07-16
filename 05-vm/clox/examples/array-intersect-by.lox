@@ -1,0 +1,100 @@
+// Stage 58 example: array-intersect-by.lox
+// array_intersect(arr1, arr2, keyFn?) extends
+// Stage 55 with an optional key function. The
+// 2-arg form still does direct multiset
+// intersection; the 3-arg form intersects by a
+// derived key (lodash _.intersectionBy style).
+//
+// The new wrinkle: combines the optional-arg
+// pattern (Stage 50's zip_longest) with the
+// closure-arg pattern (Stages 30/40/42).
+
+print "=== array_intersect by key: objects ===";
+// Two lists of records. We want the records
+// from list1 whose IDs also exist in list2,
+// preserving list1 order and multiset counts.
+class User {}
+fun idOf(u) { return u.id; }
+
+var localUsers = [];
+var u1 = User(); u1.id = 1; u1.name = "alice";
+var u2 = User(); u2.id = 2; u2.name = "bob";
+var u3 = User(); u3.id = 3; u3.name = "carol";
+array_push(localUsers, u1);
+array_push(localUsers, u2);
+array_push(localUsers, u3);
+
+var remoteUsers = [];
+var r1 = User(); r1.id = 1; r1.name = "alice-remote";
+var r2 = User(); r2.id = 4; r2.name = "dave-remote";
+array_push(remoteUsers, r1);
+array_push(remoteUsers, r2);
+
+var shared = array_intersect(localUsers, remoteUsers, idOf);
+print "shared.len:" + string(array_length(shared));
+for (var i = 0; i < array_length(shared); i = i + 1) {
+    print array_get(shared, i).name;
+}
+// Output:
+//   shared.len:1
+//   alice
+
+print "=== array_intersect by key: numbers ===";
+// Intersect numbers by a derived key: "large"
+// means > 2, "small" means <= 2. clox has no %
+// operator, so we use a simple threshold key.
+fun sizeClass(n) { return n > 2; }
+var evensAndOdds = array_intersect([1, 2, 3, 4, 5], [7, 8, 9], sizeClass);
+// arr1 keys: [false, false, true, true, true]
+// arr2 keys: [true, true, true]
+// key true:  min(3, 3) = 3 -> keep 3, 4, 5
+// key false: min(2, 0) = 0 -> drop 1, 2
+print "len:" + string(array_length(evensAndOdds));
+for (var i = 0; i < array_length(evensAndOdds); i = i + 1) {
+    print string(array_get(evensAndOdds, i));
+}
+// Output:
+//   len:3
+//   3
+//   4
+//   5
+
+print "=== array_intersect 2-arg form still works ===";
+// Backward compatibility with Stage 55.
+var classic = array_intersect([1, 2, 3, 2, 1], [2, 3, 4, 2]);
+print "len:" + string(array_length(classic));
+for (var i = 0; i < array_length(classic); i = i + 1) {
+    print string(array_get(classic, i));
+}
+// Output:
+//   len:3
+//   2
+//   3
+//   2
+
+// --- What this stage teaches ---
+//
+// (a) "Optional closure args are just optional
+//     value args with a type check" — the
+//     shape is the same as Stage 50's
+//     zip_longest fill value, except the
+//     value must pass IS_CLOSURE.
+//
+// (b) "Cache keys to avoid O(n*m) closure
+//     calls" — when keyFn is supplied, we
+//     precompute arr2 keys once. This is a
+//     real performance invariant in a list
+//     language where closures are cheap but
+//     not free.
+//
+// (c) "Backward compatibility is free if you
+//     make the 2-arg form a shim" — Stage 55
+//     call sites still work; Stage 58 adds
+//     capability without changing behavior.
+//
+// (d) "Set-operations family extension" —
+//     Stage 55 established the family;
+//     Stage 58 is the first parameterized
+//     extension. The same keyFn pattern can
+//     extend union (Stage 59?) and difference
+//     if Tom wants the full algebraic suite.

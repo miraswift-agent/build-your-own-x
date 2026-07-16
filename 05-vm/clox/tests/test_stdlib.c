@@ -5877,8 +5877,8 @@ static void test_array_intersect_does_not_mutate(void) {
 }
 
 static void test_array_intersect_wrong_arg_count(void) {
-    /* Defensive: 1 arg, 3 args both error.
-     * 2 args is the only valid count. */
+    /* Defensive: 1 arg and 4 args both error.
+     * 2 or 3 args are valid counts. */
     int exitCode;
     char *out1 = runClox("var t = array_intersect([1, 2, 3]);\n", &exitCode);
     if (exitCode == 0) {
@@ -5888,9 +5888,9 @@ static void test_array_intersect_wrong_arg_count(void) {
     }
     free(out1);
 
-    char *out2 = runClox("var t = array_intersect([1], [2], 99);\n", &exitCode);
+    char *out2 = runClox("var t = array_intersect([1], [2], fun(x){return x;}, 99);\n", &exitCode);
     if (exitCode == 0) {
-        fail("stdlib/array-intersect-wrong-arg-count-3: expected non-zero exit for 3 args");
+        fail("stdlib/array-intersect-wrong-arg-count-4: expected non-zero exit for 4 args");
     } else {
         pass();
     }
@@ -5916,6 +5916,95 @@ static void test_array_intersect_wrong_type(void) {
         pass();
     }
     free(out2);
+}
+
+static void test_array_intersect_by_key_basic(void) {
+    /* Stage 58: array_intersect(arr1, arr2, keyFn?).
+     * Multiset intersection by a 1-arg key function.
+     * keyFn(x) = x > 2.
+     * arr1 = [1, 2, 3, 4, 5] -> keys [false, false, true, true, true]
+     * arr2 = [7, 8, 9]      -> keys [true, true, true]
+     * min counts: true  -> 3 (arr1 has 3, arr2 has 3),
+     *             false -> 0 (arr1 has 2, arr2 has 0).
+     * Result preserves arr1 order: [3, 4, 5]. */
+    int exitCode;
+    char *out = runClox(
+        "fun isLarge(x) { return x > 2; }\n"
+        "var r = array_intersect([1, 2, 3, 4, 5], [7, 8, 9], isLarge);\n"
+        "print array_length(r);\n"
+        "for (var i = 0; i < array_length(r); i = i + 1) {\n"
+        "    print array_get(r, i);\n"
+        "}\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-intersect-by-key-basic: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "3\n3\n4\n5\n")) {
+        fail("stdlib/array-intersect-by-key-basic: expected '3\\n3\\n4\\n5\\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_intersect_by_key_objects(void) {
+    /* keyFn extracts an object field. The result contains
+     * the first arr1 element whose key matches an arr2
+     * key, with multiset counts per key. */
+    int exitCode;
+    char *out = runClox(
+        "class Item {}\n"
+        "fun getId(x) { return x.id; }\n"
+        "var a = Item(); a.id = 1; a.name = \"a\";\n"
+        "var b = Item(); b.id = 2; b.name = \"b\";\n"
+        "var c = Item(); c.id = 1; c.name = \"c\";\n"
+        "var arr1 = [a, b];\n"
+        "var arr2 = [c];\n"
+        "var r = array_intersect(arr1, arr2, getId);\n"
+        "print array_length(r);\n"
+        "print array_get(r, 0).id;\n"
+        "print array_get(r, 0).name;\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-intersect-by-key-objects: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "1\n1\na\n")) {
+        fail("stdlib/array-intersect-by-key-objects: expected '1\\n1\\na\\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_intersect_by_key_omitted(void) {
+    /* 2-arg form is backward-compatible with Stage 55:
+     * direct valuesEqual comparison. */
+    int exitCode;
+    char *out = runClox(
+        "var r = array_intersect([1, 2, 3, 2, 1], [2, 3, 4, 2]);\n"
+        "print array_length(r);\n"
+        "for (var i = 0; i < array_length(r); i = i + 1) {\n"
+        "    print array_get(r, i);\n"
+        "}\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-intersect-by-key-omitted: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "3\n2\n3\n2\n")) {
+        fail("stdlib/array-intersect-by-key-omitted: expected '3\\n2\\n3\\n2\\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_intersect_by_key_wrong_type(void) {
+    /* 3rd arg, if present, must be a function. */
+    int exitCode;
+    char *out = runClox("var t = array_intersect([1], [2], 99);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-intersect-by-key-wrong-type: expected non-zero exit for non-function keyFn");
+    } else {
+        pass();
+    }
+    free(out);
 }
 
 static void test_array_union_basic(void) {
@@ -9120,7 +9209,8 @@ int main(void) {
     test_array_drop_while_composes_with_take_while();
     test_array_drop_while_wrong_arg_count();
     test_array_drop_while_wrong_type();
-    /* Stage 55: array_intersect. */
+    /* Stage 55 / Stage 58: array_intersect, now with
+     * optional keyFn (Stage 58 extension). */
     test_array_intersect_basic();
     test_array_intersect_empty_input();
     test_array_intersect_empty_arr2();
@@ -9131,6 +9221,11 @@ int main(void) {
     test_array_intersect_does_not_mutate();
     test_array_intersect_wrong_arg_count();
     test_array_intersect_wrong_type();
+    /* Stage 58: array_intersect with optional keyFn. */
+    test_array_intersect_by_key_basic();
+    test_array_intersect_by_key_objects();
+    test_array_intersect_by_key_omitted();
+    test_array_intersect_by_key_wrong_type();
     /* Stage 56: array_union. Multiset union
      * (count = max(c1, c2)). */
     test_array_union_basic();
