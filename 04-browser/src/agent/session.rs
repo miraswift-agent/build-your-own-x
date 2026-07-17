@@ -1,4 +1,11 @@
-//! Session management — multiple isolated browser sessions with persistence.
+//! Session management — multiple isolated browser sessions with partial persistence.
+//!
+//! **Honesty contract for save/load:**
+//! - Persisted: session id, history URLs, cookies, created_at.
+//! - NOT persisted: live page pools, DOM trees, JS contexts.
+//! - On restore, the page pool is empty. Any previously-recorded page IDs are
+//!   kept only as `last_page_ids` audit metadata and are never rehydrated into
+//!   live pages. Callers that need page content must re-navigate.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -131,7 +138,10 @@ impl Session {
             .map(|c| c.value.clone())
     }
 
-    /// Snapshot for serialization (cookies excluded for security).
+    /// Snapshot for serialization.
+    ///
+    /// Cookies + history are restored. Page IDs are audit-only (`last_page_ids`)
+    /// and do not recreate live pages on load.
     pub fn to_data(&self) -> SessionData {
         let created_unix = self
             .created_at
@@ -142,18 +152,30 @@ impl Session {
             id: self.id.clone(),
             history: self.history.clone(),
             created_at_unix: created_unix,
-            page_ids: self.page_pool.page_ids(),
+            cookies: self.cookies.to_data(),
+            last_page_ids: self.page_pool.page_ids(),
+            pages_restored: false,
         }
     }
 }
 
-/// Serializable snapshot of a session (no cookies, no DOM state).
+/// Serializable snapshot of a session.
+///
+/// Restored sessions get cookies + history back. DOM/pages are never restored
+/// (`pages_restored` is always false after load).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionData {
     pub id: String,
     pub history: Vec<String>,
     pub created_at_unix: u64,
-    pub page_ids: Vec<String>,
+    #[serde(default)]
+    pub cookies: Vec<crate::net::cookies::CookieData>,
+    /// Page IDs that existed at save time. Not rehydrated into live pages.
+    #[serde(default, alias = "page_ids")]
+    pub last_page_ids: Vec<String>,
+    /// Always false after load — live pages are not restored.
+    #[serde(default)]
+    pub pages_restored: bool,
 }
 
 /// Manages all browser sessions.
@@ -241,7 +263,9 @@ impl SessionManager {
         self.sessions.values().map(|s| s.active_page_count()).sum()
     }
 
-    /// Persist all session metadata to a JSON file.
+    /// Persist session id/history/cookies to a JSON file.
+    ///
+    /// Does **not** persist DOM trees, page content, or JS contexts.
     pub fn save_to_disk(&self, path: &Path) -> Result<(), String> {
         let data: Vec<SessionData> = self.sessions.values().map(|s| s.to_data()).collect();
         let json =
@@ -251,7 +275,9 @@ impl SessionManager {
     }
 
     /// Restore sessions from a previously saved JSON file.
-    /// Returns the number of sessions loaded.
+    ///
+    /// Restores id, history, and cookies. Page pool is always empty after load
+    /// (see `SessionData::pages_restored`). Returns the number of sessions loaded.
     pub fn load_from_disk(&mut self, path: &Path) -> Result<usize, String> {
         let json = std::fs::read_to_string(path).map_err(|e| format!("read error: {e}"))?;
         let data: Vec<SessionData> =
@@ -260,6 +286,9 @@ impl SessionManager {
         for sd in data {
             let mut session = Session::with_id(sd.id.clone(), self.per_session_limits.clone());
             session.history = sd.history;
+            session.cookies.load_from_data(sd.cookies);
+            // Intentionally do NOT recreate pages from last_page_ids — those
+            // IDs referred to in-memory pages that no longer exist.
             self.sessions.insert(sd.id, session);
         }
         Ok(count)

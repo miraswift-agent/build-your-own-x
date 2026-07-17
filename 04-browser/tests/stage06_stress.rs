@@ -469,11 +469,18 @@ fn save_and_restore_sessions() {
         let sid_a = manager.create_session();
         let sid_b = manager.create_session();
 
-        let sa = manager.get_session_mut(&sid_a).unwrap();
-        sa.history.push("https://example.com/a".to_string());
+        {
+            let sa = manager.get_session_mut(&sid_a).unwrap();
+            sa.history.push("https://example.com/a".to_string());
+            sa.set_cookie("auth", "token-a", "example.com");
+            sa.load_page_from_html("<html><body>A</body></html>").unwrap();
+        }
 
-        let sb = manager.get_session_mut(&sid_b).unwrap();
-        sb.history.push("https://example.com/b".to_string());
+        {
+            let sb = manager.get_session_mut(&sid_b).unwrap();
+            sb.history.push("https://example.com/b".to_string());
+            sb.set_cookie("auth", "token-b", "example.com");
+        }
 
         manager.save_to_disk(&tmp).expect("save failed");
     }
@@ -487,15 +494,29 @@ fn save_and_restore_sessions() {
 
         // History is preserved
         let sessions: Vec<_> = manager.session_ids();
-        let mut histories: Vec<Vec<String>> = sessions
+        let expected_urls: std::collections::HashSet<String> = sessions
             .iter()
-            .map(|id| manager.get_session(id).unwrap().history.clone())
+            .flat_map(|id| manager.get_session(id).unwrap().history.iter().cloned())
             .collect();
-        histories.sort();
+        assert!(expected_urls.contains("https://example.com/a"));
+        assert!(expected_urls.contains("https://example.com/b"));
 
-        let expected_urls: std::collections::HashSet<String> =
-            histories.iter().flat_map(|h| h.iter().cloned()).collect();
-        assert!(expected_urls.contains("https://example.com/a") || loaded == 2);
+        // Cookies are preserved
+        let mut auth_values: Vec<String> = sessions
+            .iter()
+            .filter_map(|id| manager.get_session(id).unwrap().get_cookie("auth", "example.com"))
+            .collect();
+        auth_values.sort();
+        assert_eq!(auth_values, vec!["token-a".to_string(), "token-b".to_string()]);
+
+        // Pages are NOT restored — pool is empty (honesty contract)
+        for id in &sessions {
+            assert_eq!(
+                manager.get_session(id).unwrap().active_page_count(),
+                0,
+                "restored session must not rehydrate dead page IDs"
+            );
+        }
     }
 
     // Clean up
@@ -508,14 +529,31 @@ fn session_data_serialization() {
         id: "test-session-id".to_string(),
         history: vec!["https://example.com".to_string()],
         created_at_unix: 1_700_000_000,
-        page_ids: vec!["page-1".to_string(), "page-2".to_string()],
+        cookies: vec![],
+        last_page_ids: vec!["page-1".to_string(), "page-2".to_string()],
+        pages_restored: false,
     };
     let json = serde_json::to_string(&data).unwrap();
     let restored: SessionData = serde_json::from_str(&json).unwrap();
     assert_eq!(restored.id, "test-session-id");
     assert_eq!(restored.history.len(), 1);
-    assert_eq!(restored.page_ids.len(), 2);
+    assert_eq!(restored.last_page_ids.len(), 2);
     assert_eq!(restored.created_at_unix, 1_700_000_000);
+    assert!(!restored.pages_restored);
+}
+
+#[test]
+fn session_data_accepts_legacy_page_ids_field() {
+    // Old snapshots used `page_ids`; new code reads it as last_page_ids.
+    let json = r#"{
+        "id": "legacy",
+        "history": [],
+        "created_at_unix": 1,
+        "page_ids": ["p1"]
+    }"#;
+    let restored: SessionData = serde_json::from_str(json).unwrap();
+    assert_eq!(restored.last_page_ids, vec!["p1".to_string()]);
+    assert!(restored.cookies.is_empty());
 }
 
 // ─── 10. Graceful-shutdown simulation ────────────────────────────────────────

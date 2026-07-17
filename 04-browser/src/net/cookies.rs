@@ -1,11 +1,27 @@
 use std::collections::HashMap;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-#[derive(Debug, Clone, PartialEq)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum SameSite {
     Strict,
     Lax,
     None,
+}
+
+/// Wire format for a cookie (expires as unix seconds for JSON stability).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CookieData {
+    pub name: String,
+    pub value: String,
+    pub domain: Option<String>,
+    pub path: Option<String>,
+    pub expires_unix: Option<u64>,
+    pub secure: bool,
+    pub http_only: bool,
+    pub same_site: SameSite,
+    pub host_only: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -31,6 +47,38 @@ impl Cookie {
 
     pub fn is_session(&self) -> bool {
         self.expires.is_none()
+    }
+
+    pub fn to_data(&self) -> CookieData {
+        CookieData {
+            name: self.name.clone(),
+            value: self.value.clone(),
+            domain: self.domain.clone(),
+            path: self.path.clone(),
+            expires_unix: self
+                .expires
+                .and_then(|t| t.duration_since(UNIX_EPOCH).ok().map(|d| d.as_secs())),
+            secure: self.secure,
+            http_only: self.http_only,
+            same_site: self.same_site.clone(),
+            host_only: self.host_only,
+        }
+    }
+
+    pub fn from_data(data: CookieData) -> Self {
+        Cookie {
+            name: data.name,
+            value: data.value,
+            domain: data.domain,
+            path: data.path,
+            expires: data
+                .expires_unix
+                .map(|secs| UNIX_EPOCH + Duration::from_secs(secs)),
+            secure: data.secure,
+            http_only: data.http_only,
+            same_site: data.same_site,
+            host_only: data.host_only,
+        }
     }
 }
 
@@ -314,6 +362,24 @@ impl CookieJar {
 
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    /// Snapshot all non-expired cookies for persistence.
+    pub fn to_data(&self) -> Vec<CookieData> {
+        self.cookies
+            .values()
+            .flat_map(|list| list.iter())
+            .filter(|c| !c.is_expired())
+            .map(|c| c.to_data())
+            .collect()
+    }
+
+    /// Restore cookies from a persisted snapshot (replaces current contents).
+    pub fn load_from_data(&mut self, data: Vec<CookieData>) {
+        self.cookies.clear();
+        for cd in data {
+            self.store(Cookie::from_data(cd));
+        }
     }
 }
 
