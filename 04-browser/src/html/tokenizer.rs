@@ -122,7 +122,7 @@ struct AttrBuilder {
 // ---------------------------------------------------------------------------
 
 /// Converts an HTML byte string into a flat sequence of [`Token`]s.
-    pub struct Tokenizer {
+pub struct Tokenizer {
     input: Vec<char>,
     pos: usize,
     state: State,
@@ -185,7 +185,9 @@ impl Tokenizer {
             if let Some(tok) = self.pending.pop() {
                 let done = matches!(tok, Token::Eof);
                 tokens.push(tok);
-                if done { break; }
+                if done {
+                    break;
+                }
                 continue;
             }
             let emitted = self.step();
@@ -193,7 +195,9 @@ impl Tokenizer {
             if let Some(tok) = emitted {
                 tokens.push(tok);
             }
-            if done { break; }
+            if done {
+                break;
+            }
         }
         let errors = self.errors.clone();
         (tokens, errors)
@@ -213,16 +217,21 @@ impl Tokenizer {
     }
 
     fn peek_str_ci(&self, s: &str) -> bool {
-        let haystack: String = self.input[self.pos..].iter()
+        let haystack: String = self.input[self.pos..]
+            .iter()
             .take(s.len())
             .collect::<String>()
             .to_ascii_uppercase();
         haystack == s.to_ascii_uppercase()
     }
 
-    fn advance(&mut self) { self.pos += 1; }
+    fn advance(&mut self) {
+        self.pos += 1;
+    }
 
-    fn advance_by(&mut self, n: usize) { self.pos += n; }
+    fn advance_by(&mut self, n: usize) {
+        self.pos += n;
+    }
 
     fn parse_error(&mut self, msg: &str) {
         self.errors.push(format!("pos {}: {}", self.pos, msg));
@@ -249,7 +258,9 @@ impl Tokenizer {
     // ------------------------------------------------------------------
 
     fn emit_text(&mut self) -> Option<Token> {
-        if self.text.is_empty() { return None; }
+        if self.text.is_empty() {
+            return None;
+        }
         let t = std::mem::take(&mut self.text);
         Some(Token::Text(t))
     }
@@ -264,7 +275,11 @@ impl Tokenizer {
         if is_end {
             Token::EndTag { name }
         } else {
-            Token::StartTag { name, attrs, self_closing }
+            Token::StartTag {
+                name,
+                attrs,
+                self_closing,
+            }
         }
     }
 
@@ -279,7 +294,12 @@ impl Tokenizer {
         let system_id = self.doctype_system.take();
         let force_quirks = self.doctype_force_quirks;
         self.doctype_force_quirks = false;
-        Token::Doctype { name, public_id, system_id, force_quirks }
+        Token::Doctype {
+            name,
+            public_id,
+            system_id,
+            force_quirks,
+        }
     }
 
     // ------------------------------------------------------------------
@@ -297,12 +317,16 @@ impl Tokenizer {
         if self.current() == Some('#') {
             self.advance();
             let hex = self.current() == Some('x') || self.current() == Some('X');
-            if hex { self.advance(); }
+            if hex {
+                self.advance();
+            }
             let num_start = self.pos;
             while let Some(c) = self.current() {
                 if (hex && c.is_ascii_hexdigit()) || (!hex && c.is_ascii_digit()) {
                     self.advance();
-                } else { break; }
+                } else {
+                    break;
+                }
             }
             if self.pos == num_start {
                 // No digits — not a valid entity, backtrack
@@ -311,19 +335,23 @@ impl Tokenizer {
             }
             let digits: String = self.input[num_start..self.pos].iter().collect();
             // Consume optional semicolon
-            if self.current() == Some(';') { self.advance(); }
+            if self.current() == Some(';') {
+                self.advance();
+            }
             let code = if hex {
                 u32::from_str_radix(&digits, 16).ok()?
             } else {
                 digits.parse::<u32>().ok()?
             };
-            return char::from_u32(code).map(|c| c.to_string())
+            return char::from_u32(code)
+                .map(|c| c.to_string())
                 .or_else(|| Some('\u{FFFD}'.to_string()));
         }
 
         // Named character reference — handle the most common ones
         // We look for `name;` starting at self.pos
-        let remaining: String = self.input[self.pos..].iter()
+        let remaining: String = self.input[self.pos..]
+            .iter()
             .take(32) // max named entity length
             .collect();
 
@@ -341,7 +369,6 @@ impl Tokenizer {
         loop {
             let c = self.current();
             match &self.state {
-
                 // ── Data ────────────────────────────────────────────────
                 State::Data => {
                     match c {
@@ -379,27 +406,25 @@ impl Tokenizer {
                 }
 
                 // ── RawText (script/style) ───────────────────────────────
-                State::RawText => {
-                    match c {
-                        None => {
-                            if let Some(t) = self.emit_text() {
-                                self.state = State::Data;
-                                return Some(t);
-                            }
-                            return Some(Token::Eof);
+                State::RawText => match c {
+                    None => {
+                        if let Some(t) = self.emit_text() {
+                            self.state = State::Data;
+                            return Some(t);
                         }
-                        Some('<') => {
-                            self.advance();
-                            self.raw_buf.clear();
-                            self.raw_buf.push('<');
-                            self.state = State::RawTextLessThanSign;
-                        }
-                        Some(ch) => {
-                            self.text.push(ch);
-                            self.advance();
-                        }
+                        return Some(Token::Eof);
                     }
-                }
+                    Some('<') => {
+                        self.advance();
+                        self.raw_buf.clear();
+                        self.raw_buf.push('<');
+                        self.state = State::RawTextLessThanSign;
+                    }
+                    Some(ch) => {
+                        self.text.push(ch);
+                        self.advance();
+                    }
+                },
 
                 // ── RawTextLessThanSign ──────────────────────────────────
                 State::RawTextLessThanSign => {
@@ -419,22 +444,23 @@ impl Tokenizer {
                 }
 
                 // ── RawTextEndTagOpen ────────────────────────────────────
-                State::RawTextEndTagOpen => {
-                    match c {
-                        Some(ch) if ch.is_ascii_alphabetic() => {
-                            self.tag = TagBuilder { is_end: true, ..Default::default() };
-                            self.tag.name.push(ch.to_ascii_lowercase());
-                            self.raw_buf.push(ch.to_ascii_lowercase());
-                            self.advance();
-                            self.state = State::RawTextEndTagName;
-                        }
-                        _ => {
-                            let buf = std::mem::take(&mut self.raw_buf);
-                            self.text.push_str(&buf);
-                            self.state = State::RawText;
-                        }
+                State::RawTextEndTagOpen => match c {
+                    Some(ch) if ch.is_ascii_alphabetic() => {
+                        self.tag = TagBuilder {
+                            is_end: true,
+                            ..Default::default()
+                        };
+                        self.tag.name.push(ch.to_ascii_lowercase());
+                        self.raw_buf.push(ch.to_ascii_lowercase());
+                        self.advance();
+                        self.state = State::RawTextEndTagName;
                     }
-                }
+                    _ => {
+                        let buf = std::mem::take(&mut self.raw_buf);
+                        self.text.push_str(&buf);
+                        self.state = State::RawText;
+                    }
+                },
 
                 // ── RawTextEndTagName ────────────────────────────────────
                 State::RawTextEndTagName => {
@@ -449,7 +475,9 @@ impl Tokenizer {
                                 // Matching end tag — flush text, then process attributes
                                 let text = self.emit_text();
                                 self.state = State::BeforeAttributeName;
-                                if text.is_some() { return text; }
+                                if text.is_some() {
+                                    return text;
+                                }
                                 continue;
                             } else {
                                 let buf = std::mem::take(&mut self.raw_buf);
@@ -510,69 +538,66 @@ impl Tokenizer {
                 }
 
                 // ── RCData (textarea / title) ────────────────────────────
-                State::RCData => {
-                    match c {
-                        None => {
-                            if let Some(t) = self.emit_text() {
-                                self.state = State::Data;
-                                return Some(t);
-                            }
-                            return Some(Token::Eof);
+                State::RCData => match c {
+                    None => {
+                        if let Some(t) = self.emit_text() {
+                            self.state = State::Data;
+                            return Some(t);
                         }
-                        Some('&') => {
-                            self.advance();
-                            let start = self.pos;
-                            if let Some(decoded) = self.consume_entity() {
-                                self.text.push_str(&decoded);
-                            } else {
-                                self.pos = start;
-                                self.text.push('&');
-                            }
-                        }
-                        Some('<') => {
-                            self.advance();
-                            self.raw_buf.clear();
-                            self.raw_buf.push('<');
-                            self.state = State::RCDataLessThanSign;
-                        }
-                        Some(ch) => {
-                            self.text.push(ch);
-                            self.advance();
+                        return Some(Token::Eof);
+                    }
+                    Some('&') => {
+                        self.advance();
+                        let start = self.pos;
+                        if let Some(decoded) = self.consume_entity() {
+                            self.text.push_str(&decoded);
+                        } else {
+                            self.pos = start;
+                            self.text.push('&');
                         }
                     }
-                }
+                    Some('<') => {
+                        self.advance();
+                        self.raw_buf.clear();
+                        self.raw_buf.push('<');
+                        self.state = State::RCDataLessThanSign;
+                    }
+                    Some(ch) => {
+                        self.text.push(ch);
+                        self.advance();
+                    }
+                },
 
-                State::RCDataLessThanSign => {
-                    match c {
-                        Some('/') => {
-                            self.advance();
-                            self.raw_buf.push('/');
-                            self.state = State::RCDataEndTagOpen;
-                        }
-                        _ => {
-                            let buf = std::mem::take(&mut self.raw_buf);
-                            self.text.push_str(&buf);
-                            self.state = State::RCData;
-                        }
+                State::RCDataLessThanSign => match c {
+                    Some('/') => {
+                        self.advance();
+                        self.raw_buf.push('/');
+                        self.state = State::RCDataEndTagOpen;
                     }
-                }
+                    _ => {
+                        let buf = std::mem::take(&mut self.raw_buf);
+                        self.text.push_str(&buf);
+                        self.state = State::RCData;
+                    }
+                },
 
-                State::RCDataEndTagOpen => {
-                    match c {
-                        Some(ch) if ch.is_ascii_alphabetic() => {
-                            self.tag = TagBuilder { is_end: true, ..Default::default() };
-                            self.tag.name.push(ch.to_ascii_lowercase());
-                            self.raw_buf.push(ch.to_ascii_lowercase());
-                            self.advance();
-                            self.state = State::RCDataEndTagName;
-                        }
-                        _ => {
-                            let buf = std::mem::take(&mut self.raw_buf);
-                            self.text.push_str(&buf);
-                            self.state = State::RCData;
-                        }
+                State::RCDataEndTagOpen => match c {
+                    Some(ch) if ch.is_ascii_alphabetic() => {
+                        self.tag = TagBuilder {
+                            is_end: true,
+                            ..Default::default()
+                        };
+                        self.tag.name.push(ch.to_ascii_lowercase());
+                        self.raw_buf.push(ch.to_ascii_lowercase());
+                        self.advance();
+                        self.state = State::RCDataEndTagName;
                     }
-                }
+                    _ => {
+                        let buf = std::mem::take(&mut self.raw_buf);
+                        self.text.push_str(&buf);
+                        self.state = State::RCData;
+                    }
+                },
 
                 State::RCDataEndTagName => {
                     match c {
@@ -587,7 +612,9 @@ impl Tokenizer {
                                 // Matching end tag — flush text, then process attributes
                                 let text = self.emit_text();
                                 self.state = State::BeforeAttributeName;
-                                if text.is_some() { return text; }
+                                if text.is_some() {
+                                    return text;
+                                }
                                 continue; // no text, reconsume in BeforeAttributeName
                             } else {
                                 let buf = std::mem::take(&mut self.raw_buf);
@@ -658,7 +685,10 @@ impl Tokenizer {
                             self.state = State::EndTagOpen;
                         }
                         Some(ch) if ch.is_ascii_alphabetic() => {
-                            self.tag = TagBuilder { is_end: false, ..Default::default() };
+                            self.tag = TagBuilder {
+                                is_end: false,
+                                ..Default::default()
+                            };
                             self.tag.name.push(ch.to_ascii_lowercase());
                             self.advance();
                             self.state = State::TagName;
@@ -674,7 +704,9 @@ impl Tokenizer {
                             // consume until >
                             while let Some(ch) = self.current() {
                                 self.advance();
-                                if ch == '>' { break; }
+                                if ch == '>' {
+                                    break;
+                                }
                                 self.comment.push(ch);
                             }
                             return Some(self.emit_comment());
@@ -701,7 +733,10 @@ impl Tokenizer {
                 State::EndTagOpen => {
                     match c {
                         Some(ch) if ch.is_ascii_alphabetic() => {
-                            self.tag = TagBuilder { is_end: true, ..Default::default() };
+                            self.tag = TagBuilder {
+                                is_end: true,
+                                ..Default::default()
+                            };
                             self.tag.name.push(ch.to_ascii_lowercase());
                             self.advance();
                             self.state = State::TagName;
@@ -726,7 +761,9 @@ impl Tokenizer {
                             self.comment.clear();
                             while let Some(ch) = self.current() {
                                 self.advance();
-                                if ch == '>' { break; }
+                                if ch == '>' {
+                                    break;
+                                }
                                 self.comment.push(ch);
                             }
                             self.state = State::Data;
@@ -736,37 +773,35 @@ impl Tokenizer {
                 }
 
                 // ── TagName ──────────────────────────────────────────────
-                State::TagName => {
-                    match c {
-                        Some('\t') | Some('\n') | Some('\x0C') | Some(' ') => {
-                            self.advance();
-                            self.state = State::BeforeAttributeName;
-                        }
-                        Some('/') => {
-                            self.advance();
-                            self.state = State::SelfClosingStartTag;
-                        }
-                        Some('>') => {
-                            self.advance();
-                            let tok = self.emit_tag_and_set_raw_state();
-                            self.state = self.next_state_after_tag();
-                            return Some(tok);
-                        }
-                        None => {
-                            self.parse_error("eof-in-tag");
-                            return Some(Token::Eof);
-                        }
-                        Some('\0') => {
-                            self.parse_error("unexpected-null-character");
-                            self.tag.name.push('\u{FFFD}');
-                            self.advance();
-                        }
-                        Some(ch) => {
-                            self.tag.name.push(ch.to_ascii_lowercase());
-                            self.advance();
-                        }
+                State::TagName => match c {
+                    Some('\t') | Some('\n') | Some('\x0C') | Some(' ') => {
+                        self.advance();
+                        self.state = State::BeforeAttributeName;
                     }
-                }
+                    Some('/') => {
+                        self.advance();
+                        self.state = State::SelfClosingStartTag;
+                    }
+                    Some('>') => {
+                        self.advance();
+                        let tok = self.emit_tag_and_set_raw_state();
+                        self.state = self.next_state_after_tag();
+                        return Some(tok);
+                    }
+                    None => {
+                        self.parse_error("eof-in-tag");
+                        return Some(Token::Eof);
+                    }
+                    Some('\0') => {
+                        self.parse_error("unexpected-null-character");
+                        self.tag.name.push('\u{FFFD}');
+                        self.advance();
+                    }
+                    Some(ch) => {
+                        self.tag.name.push(ch.to_ascii_lowercase());
+                        self.advance();
+                    }
+                },
 
                 // ── SelfClosingStartTag ──────────────────────────────────
                 State::SelfClosingStartTag => {
@@ -791,92 +826,86 @@ impl Tokenizer {
                 }
 
                 // ── BeforeAttributeName ──────────────────────────────────
-                State::BeforeAttributeName => {
-                    match c {
-                        Some('\t') | Some('\n') | Some('\x0C') | Some(' ') => {
-                            self.advance();
-                        }
-                        Some('/') | Some('>') | None => {
-                            self.state = State::AfterAttributeName;
-                        }
-                        Some('=') => {
-                            self.parse_error("unexpected-equals-sign-before-attribute-name");
-                            self.attr.name.push('=');
-                            self.advance();
-                            self.state = State::AttributeName;
-                        }
-                        Some(_) => {
-                            self.finish_attribute();
-                            self.state = State::AttributeName;
-                        }
+                State::BeforeAttributeName => match c {
+                    Some('\t') | Some('\n') | Some('\x0C') | Some(' ') => {
+                        self.advance();
                     }
-                }
+                    Some('/') | Some('>') | None => {
+                        self.state = State::AfterAttributeName;
+                    }
+                    Some('=') => {
+                        self.parse_error("unexpected-equals-sign-before-attribute-name");
+                        self.attr.name.push('=');
+                        self.advance();
+                        self.state = State::AttributeName;
+                    }
+                    Some(_) => {
+                        self.finish_attribute();
+                        self.state = State::AttributeName;
+                    }
+                },
 
                 // ── AttributeName ────────────────────────────────────────
-                State::AttributeName => {
-                    match c {
-                        Some('\t') | Some('\n') | Some('\x0C') | Some(' ') => {
-                            self.advance();
-                            self.state = State::AfterAttributeName;
-                        }
-                        Some('/') | Some('>') | None => {
-                            self.state = State::AfterAttributeName;
-                        }
-                        Some('=') => {
-                            self.advance();
-                            self.state = State::BeforeAttributeValue;
-                        }
-                        Some('\0') => {
-                            self.parse_error("unexpected-null-character");
-                            self.attr.name.push('\u{FFFD}');
-                            self.advance();
-                        }
-                        Some('"') | Some('\'') | Some('<') => {
-                            self.parse_error("unexpected-character-in-attribute-name");
-                            let ch = c.unwrap();
-                            self.attr.name.push(ch.to_ascii_lowercase());
-                            self.advance();
-                        }
-                        Some(ch) => {
-                            self.attr.name.push(ch.to_ascii_lowercase());
-                            self.advance();
-                        }
+                State::AttributeName => match c {
+                    Some('\t') | Some('\n') | Some('\x0C') | Some(' ') => {
+                        self.advance();
+                        self.state = State::AfterAttributeName;
                     }
-                }
+                    Some('/') | Some('>') | None => {
+                        self.state = State::AfterAttributeName;
+                    }
+                    Some('=') => {
+                        self.advance();
+                        self.state = State::BeforeAttributeValue;
+                    }
+                    Some('\0') => {
+                        self.parse_error("unexpected-null-character");
+                        self.attr.name.push('\u{FFFD}');
+                        self.advance();
+                    }
+                    Some('"') | Some('\'') | Some('<') => {
+                        self.parse_error("unexpected-character-in-attribute-name");
+                        let ch = c.unwrap();
+                        self.attr.name.push(ch.to_ascii_lowercase());
+                        self.advance();
+                    }
+                    Some(ch) => {
+                        self.attr.name.push(ch.to_ascii_lowercase());
+                        self.advance();
+                    }
+                },
 
                 // ── AfterAttributeName ───────────────────────────────────
-                State::AfterAttributeName => {
-                    match c {
-                        Some('\t') | Some('\n') | Some('\x0C') | Some(' ') => {
-                            self.advance();
-                        }
-                        Some('/') => {
-                            self.finish_attribute();
-                            self.advance();
-                            self.state = State::SelfClosingStartTag;
-                        }
-                        Some('=') => {
-                            self.advance();
-                            self.state = State::BeforeAttributeValue;
-                        }
-                        Some('>') => {
-                            self.finish_attribute();
-                            self.advance();
-                            let tok = self.emit_tag_and_set_raw_state();
-                            self.state = self.next_state_after_tag();
-                            return Some(tok);
-                        }
-                        None => {
-                            self.parse_error("eof-in-tag");
-                            self.finish_attribute();
-                            return Some(Token::Eof);
-                        }
-                        Some(_) => {
-                            self.finish_attribute();
-                            self.state = State::AttributeName;
-                        }
+                State::AfterAttributeName => match c {
+                    Some('\t') | Some('\n') | Some('\x0C') | Some(' ') => {
+                        self.advance();
                     }
-                }
+                    Some('/') => {
+                        self.finish_attribute();
+                        self.advance();
+                        self.state = State::SelfClosingStartTag;
+                    }
+                    Some('=') => {
+                        self.advance();
+                        self.state = State::BeforeAttributeValue;
+                    }
+                    Some('>') => {
+                        self.finish_attribute();
+                        self.advance();
+                        let tok = self.emit_tag_and_set_raw_state();
+                        self.state = self.next_state_after_tag();
+                        return Some(tok);
+                    }
+                    None => {
+                        self.parse_error("eof-in-tag");
+                        self.finish_attribute();
+                        return Some(Token::Eof);
+                    }
+                    Some(_) => {
+                        self.finish_attribute();
+                        self.state = State::AttributeName;
+                    }
+                },
 
                 // ── BeforeAttributeValue ─────────────────────────────────
                 State::BeforeAttributeValue => {
@@ -908,120 +937,114 @@ impl Tokenizer {
                 }
 
                 // ── AttributeValueDoubleQuoted ───────────────────────────
-                State::AttributeValueDoubleQuoted => {
-                    match c {
-                        Some('"') => {
-                            self.advance();
-                            self.state = State::AfterAttributeValueQuoted;
-                        }
-                        Some('&') => {
-                            self.advance();
-                            let start = self.pos;
-                            if let Some(decoded) = self.consume_entity() {
-                                self.attr.value.push_str(&decoded);
-                            } else {
-                                self.pos = start;
-                                self.attr.value.push('&');
-                            }
-                        }
-                        Some('\0') => {
-                            self.parse_error("unexpected-null-character");
-                            self.attr.value.push('\u{FFFD}');
-                            self.advance();
-                        }
-                        None => {
-                            self.parse_error("eof-in-tag");
-                            self.finish_attribute();
-                            return Some(Token::Eof);
-                        }
-                        Some(ch) => {
-                            self.attr.value.push(ch);
-                            self.advance();
+                State::AttributeValueDoubleQuoted => match c {
+                    Some('"') => {
+                        self.advance();
+                        self.state = State::AfterAttributeValueQuoted;
+                    }
+                    Some('&') => {
+                        self.advance();
+                        let start = self.pos;
+                        if let Some(decoded) = self.consume_entity() {
+                            self.attr.value.push_str(&decoded);
+                        } else {
+                            self.pos = start;
+                            self.attr.value.push('&');
                         }
                     }
-                }
+                    Some('\0') => {
+                        self.parse_error("unexpected-null-character");
+                        self.attr.value.push('\u{FFFD}');
+                        self.advance();
+                    }
+                    None => {
+                        self.parse_error("eof-in-tag");
+                        self.finish_attribute();
+                        return Some(Token::Eof);
+                    }
+                    Some(ch) => {
+                        self.attr.value.push(ch);
+                        self.advance();
+                    }
+                },
 
                 // ── AttributeValueSingleQuoted ───────────────────────────
-                State::AttributeValueSingleQuoted => {
-                    match c {
-                        Some('\'') => {
-                            self.advance();
-                            self.state = State::AfterAttributeValueQuoted;
-                        }
-                        Some('&') => {
-                            self.advance();
-                            let start = self.pos;
-                            if let Some(decoded) = self.consume_entity() {
-                                self.attr.value.push_str(&decoded);
-                            } else {
-                                self.pos = start;
-                                self.attr.value.push('&');
-                            }
-                        }
-                        Some('\0') => {
-                            self.parse_error("unexpected-null-character");
-                            self.attr.value.push('\u{FFFD}');
-                            self.advance();
-                        }
-                        None => {
-                            self.parse_error("eof-in-tag");
-                            self.finish_attribute();
-                            return Some(Token::Eof);
-                        }
-                        Some(ch) => {
-                            self.attr.value.push(ch);
-                            self.advance();
+                State::AttributeValueSingleQuoted => match c {
+                    Some('\'') => {
+                        self.advance();
+                        self.state = State::AfterAttributeValueQuoted;
+                    }
+                    Some('&') => {
+                        self.advance();
+                        let start = self.pos;
+                        if let Some(decoded) = self.consume_entity() {
+                            self.attr.value.push_str(&decoded);
+                        } else {
+                            self.pos = start;
+                            self.attr.value.push('&');
                         }
                     }
-                }
+                    Some('\0') => {
+                        self.parse_error("unexpected-null-character");
+                        self.attr.value.push('\u{FFFD}');
+                        self.advance();
+                    }
+                    None => {
+                        self.parse_error("eof-in-tag");
+                        self.finish_attribute();
+                        return Some(Token::Eof);
+                    }
+                    Some(ch) => {
+                        self.attr.value.push(ch);
+                        self.advance();
+                    }
+                },
 
                 // ── AttributeValueUnquoted ───────────────────────────────
-                State::AttributeValueUnquoted => {
-                    match c {
-                        Some('\t') | Some('\n') | Some('\x0C') | Some(' ') => {
-                            self.finish_attribute();
-                            self.advance();
-                            self.state = State::BeforeAttributeName;
-                        }
-                        Some('&') => {
-                            self.advance();
-                            let start = self.pos;
-                            if let Some(decoded) = self.consume_entity() {
-                                self.attr.value.push_str(&decoded);
-                            } else {
-                                self.pos = start;
-                                self.attr.value.push('&');
-                            }
-                        }
-                        Some('>') => {
-                            self.finish_attribute();
-                            self.advance();
-                            let tok = self.emit_tag_and_set_raw_state();
-                            self.state = self.next_state_after_tag();
-                            return Some(tok);
-                        }
-                        Some('\0') => {
-                            self.parse_error("unexpected-null-character");
-                            self.attr.value.push('\u{FFFD}');
-                            self.advance();
-                        }
-                        Some('"') | Some('\'') | Some('<') | Some('=') | Some('`') => {
-                            self.parse_error("unexpected-character-in-unquoted-attribute-value");
-                            let ch = c.unwrap();
-                            self.attr.value.push(ch);
-                            self.advance();
-                        }
-                        None => {
-                            self.parse_error("eof-in-tag");
-                            self.finish_attribute();
-                            return Some(Token::Eof);
-                        }
-                        Some(ch) => {
-                            self.attr.value.push(ch);
-                            self.advance();
+                State::AttributeValueUnquoted => match c {
+                    Some('\t') | Some('\n') | Some('\x0C') | Some(' ') => {
+                        self.finish_attribute();
+                        self.advance();
+                        self.state = State::BeforeAttributeName;
+                    }
+                    Some('&') => {
+                        self.advance();
+                        let start = self.pos;
+                        if let Some(decoded) = self.consume_entity() {
+                            self.attr.value.push_str(&decoded);
+                        } else {
+                            self.pos = start;
+                            self.attr.value.push('&');
                         }
                     }
-                }
+                    Some('>') => {
+                        self.finish_attribute();
+                        self.advance();
+                        let tok = self.emit_tag_and_set_raw_state();
+                        self.state = self.next_state_after_tag();
+                        return Some(tok);
+                    }
+                    Some('\0') => {
+                        self.parse_error("unexpected-null-character");
+                        self.attr.value.push('\u{FFFD}');
+                        self.advance();
+                    }
+                    Some('"') | Some('\'') | Some('<') | Some('=') | Some('`') => {
+                        self.parse_error("unexpected-character-in-unquoted-attribute-value");
+                        let ch = c.unwrap();
+                        self.attr.value.push(ch);
+                        self.advance();
+                    }
+                    None => {
+                        self.parse_error("eof-in-tag");
+                        self.finish_attribute();
+                        return Some(Token::Eof);
+                    }
+                    Some(ch) => {
+                        self.attr.value.push(ch);
+                        self.advance();
+                    }
+                },
 
                 // ── AfterAttributeValueQuoted ────────────────────────────
                 State::AfterAttributeValueQuoted => {
@@ -1088,7 +1111,9 @@ impl Tokenizer {
                         // consume until >
                         while let Some(ch) = self.current() {
                             self.advance();
-                            if ch == '>' { break; }
+                            if ch == '>' {
+                                break;
+                            }
                             self.comment.push(ch);
                         }
                         self.state = State::Data;
@@ -1097,140 +1122,128 @@ impl Tokenizer {
                 }
 
                 // ── Comment states ───────────────────────────────────────
-                State::CommentStart => {
-                    match c {
-                        Some('-') => {
-                            self.advance();
-                            self.state = State::CommentStartDash;
-                        }
-                        Some('>') => {
-                            self.parse_error("abrupt-closing-of-empty-comment");
-                            self.advance();
-                            self.state = State::Data;
-                            return Some(self.emit_comment());
-                        }
-                        _ => {
-                            self.state = State::Comment;
-                        }
+                State::CommentStart => match c {
+                    Some('-') => {
+                        self.advance();
+                        self.state = State::CommentStartDash;
                     }
-                }
+                    Some('>') => {
+                        self.parse_error("abrupt-closing-of-empty-comment");
+                        self.advance();
+                        self.state = State::Data;
+                        return Some(self.emit_comment());
+                    }
+                    _ => {
+                        self.state = State::Comment;
+                    }
+                },
 
-                State::CommentStartDash => {
-                    match c {
-                        Some('-') => {
-                            self.advance();
-                            self.state = State::CommentEnd;
-                        }
-                        Some('>') => {
-                            self.parse_error("abrupt-closing-of-empty-comment");
-                            self.advance();
-                            self.state = State::Data;
-                            return Some(self.emit_comment());
-                        }
-                        None => {
-                            self.parse_error("eof-in-comment");
-                            self.state = State::Data;
-                            return Some(self.emit_comment());
-                        }
-                        Some(_) => {
-                            self.comment.push('-');
-                            self.state = State::Comment;
-                        }
+                State::CommentStartDash => match c {
+                    Some('-') => {
+                        self.advance();
+                        self.state = State::CommentEnd;
                     }
-                }
+                    Some('>') => {
+                        self.parse_error("abrupt-closing-of-empty-comment");
+                        self.advance();
+                        self.state = State::Data;
+                        return Some(self.emit_comment());
+                    }
+                    None => {
+                        self.parse_error("eof-in-comment");
+                        self.state = State::Data;
+                        return Some(self.emit_comment());
+                    }
+                    Some(_) => {
+                        self.comment.push('-');
+                        self.state = State::Comment;
+                    }
+                },
 
-                State::Comment => {
-                    match c {
-                        Some('-') => {
-                            self.advance();
-                            self.state = State::CommentEndDash;
-                        }
-                        Some('\0') => {
-                            self.parse_error("unexpected-null-character");
-                            self.comment.push('\u{FFFD}');
-                            self.advance();
-                        }
-                        None => {
-                            self.parse_error("eof-in-comment");
-                            self.state = State::Data;
-                            return Some(self.emit_comment());
-                        }
-                        Some(ch) => {
-                            self.comment.push(ch);
-                            self.advance();
-                        }
+                State::Comment => match c {
+                    Some('-') => {
+                        self.advance();
+                        self.state = State::CommentEndDash;
                     }
-                }
+                    Some('\0') => {
+                        self.parse_error("unexpected-null-character");
+                        self.comment.push('\u{FFFD}');
+                        self.advance();
+                    }
+                    None => {
+                        self.parse_error("eof-in-comment");
+                        self.state = State::Data;
+                        return Some(self.emit_comment());
+                    }
+                    Some(ch) => {
+                        self.comment.push(ch);
+                        self.advance();
+                    }
+                },
 
-                State::CommentEndDash => {
-                    match c {
-                        Some('-') => {
-                            self.advance();
-                            self.state = State::CommentEnd;
-                        }
-                        None => {
-                            self.parse_error("eof-in-comment");
-                            self.state = State::Data;
-                            return Some(self.emit_comment());
-                        }
-                        Some(_) => {
-                            self.comment.push('-');
-                            self.state = State::Comment;
-                        }
+                State::CommentEndDash => match c {
+                    Some('-') => {
+                        self.advance();
+                        self.state = State::CommentEnd;
                     }
-                }
+                    None => {
+                        self.parse_error("eof-in-comment");
+                        self.state = State::Data;
+                        return Some(self.emit_comment());
+                    }
+                    Some(_) => {
+                        self.comment.push('-');
+                        self.state = State::Comment;
+                    }
+                },
 
-                State::CommentEnd => {
-                    match c {
-                        Some('>') => {
-                            self.advance();
-                            self.state = State::Data;
-                            return Some(self.emit_comment());
-                        }
-                        Some('!') => {
-                            self.advance();
-                            self.state = State::CommentEndBang;
-                        }
-                        Some('-') => {
-                            self.comment.push('-');
-                            self.advance();
-                        }
-                        None => {
-                            self.parse_error("eof-in-comment");
-                            self.state = State::Data;
-                            return Some(self.emit_comment());
-                        }
-                        Some(_) => {
-                            self.comment.push_str("--");
-                            self.state = State::Comment;
-                        }
+                State::CommentEnd => match c {
+                    Some('>') => {
+                        self.advance();
+                        self.state = State::Data;
+                        return Some(self.emit_comment());
                     }
-                }
+                    Some('!') => {
+                        self.advance();
+                        self.state = State::CommentEndBang;
+                    }
+                    Some('-') => {
+                        self.comment.push('-');
+                        self.advance();
+                    }
+                    None => {
+                        self.parse_error("eof-in-comment");
+                        self.state = State::Data;
+                        return Some(self.emit_comment());
+                    }
+                    Some(_) => {
+                        self.comment.push_str("--");
+                        self.state = State::Comment;
+                    }
+                },
 
-                State::CommentEndBang => {
-                    match c {
-                        Some('-') => {
-                            self.comment.push_str("--!");
-                            self.advance();
-                            self.state = State::CommentEndDash;
-                        }
-                        Some('>') => {
-                            self.parse_error("incorrectly-closed-comment");
-                            self.advance();
-                            self.state = State::Data;
-                            return Some(self.emit_comment());
-                        }
-                        None => {
-                            self.parse_error("eof-in-comment");
-                            self.state = State::Data;
-                            return Some(self.emit_comment());
-                        }
-                        Some(_) => {
-                            self.comment.push_str("--!");
-                            self.state = State::Comment;
-                        }
+                State::CommentEndBang => match c {
+                    Some('-') => {
+                        self.comment.push_str("--!");
+                        self.advance();
+                        self.state = State::CommentEndDash;
                     }
-                }
+                    Some('>') => {
+                        self.parse_error("incorrectly-closed-comment");
+                        self.advance();
+                        self.state = State::Data;
+                        return Some(self.emit_comment());
+                    }
+                    None => {
+                        self.parse_error("eof-in-comment");
+                        self.state = State::Data;
+                        return Some(self.emit_comment());
+                    }
+                    Some(_) => {
+                        self.comment.push_str("--!");
+                        self.state = State::Comment;
+                    }
+                },
 
                 // ── DOCTYPE states ───────────────────────────────────────
                 State::Doctype => {
@@ -1257,66 +1270,62 @@ impl Tokenizer {
                     }
                 }
 
-                State::BeforeDoctypeName => {
-                    match c {
-                        Some('\t') | Some('\n') | Some('\x0C') | Some(' ') => {
-                            self.advance();
-                        }
-                        Some('\0') => {
-                            self.parse_error("unexpected-null-character");
-                            self.doctype_name.push('\u{FFFD}');
-                            self.advance();
-                            self.state = State::DoctypeName;
-                        }
-                        Some('>') => {
-                            self.parse_error("missing-doctype-name");
-                            self.doctype_force_quirks = true;
-                            self.advance();
-                            self.state = State::Data;
-                            return Some(self.emit_doctype());
-                        }
-                        None => {
-                            self.parse_error("eof-in-doctype");
-                            self.doctype_force_quirks = true;
-                            self.state = State::Data;
-                            return Some(self.emit_doctype());
-                        }
-                        Some(ch) => {
-                            self.doctype_name.push(ch.to_ascii_lowercase());
-                            self.advance();
-                            self.state = State::DoctypeName;
-                        }
+                State::BeforeDoctypeName => match c {
+                    Some('\t') | Some('\n') | Some('\x0C') | Some(' ') => {
+                        self.advance();
                     }
-                }
+                    Some('\0') => {
+                        self.parse_error("unexpected-null-character");
+                        self.doctype_name.push('\u{FFFD}');
+                        self.advance();
+                        self.state = State::DoctypeName;
+                    }
+                    Some('>') => {
+                        self.parse_error("missing-doctype-name");
+                        self.doctype_force_quirks = true;
+                        self.advance();
+                        self.state = State::Data;
+                        return Some(self.emit_doctype());
+                    }
+                    None => {
+                        self.parse_error("eof-in-doctype");
+                        self.doctype_force_quirks = true;
+                        self.state = State::Data;
+                        return Some(self.emit_doctype());
+                    }
+                    Some(ch) => {
+                        self.doctype_name.push(ch.to_ascii_lowercase());
+                        self.advance();
+                        self.state = State::DoctypeName;
+                    }
+                },
 
-                State::DoctypeName => {
-                    match c {
-                        Some('\t') | Some('\n') | Some('\x0C') | Some(' ') => {
-                            self.advance();
-                            self.state = State::AfterDoctypeName;
-                        }
-                        Some('>') => {
-                            self.advance();
-                            self.state = State::Data;
-                            return Some(self.emit_doctype());
-                        }
-                        Some('\0') => {
-                            self.parse_error("unexpected-null-character");
-                            self.doctype_name.push('\u{FFFD}');
-                            self.advance();
-                        }
-                        None => {
-                            self.parse_error("eof-in-doctype");
-                            self.doctype_force_quirks = true;
-                            self.state = State::Data;
-                            return Some(self.emit_doctype());
-                        }
-                        Some(ch) => {
-                            self.doctype_name.push(ch.to_ascii_lowercase());
-                            self.advance();
-                        }
+                State::DoctypeName => match c {
+                    Some('\t') | Some('\n') | Some('\x0C') | Some(' ') => {
+                        self.advance();
+                        self.state = State::AfterDoctypeName;
                     }
-                }
+                    Some('>') => {
+                        self.advance();
+                        self.state = State::Data;
+                        return Some(self.emit_doctype());
+                    }
+                    Some('\0') => {
+                        self.parse_error("unexpected-null-character");
+                        self.doctype_name.push('\u{FFFD}');
+                        self.advance();
+                    }
+                    None => {
+                        self.parse_error("eof-in-doctype");
+                        self.doctype_force_quirks = true;
+                        self.state = State::Data;
+                        return Some(self.emit_doctype());
+                    }
+                    Some(ch) => {
+                        self.doctype_name.push(ch.to_ascii_lowercase());
+                        self.advance();
+                    }
+                },
 
                 State::AfterDoctypeName => {
                     match c {
@@ -1347,7 +1356,9 @@ impl Tokenizer {
                                 // consume until >
                                 while let Some(ch) = self.current() {
                                     self.advance();
-                                    if ch == '>' { break; }
+                                    if ch == '>' {
+                                        break;
+                                    }
                                 }
                                 self.state = State::Data;
                                 return Some(self.emit_doctype());
@@ -1356,266 +1367,266 @@ impl Tokenizer {
                     }
                 }
 
-                State::AfterDoctypePublicKeyword => {
-                    match c {
-                        Some('\t') | Some('\n') | Some('\x0C') | Some(' ') => {
-                            self.advance();
-                            self.state = State::BeforeDoctypePublicId;
-                        }
-                        Some('"') => {
-                            self.parse_error("missing-whitespace-after-doctype-public-keyword");
-                            self.doctype_public = Some(String::new());
-                            self.advance();
-                            self.state = State::DoctypePublicIdDoubleQuoted;
-                        }
-                        Some('\'') => {
-                            self.parse_error("missing-whitespace-after-doctype-public-keyword");
-                            self.doctype_public = Some(String::new());
-                            self.advance();
-                            self.state = State::DoctypePublicIdSingleQuoted;
-                        }
-                        Some('>') | None => {
-                            self.doctype_force_quirks = true;
-                            if c == Some('>') { self.advance(); }
-                            self.state = State::Data;
-                            return Some(self.emit_doctype());
-                        }
-                        Some(_) => {
-                            self.doctype_force_quirks = true;
-                            self.state = State::BogusDoctype;
-                        }
+                State::AfterDoctypePublicKeyword => match c {
+                    Some('\t') | Some('\n') | Some('\x0C') | Some(' ') => {
+                        self.advance();
+                        self.state = State::BeforeDoctypePublicId;
                     }
-                }
+                    Some('"') => {
+                        self.parse_error("missing-whitespace-after-doctype-public-keyword");
+                        self.doctype_public = Some(String::new());
+                        self.advance();
+                        self.state = State::DoctypePublicIdDoubleQuoted;
+                    }
+                    Some('\'') => {
+                        self.parse_error("missing-whitespace-after-doctype-public-keyword");
+                        self.doctype_public = Some(String::new());
+                        self.advance();
+                        self.state = State::DoctypePublicIdSingleQuoted;
+                    }
+                    Some('>') | None => {
+                        self.doctype_force_quirks = true;
+                        if c == Some('>') {
+                            self.advance();
+                        }
+                        self.state = State::Data;
+                        return Some(self.emit_doctype());
+                    }
+                    Some(_) => {
+                        self.doctype_force_quirks = true;
+                        self.state = State::BogusDoctype;
+                    }
+                },
 
-                State::BeforeDoctypePublicId => {
-                    match c {
-                        Some('\t') | Some('\n') | Some('\x0C') | Some(' ') => { self.advance(); }
-                        Some('"') => {
-                            self.doctype_public = Some(String::new());
-                            self.advance();
-                            self.state = State::DoctypePublicIdDoubleQuoted;
-                        }
-                        Some('\'') => {
-                            self.doctype_public = Some(String::new());
-                            self.advance();
-                            self.state = State::DoctypePublicIdSingleQuoted;
-                        }
-                        _ => {
-                            self.doctype_force_quirks = true;
-                            self.state = State::BogusDoctype;
-                        }
+                State::BeforeDoctypePublicId => match c {
+                    Some('\t') | Some('\n') | Some('\x0C') | Some(' ') => {
+                        self.advance();
                     }
-                }
+                    Some('"') => {
+                        self.doctype_public = Some(String::new());
+                        self.advance();
+                        self.state = State::DoctypePublicIdDoubleQuoted;
+                    }
+                    Some('\'') => {
+                        self.doctype_public = Some(String::new());
+                        self.advance();
+                        self.state = State::DoctypePublicIdSingleQuoted;
+                    }
+                    _ => {
+                        self.doctype_force_quirks = true;
+                        self.state = State::BogusDoctype;
+                    }
+                },
 
-                State::DoctypePublicIdDoubleQuoted => {
-                    match c {
-                        Some('"') => { self.advance(); self.state = State::AfterDoctypePublicId; }
-                        Some('>') => {
-                            self.doctype_force_quirks = true;
-                            self.advance();
-                            self.state = State::Data;
-                            return Some(self.emit_doctype());
-                        }
-                        None => {
-                            self.doctype_force_quirks = true;
-                            return Some(self.emit_doctype());
-                        }
-                        Some(ch) => {
-                            self.doctype_public.get_or_insert_default().push(ch);
-                            self.advance();
-                        }
+                State::DoctypePublicIdDoubleQuoted => match c {
+                    Some('"') => {
+                        self.advance();
+                        self.state = State::AfterDoctypePublicId;
                     }
-                }
+                    Some('>') => {
+                        self.doctype_force_quirks = true;
+                        self.advance();
+                        self.state = State::Data;
+                        return Some(self.emit_doctype());
+                    }
+                    None => {
+                        self.doctype_force_quirks = true;
+                        return Some(self.emit_doctype());
+                    }
+                    Some(ch) => {
+                        self.doctype_public.get_or_insert_default().push(ch);
+                        self.advance();
+                    }
+                },
 
-                State::DoctypePublicIdSingleQuoted => {
-                    match c {
-                        Some('\'') => { self.advance(); self.state = State::AfterDoctypePublicId; }
-                        Some('>') => {
-                            self.doctype_force_quirks = true;
-                            self.advance();
-                            self.state = State::Data;
-                            return Some(self.emit_doctype());
-                        }
-                        None => {
-                            self.doctype_force_quirks = true;
-                            return Some(self.emit_doctype());
-                        }
-                        Some(ch) => {
-                            self.doctype_public.get_or_insert_default().push(ch);
-                            self.advance();
-                        }
+                State::DoctypePublicIdSingleQuoted => match c {
+                    Some('\'') => {
+                        self.advance();
+                        self.state = State::AfterDoctypePublicId;
                     }
-                }
+                    Some('>') => {
+                        self.doctype_force_quirks = true;
+                        self.advance();
+                        self.state = State::Data;
+                        return Some(self.emit_doctype());
+                    }
+                    None => {
+                        self.doctype_force_quirks = true;
+                        return Some(self.emit_doctype());
+                    }
+                    Some(ch) => {
+                        self.doctype_public.get_or_insert_default().push(ch);
+                        self.advance();
+                    }
+                },
 
-                State::AfterDoctypePublicId => {
-                    match c {
-                        Some('\t') | Some('\n') | Some('\x0C') | Some(' ') => {
-                            self.advance();
-                            self.state = State::BetweenDoctypePublicAndSystemIds;
-                        }
-                        Some('>') => {
-                            self.advance();
-                            self.state = State::Data;
-                            return Some(self.emit_doctype());
-                        }
-                        Some('"') => {
-                            self.doctype_system = Some(String::new());
-                            self.advance();
-                            self.state = State::DoctypeSystemIdDoubleQuoted;
-                        }
-                        Some('\'') => {
-                            self.doctype_system = Some(String::new());
-                            self.advance();
-                            self.state = State::DoctypeSystemIdSingleQuoted;
-                        }
-                        _ => {
-                            self.doctype_force_quirks = true;
-                            self.state = State::BogusDoctype;
-                        }
+                State::AfterDoctypePublicId => match c {
+                    Some('\t') | Some('\n') | Some('\x0C') | Some(' ') => {
+                        self.advance();
+                        self.state = State::BetweenDoctypePublicAndSystemIds;
                     }
-                }
+                    Some('>') => {
+                        self.advance();
+                        self.state = State::Data;
+                        return Some(self.emit_doctype());
+                    }
+                    Some('"') => {
+                        self.doctype_system = Some(String::new());
+                        self.advance();
+                        self.state = State::DoctypeSystemIdDoubleQuoted;
+                    }
+                    Some('\'') => {
+                        self.doctype_system = Some(String::new());
+                        self.advance();
+                        self.state = State::DoctypeSystemIdSingleQuoted;
+                    }
+                    _ => {
+                        self.doctype_force_quirks = true;
+                        self.state = State::BogusDoctype;
+                    }
+                },
 
-                State::BetweenDoctypePublicAndSystemIds => {
-                    match c {
-                        Some('\t') | Some('\n') | Some('\x0C') | Some(' ') => { self.advance(); }
-                        Some('>') => {
-                            self.advance();
-                            self.state = State::Data;
-                            return Some(self.emit_doctype());
-                        }
-                        Some('"') => {
-                            self.doctype_system = Some(String::new());
-                            self.advance();
-                            self.state = State::DoctypeSystemIdDoubleQuoted;
-                        }
-                        Some('\'') => {
-                            self.doctype_system = Some(String::new());
-                            self.advance();
-                            self.state = State::DoctypeSystemIdSingleQuoted;
-                        }
-                        _ => {
-                            self.doctype_force_quirks = true;
-                            self.state = State::BogusDoctype;
-                        }
+                State::BetweenDoctypePublicAndSystemIds => match c {
+                    Some('\t') | Some('\n') | Some('\x0C') | Some(' ') => {
+                        self.advance();
                     }
-                }
+                    Some('>') => {
+                        self.advance();
+                        self.state = State::Data;
+                        return Some(self.emit_doctype());
+                    }
+                    Some('"') => {
+                        self.doctype_system = Some(String::new());
+                        self.advance();
+                        self.state = State::DoctypeSystemIdDoubleQuoted;
+                    }
+                    Some('\'') => {
+                        self.doctype_system = Some(String::new());
+                        self.advance();
+                        self.state = State::DoctypeSystemIdSingleQuoted;
+                    }
+                    _ => {
+                        self.doctype_force_quirks = true;
+                        self.state = State::BogusDoctype;
+                    }
+                },
 
-                State::AfterDoctypeSystemKeyword => {
-                    match c {
-                        Some('\t') | Some('\n') | Some('\x0C') | Some(' ') => {
-                            self.advance();
-                            self.state = State::BeforeDoctypeSystemId;
-                        }
-                        Some('"') => {
-                            self.doctype_system = Some(String::new());
-                            self.advance();
-                            self.state = State::DoctypeSystemIdDoubleQuoted;
-                        }
-                        Some('\'') => {
-                            self.doctype_system = Some(String::new());
-                            self.advance();
-                            self.state = State::DoctypeSystemIdSingleQuoted;
-                        }
-                        _ => {
-                            self.doctype_force_quirks = true;
-                            self.state = State::BogusDoctype;
-                        }
+                State::AfterDoctypeSystemKeyword => match c {
+                    Some('\t') | Some('\n') | Some('\x0C') | Some(' ') => {
+                        self.advance();
+                        self.state = State::BeforeDoctypeSystemId;
                     }
-                }
+                    Some('"') => {
+                        self.doctype_system = Some(String::new());
+                        self.advance();
+                        self.state = State::DoctypeSystemIdDoubleQuoted;
+                    }
+                    Some('\'') => {
+                        self.doctype_system = Some(String::new());
+                        self.advance();
+                        self.state = State::DoctypeSystemIdSingleQuoted;
+                    }
+                    _ => {
+                        self.doctype_force_quirks = true;
+                        self.state = State::BogusDoctype;
+                    }
+                },
 
-                State::BeforeDoctypeSystemId => {
-                    match c {
-                        Some('\t') | Some('\n') | Some('\x0C') | Some(' ') => { self.advance(); }
-                        Some('"') => {
-                            self.doctype_system = Some(String::new());
-                            self.advance();
-                            self.state = State::DoctypeSystemIdDoubleQuoted;
-                        }
-                        Some('\'') => {
-                            self.doctype_system = Some(String::new());
-                            self.advance();
-                            self.state = State::DoctypeSystemIdSingleQuoted;
-                        }
-                        _ => {
-                            self.doctype_force_quirks = true;
-                            self.state = State::BogusDoctype;
-                        }
+                State::BeforeDoctypeSystemId => match c {
+                    Some('\t') | Some('\n') | Some('\x0C') | Some(' ') => {
+                        self.advance();
                     }
-                }
+                    Some('"') => {
+                        self.doctype_system = Some(String::new());
+                        self.advance();
+                        self.state = State::DoctypeSystemIdDoubleQuoted;
+                    }
+                    Some('\'') => {
+                        self.doctype_system = Some(String::new());
+                        self.advance();
+                        self.state = State::DoctypeSystemIdSingleQuoted;
+                    }
+                    _ => {
+                        self.doctype_force_quirks = true;
+                        self.state = State::BogusDoctype;
+                    }
+                },
 
-                State::DoctypeSystemIdDoubleQuoted => {
-                    match c {
-                        Some('"') => { self.advance(); self.state = State::AfterDoctypeSystemId; }
-                        Some('>') => {
-                            self.doctype_force_quirks = true;
-                            self.advance();
-                            self.state = State::Data;
-                            return Some(self.emit_doctype());
-                        }
-                        None => {
-                            self.doctype_force_quirks = true;
-                            return Some(self.emit_doctype());
-                        }
-                        Some(ch) => {
-                            self.doctype_system.get_or_insert_default().push(ch);
-                            self.advance();
-                        }
+                State::DoctypeSystemIdDoubleQuoted => match c {
+                    Some('"') => {
+                        self.advance();
+                        self.state = State::AfterDoctypeSystemId;
                     }
-                }
+                    Some('>') => {
+                        self.doctype_force_quirks = true;
+                        self.advance();
+                        self.state = State::Data;
+                        return Some(self.emit_doctype());
+                    }
+                    None => {
+                        self.doctype_force_quirks = true;
+                        return Some(self.emit_doctype());
+                    }
+                    Some(ch) => {
+                        self.doctype_system.get_or_insert_default().push(ch);
+                        self.advance();
+                    }
+                },
 
-                State::DoctypeSystemIdSingleQuoted => {
-                    match c {
-                        Some('\'') => { self.advance(); self.state = State::AfterDoctypeSystemId; }
-                        Some('>') => {
-                            self.doctype_force_quirks = true;
-                            self.advance();
-                            self.state = State::Data;
-                            return Some(self.emit_doctype());
-                        }
-                        None => {
-                            self.doctype_force_quirks = true;
-                            return Some(self.emit_doctype());
-                        }
-                        Some(ch) => {
-                            self.doctype_system.get_or_insert_default().push(ch);
-                            self.advance();
-                        }
+                State::DoctypeSystemIdSingleQuoted => match c {
+                    Some('\'') => {
+                        self.advance();
+                        self.state = State::AfterDoctypeSystemId;
                     }
-                }
+                    Some('>') => {
+                        self.doctype_force_quirks = true;
+                        self.advance();
+                        self.state = State::Data;
+                        return Some(self.emit_doctype());
+                    }
+                    None => {
+                        self.doctype_force_quirks = true;
+                        return Some(self.emit_doctype());
+                    }
+                    Some(ch) => {
+                        self.doctype_system.get_or_insert_default().push(ch);
+                        self.advance();
+                    }
+                },
 
-                State::AfterDoctypeSystemId => {
-                    match c {
-                        Some('\t') | Some('\n') | Some('\x0C') | Some(' ') => { self.advance(); }
-                        Some('>') => {
-                            self.advance();
-                            self.state = State::Data;
-                            return Some(self.emit_doctype());
-                        }
-                        None => {
-                            self.doctype_force_quirks = true;
-                            return Some(self.emit_doctype());
-                        }
-                        Some(_) => {
-                            self.parse_error("unexpected-character-after-doctype-system-identifier");
-                            self.state = State::BogusDoctype;
-                        }
+                State::AfterDoctypeSystemId => match c {
+                    Some('\t') | Some('\n') | Some('\x0C') | Some(' ') => {
+                        self.advance();
                     }
-                }
+                    Some('>') => {
+                        self.advance();
+                        self.state = State::Data;
+                        return Some(self.emit_doctype());
+                    }
+                    None => {
+                        self.doctype_force_quirks = true;
+                        return Some(self.emit_doctype());
+                    }
+                    Some(_) => {
+                        self.parse_error("unexpected-character-after-doctype-system-identifier");
+                        self.state = State::BogusDoctype;
+                    }
+                },
 
-                State::BogusDoctype => {
-                    match c {
-                        Some('>') => {
-                            self.advance();
-                            self.state = State::Data;
-                            return Some(self.emit_doctype());
-                        }
-                        None => {
-                            self.state = State::Data;
-                            return Some(self.emit_doctype());
-                        }
-                        Some(_) => { self.advance(); }
+                State::BogusDoctype => match c {
+                    Some('>') => {
+                        self.advance();
+                        self.state = State::Data;
+                        return Some(self.emit_doctype());
                     }
-                }
+                    None => {
+                        self.state = State::Data;
+                        return Some(self.emit_doctype());
+                    }
+                    Some(_) => {
+                        self.advance();
+                    }
+                },
             } // end match state
         } // end loop
     }
@@ -1630,7 +1641,10 @@ impl Tokenizer {
     /// call `next_state_after_tag`).
     fn emit_tag_and_set_raw_state(&mut self) -> Token {
         let is_start_raw = !self.tag.is_end
-            && matches!(self.tag.name.as_str(), "script" | "style" | "textarea" | "title");
+            && matches!(
+                self.tag.name.as_str(),
+                "script" | "style" | "textarea" | "title"
+            );
         if is_start_raw {
             self.raw_end_tag = self.tag.name.clone();
         }

@@ -2,8 +2,8 @@
 
 use std::time::Duration;
 
-use crate::html::dom::DOCUMENT_NODE_ID;
 use crate::dom::query_selector;
+use crate::html::dom::DOCUMENT_NODE_ID;
 
 use super::page::Page;
 
@@ -34,7 +34,9 @@ pub struct ActionChain {
 
 impl ActionChain {
     pub fn new() -> Self {
-        ActionChain { actions: Vec::new() }
+        ActionChain {
+            actions: Vec::new(),
+        }
     }
 
     /// Append `action` and return `self` for chaining.
@@ -56,8 +58,8 @@ impl Page {
                 };
                 match node_id {
                     Some(id) => {
-                        let tag = self.doc.lock().unwrap()
-                            .nodes[id].tag_name()
+                        let tag = self.doc.lock().unwrap().nodes[id]
+                            .tag_name()
                             .unwrap_or("?")
                             .to_string();
                         let msg = format!("[click] <{tag}> selector={selector:?} node_id={id}");

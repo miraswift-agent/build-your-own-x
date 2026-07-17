@@ -7,12 +7,29 @@ use std::time::Duration;
 /// Structured browser error variants with context.
 #[derive(Debug, Clone)]
 pub enum BrowserError {
-    NetworkError { message: String, url: Option<String> },
-    ParseError { message: String },
-    JsError { message: String, stack: Option<String> },
-    TimeoutError { message: String, elapsed: Option<Duration> },
-    ResourceLimitError { message: String, limit_type: String },
-    SessionError { message: String, session_id: Option<String> },
+    NetworkError {
+        message: String,
+        url: Option<String>,
+    },
+    ParseError {
+        message: String,
+    },
+    JsError {
+        message: String,
+        stack: Option<String>,
+    },
+    TimeoutError {
+        message: String,
+        elapsed: Option<Duration>,
+    },
+    ResourceLimitError {
+        message: String,
+        limit_type: String,
+    },
+    SessionError {
+        message: String,
+        session_id: Option<String>,
+    },
 }
 
 impl fmt::Display for BrowserError {
@@ -20,26 +37,40 @@ impl fmt::Display for BrowserError {
         match self {
             BrowserError::NetworkError { message, url } => {
                 write!(f, "NetworkError: {message}")?;
-                if let Some(u) = url { write!(f, " (url: {u})")?; }
+                if let Some(u) = url {
+                    write!(f, " (url: {u})")?;
+                }
                 Ok(())
             }
             BrowserError::ParseError { message } => write!(f, "ParseError: {message}"),
             BrowserError::JsError { message, stack } => {
                 write!(f, "JsError: {message}")?;
-                if let Some(s) = stack { write!(f, "\n{s}")?; }
+                if let Some(s) = stack {
+                    write!(f, "\n{s}")?;
+                }
                 Ok(())
             }
             BrowserError::TimeoutError { message, elapsed } => {
                 write!(f, "TimeoutError: {message}")?;
-                if let Some(e) = elapsed { write!(f, " (elapsed: {e:?})")?; }
+                if let Some(e) = elapsed {
+                    write!(f, " (elapsed: {e:?})")?;
+                }
                 Ok(())
             }
-            BrowserError::ResourceLimitError { message, limit_type } => {
+            BrowserError::ResourceLimitError {
+                message,
+                limit_type,
+            } => {
                 write!(f, "ResourceLimitError[{limit_type}]: {message}")
             }
-            BrowserError::SessionError { message, session_id } => {
+            BrowserError::SessionError {
+                message,
+                session_id,
+            } => {
                 write!(f, "SessionError: {message}")?;
-                if let Some(id) = session_id { write!(f, " (session: {id})")?; }
+                if let Some(id) = session_id {
+                    write!(f, " (session: {id})")?;
+                }
                 Ok(())
             }
         }
@@ -59,7 +90,12 @@ pub struct ErrorChain {
 
 impl ErrorChain {
     pub fn new(error: BrowserError) -> Self {
-        ErrorChain { error, page_id: None, session_id: None, operation: None }
+        ErrorChain {
+            error,
+            page_id: None,
+            session_id: None,
+            operation: None,
+        }
     }
 
     pub fn with_page(mut self, page_id: impl Into<String>) -> Self {
@@ -81,9 +117,15 @@ impl ErrorChain {
 impl fmt::Display for ErrorChain {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.error)?;
-        if let Some(op) = &self.operation { write!(f, " [op: {op}]")?; }
-        if let Some(sid) = &self.session_id { write!(f, " [session: {sid}]")?; }
-        if let Some(pid) = &self.page_id { write!(f, " [page: {pid}]")?; }
+        if let Some(op) = &self.operation {
+            write!(f, " [op: {op}]")?;
+        }
+        if let Some(sid) = &self.session_id {
+            write!(f, " [session: {sid}]")?;
+        }
+        if let Some(pid) = &self.page_id {
+            write!(f, " [page: {pid}]")?;
+        }
         Ok(())
     }
 }
@@ -136,7 +178,9 @@ pub struct CrashRecovery {
 
 impl CrashRecovery {
     pub fn new() -> Self {
-        CrashRecovery { crashed_pages: HashSet::new() }
+        CrashRecovery {
+            crashed_pages: HashSet::new(),
+        }
     }
 
     pub fn mark_crashed(&mut self, page_id: &str) {

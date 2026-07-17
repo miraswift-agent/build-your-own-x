@@ -53,15 +53,21 @@ pub fn find_resources(doc: &Document, base_url: &Url, config: &LoadConfig) -> Ve
     let mut resources = Vec::new();
 
     for node in doc.nodes.iter() {
-        let Some(elem) = node.element_data() else { continue };
+        let Some(elem) = node.element_data() else {
+            continue;
+        };
         let tag = elem.tag_name.as_str();
 
         match tag {
             "link" => {
-                let rel = elem.attrs.iter()
+                let rel = elem
+                    .attrs
+                    .iter()
                     .find(|a| a.name == "rel")
                     .map(|a| a.value.to_lowercase());
-                let href = elem.attrs.iter()
+                let href = elem
+                    .attrs
+                    .iter()
                     .find(|a| a.name == "href")
                     .map(|a| a.value.as_str());
 
@@ -80,7 +86,9 @@ pub fn find_resources(doc: &Document, base_url: &Url, config: &LoadConfig) -> Ve
             }
             "script" => {
                 if config.load_js {
-                    let src = elem.attrs.iter()
+                    let src = elem
+                        .attrs
+                        .iter()
                         .find(|a| a.name == "src")
                         .map(|a| a.value.as_str());
                     if let Some(src) = src {
@@ -97,7 +105,9 @@ pub fn find_resources(doc: &Document, base_url: &Url, config: &LoadConfig) -> Ve
             }
             "img" => {
                 if config.load_images {
-                    let src = elem.attrs.iter()
+                    let src = elem
+                        .attrs
+                        .iter()
                         .find(|a| a.name == "src")
                         .map(|a| a.value.as_str());
                     if let Some(src) = src {

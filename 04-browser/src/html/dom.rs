@@ -13,8 +13,8 @@
 //! - `pending_mutations` on `Document` — buffer consumed by `MutationObserver`
 //! - Navigation helpers, attribute methods, manipulation, serialization, queries
 
-use std::fmt;
 use std::collections::VecDeque;
+use std::fmt;
 
 /// An index into `Document::nodes`. `0` is always the document root.
 pub type NodeId = usize;
@@ -74,7 +74,10 @@ pub enum SemanticRole {
 
     /// Embedded media.
     /// `src` is `None` when the source is specified via `<source>` children.
-    Media { src: Option<String>, alt: Option<String> },
+    Media {
+        src: Option<String>,
+        alt: Option<String>,
+    },
 
     /// Non-content: `script` or `style`. Agents skip these by default.
     Script { is_style: bool },
@@ -117,7 +120,10 @@ pub struct Attribute {
 
 impl Attribute {
     pub fn new(name: impl Into<String>, value: impl Into<String>) -> Self {
-        Attribute { name: name.into(), value: value.into() }
+        Attribute {
+            name: name.into(),
+            value: value.into(),
+        }
     }
 }
 
@@ -138,7 +144,10 @@ impl ElementData {
     /// Look up an attribute value by name (case-insensitive attribute names
     /// are already lowercased by the tokenizer).
     pub fn attr(&self, name: &str) -> Option<&str> {
-        self.attrs.iter().find(|a| a.name == name).map(|a| a.value.as_str())
+        self.attrs
+            .iter()
+            .find(|a| a.name == name)
+            .map(|a| a.value.as_str())
     }
 }
 
@@ -181,11 +190,19 @@ impl Node {
     }
 
     pub fn element_data(&self) -> Option<&ElementData> {
-        if let NodeData::Element(ref e) = self.data { Some(e) } else { None }
+        if let NodeData::Element(ref e) = self.data {
+            Some(e)
+        } else {
+            None
+        }
     }
 
     pub fn element_data_mut(&mut self) -> Option<&mut ElementData> {
-        if let NodeData::Element(ref mut e) = self.data { Some(e) } else { None }
+        if let NodeData::Element(ref mut e) = self.data {
+            Some(e)
+        } else {
+            None
+        }
     }
 
     pub fn tag_name(&self) -> Option<&str> {
@@ -197,7 +214,11 @@ impl Node {
     }
 
     pub fn text_str(&self) -> Option<&str> {
-        if let NodeData::Text(ref t) = self.data { Some(t.as_str()) } else { None }
+        if let NodeData::Text(ref t) = self.data {
+            Some(t.as_str())
+        } else {
+            None
+        }
     }
 }
 
@@ -256,13 +277,22 @@ impl Document {
             children: vec![],
             data: NodeData::Document,
         };
-        Document { nodes: vec![root], errors: vec![], pending_mutations: vec![] }
+        Document {
+            nodes: vec![root],
+            errors: vec![],
+            pending_mutations: vec![],
+        }
     }
 
     /// Allocate a new node and return its id.
     pub fn create_node(&mut self, data: NodeData) -> NodeId {
         let id = self.nodes.len();
-        self.nodes.push(Node { id, parent: None, children: vec![], data });
+        self.nodes.push(Node {
+            id,
+            parent: None,
+            children: vec![],
+            data,
+        });
         id
     }
 
@@ -296,9 +326,13 @@ impl Document {
         while let Some(id) = q.pop_front() {
             let node = &self.nodes[id];
             if let NodeData::Element(ref e) = node.data {
-                if e.tag_name == tag { return Some(id); }
+                if e.tag_name == tag {
+                    return Some(id);
+                }
             }
-            for &c in &node.children { q.push_back(c); }
+            for &c in &node.children {
+                q.push_back(c);
+            }
         }
         None
     }
@@ -311,32 +345,41 @@ impl Document {
         while let Some(id) = q.pop_front() {
             let node = &self.nodes[id];
             if let NodeData::Element(ref e) = node.data {
-                if e.tag_name == tag { result.push(id); }
+                if e.tag_name == tag {
+                    result.push(id);
+                }
             }
-            for &c in &node.children { q.push_back(c); }
+            for &c in &node.children {
+                q.push_back(c);
+            }
         }
         result
     }
 
-    /// Collect all text content under `id` (recursive).
+    /// Collect all text content under `id` using an explicit stack so deeply
+    /// nested documents do not overflow the Rust call stack.
     pub fn text_content(&self, id: NodeId) -> String {
         let mut buf = String::new();
-        self.collect_text(id, &mut buf);
+        let mut stack = vec![id];
+        while let Some(node_id) = stack.pop() {
+            match &self.nodes[node_id].data {
+                NodeData::Text(t) => buf.push_str(t),
+                _ => {
+                    for &child in self.nodes[node_id].children.iter().rev() {
+                        stack.push(child);
+                    }
+                }
+            }
+        }
         buf
     }
 
-    fn collect_text(&self, id: NodeId, out: &mut String) {
-        match &self.nodes[id].data {
-            NodeData::Text(t) => out.push_str(t),
-            _ => {
-                let children: Vec<NodeId> = self.nodes[id].children.clone();
-                for c in children { self.collect_text(c, out); }
-            }
-        }
+    pub fn body(&self) -> Option<NodeId> {
+        self.find_element("body")
     }
-
-    pub fn body(&self) -> Option<NodeId> { self.find_element("body") }
-    pub fn head(&self) -> Option<NodeId> { self.find_element("head") }
+    pub fn head(&self) -> Option<NodeId> {
+        self.find_element("head")
+    }
 
     // -----------------------------------------------------------------------
     // Navigation
@@ -369,7 +412,11 @@ impl Document {
         let parent = self.nodes[id].parent?;
         let siblings = &self.nodes[parent].children;
         let pos = siblings.iter().position(|&c| c == id)?;
-        if pos == 0 { None } else { Some(siblings[pos - 1]) }
+        if pos == 0 {
+            None
+        } else {
+            Some(siblings[pos - 1])
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -468,11 +515,19 @@ impl Document {
     }
 
     /// Create a new node and insert it before `ref_id` in `parent_id`'s children.
-    pub fn insert_node_before(&mut self, parent_id: NodeId, ref_id: NodeId, data: NodeData) -> NodeId {
+    pub fn insert_node_before(
+        &mut self,
+        parent_id: NodeId,
+        ref_id: NodeId,
+        data: NodeData,
+    ) -> NodeId {
         let new_id = self.create_node(data);
         let prev = self.previous_sibling_of(ref_id);
         let children = &mut self.nodes[parent_id].children;
-        let pos = children.iter().position(|&c| c == ref_id).unwrap_or(children.len());
+        let pos = children
+            .iter()
+            .position(|&c| c == ref_id)
+            .unwrap_or(children.len());
         children.insert(pos, new_id);
         self.nodes[new_id].parent = Some(parent_id);
         self.pending_mutations.push(MutationRecord {
@@ -554,43 +609,60 @@ impl Document {
     }
 
     fn serialize_node(&self, id: NodeId, buf: &mut String) {
-        let node = &self.nodes[id];
-        match &node.data {
-            NodeData::Document => {
-                let children: Vec<NodeId> = node.children.clone();
-                for c in children { self.serialize_node(c, buf); }
-            }
-            NodeData::Text(t) => buf.push_str(&html_escape(t)),
-            NodeData::Comment(c) => {
-                buf.push_str("<!--");
-                buf.push_str(c);
-                buf.push_str("-->");
-            }
-            NodeData::Doctype(d) => {
-                buf.push_str("<!DOCTYPE ");
-                buf.push_str(&d.name);
-                buf.push('>');
-            }
-            NodeData::Element(e) => {
-                buf.push('<');
-                buf.push_str(&e.tag_name);
-                for attr in &e.attrs {
-                    buf.push(' ');
-                    buf.push_str(&attr.name);
-                    buf.push_str("=\"");
-                    buf.push_str(&attr.value.replace('"', "&quot;"));
-                    buf.push('"');
+        enum Frame {
+            Enter(NodeId),
+            ExitElement(NodeId),
+        }
+
+        let mut stack = vec![Frame::Enter(id)];
+        while let Some(frame) = stack.pop() {
+            match frame {
+                Frame::Enter(node_id) => {
+                    let node = &self.nodes[node_id];
+                    match &node.data {
+                        NodeData::Document => {
+                            for &child in node.children.iter().rev() {
+                                stack.push(Frame::Enter(child));
+                            }
+                        }
+                        NodeData::Text(t) => buf.push_str(&html_escape(t)),
+                        NodeData::Comment(c) => {
+                            buf.push_str("<!--");
+                            buf.push_str(c);
+                            buf.push_str("-->");
+                        }
+                        NodeData::Doctype(d) => {
+                            buf.push_str("<!DOCTYPE ");
+                            buf.push_str(&d.name);
+                            buf.push('>');
+                        }
+                        NodeData::Element(e) => {
+                            buf.push('<');
+                            buf.push_str(&e.tag_name);
+                            for attr in &e.attrs {
+                                buf.push(' ');
+                                buf.push_str(&attr.name);
+                                buf.push_str("=\"");
+                                buf.push_str(&attr.value.replace('"', "&quot;"));
+                                buf.push('"');
+                            }
+                            buf.push('>');
+                            if e.category != ElementCategory::Void {
+                                stack.push(Frame::ExitElement(node_id));
+                                for &child in node.children.iter().rev() {
+                                    stack.push(Frame::Enter(child));
+                                }
+                            }
+                        }
+                    }
                 }
-                if e.category == ElementCategory::Void {
-                    buf.push('>');
-                    return;
+                Frame::ExitElement(node_id) => {
+                    if let NodeData::Element(e) = &self.nodes[node_id].data {
+                        buf.push_str("</");
+                        buf.push_str(&e.tag_name);
+                        buf.push('>');
+                    }
                 }
-                buf.push('>');
-                let children: Vec<NodeId> = node.children.clone();
-                for c in children { self.serialize_node(c, buf); }
-                buf.push_str("</");
-                buf.push_str(&e.tag_name);
-                buf.push('>');
             }
         }
     }
@@ -605,9 +677,13 @@ impl Document {
         while let Some(id) = q.pop_front() {
             let node = &self.nodes[id];
             if let NodeData::Element(e) = &node.data {
-                if e.attr("id") == Some(id_val) { return Some(id); }
+                if e.attr("id") == Some(id_val) {
+                    return Some(id);
+                }
             }
-            for &c in &node.children { q.push_back(c); }
+            for &c in &node.children {
+                q.push_back(c);
+            }
         }
         None
     }
@@ -619,12 +695,17 @@ impl Document {
         while let Some(id) = q.pop_front() {
             let node = &self.nodes[id];
             if let NodeData::Element(e) = &node.data {
-                let has = e.attr("class")
+                let has = e
+                    .attr("class")
                     .map(|c| c.split_whitespace().any(|w| w == class))
                     .unwrap_or(false);
-                if has { result.push(id); }
+                if has {
+                    result.push(id);
+                }
             }
-            for &c in &node.children { q.push_back(c); }
+            for &c in &node.children {
+                q.push_back(c);
+            }
         }
         result
     }
@@ -638,7 +719,8 @@ impl Document {
     // -----------------------------------------------------------------------
 
     pub fn class_list(&self, id: NodeId) -> Vec<String> {
-        self.nodes[id].element_data()
+        self.nodes[id]
+            .element_data()
             .and_then(|e| e.attr("class"))
             .unwrap_or("")
             .split_whitespace()
@@ -647,7 +729,8 @@ impl Document {
     }
 
     pub fn class_list_add(&mut self, id: NodeId, class: &str) {
-        let current = self.nodes[id].element_data()
+        let current = self.nodes[id]
+            .element_data()
             .and_then(|e| e.attr("class"))
             .unwrap_or("")
             .to_string();
@@ -660,18 +743,19 @@ impl Document {
     }
 
     pub fn class_list_remove(&mut self, id: NodeId, class: &str) {
-        let current = self.nodes[id].element_data()
+        let current = self.nodes[id]
+            .element_data()
             .and_then(|e| e.attr("class"))
             .unwrap_or("")
             .to_string();
-        let filtered: Vec<&str> = current.split_whitespace()
-            .filter(|&c| c != class).collect();
+        let filtered: Vec<&str> = current.split_whitespace().filter(|&c| c != class).collect();
         let new_val = filtered.join(" ");
         self.set_attribute(id, "class", &new_val);
     }
 
     pub fn class_list_contains(&self, id: NodeId, class: &str) -> bool {
-        self.nodes[id].element_data()
+        self.nodes[id]
+            .element_data()
             .and_then(|e| e.attr("class"))
             .map(|c| c.split_whitespace().any(|w| w == class))
             .unwrap_or(false)
@@ -686,12 +770,12 @@ fn html_escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for ch in s.chars() {
         match ch {
-            '&'  => out.push_str("&amp;"),
-            '<'  => out.push_str("&lt;"),
-            '>'  => out.push_str("&gt;"),
-            '"'  => out.push_str("&quot;"),
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
             '\'' => out.push_str("&#x27;"),
-            c    => out.push(c),
+            c => out.push(c),
         }
     }
     out
@@ -711,8 +795,8 @@ pub fn classify_element(tag: &str, attrs: &[Attribute]) -> (ElementCategory, Sem
 
 fn tag_category(tag: &str) -> ElementCategory {
     match tag {
-        "area" | "base" | "br" | "col" | "embed" | "hr" | "img" | "input"
-        | "link" | "meta" | "param" | "source" | "track" | "wbr" => ElementCategory::Void,
+        "area" | "base" | "br" | "col" | "embed" | "hr" | "img" | "input" | "link" | "meta"
+        | "param" | "source" | "track" | "wbr" => ElementCategory::Void,
         "script" | "style" => ElementCategory::RawText,
         "textarea" | "title" => ElementCategory::EscapableRawText,
         "template" => ElementCategory::Template,
@@ -721,13 +805,18 @@ fn tag_category(tag: &str) -> ElementCategory {
 }
 
 fn tag_role(tag: &str, attrs: &[Attribute]) -> SemanticRole {
-    let get_attr = |name: &str| attrs.iter().find(|a| a.name == name).map(|a| a.value.clone());
+    let get_attr = |name: &str| {
+        attrs
+            .iter()
+            .find(|a| a.name == name)
+            .map(|a| a.value.clone())
+    };
 
     match tag {
         // Structural
-        "html" | "head" | "body" | "div" | "section" | "article" | "nav"
-        | "main" | "aside" | "header" | "footer" | "address" | "details"
-        | "summary" | "dialog" | "slot" | "hgroup" => SemanticRole::Structural,
+        "html" | "head" | "body" | "div" | "section" | "article" | "nav" | "main" | "aside"
+        | "header" | "footer" | "address" | "details" | "summary" | "dialog" | "slot"
+        | "hgroup" => SemanticRole::Structural,
 
         // Headings
         "h1" => SemanticRole::Heading { level: 1 },
@@ -738,42 +827,51 @@ fn tag_role(tag: &str, attrs: &[Attribute]) -> SemanticRole {
         "h6" => SemanticRole::Heading { level: 6 },
 
         // Text flow
-        "p" | "blockquote" | "pre" | "code" | "em" | "strong" | "b" | "i"
-        | "u" | "s" | "small" | "mark" | "del" | "ins" | "sub" | "sup"
-        | "abbr" | "cite" | "q" | "time" | "kbd" | "var" | "samp" | "bdi"
-        | "bdo" | "ruby" | "rt" | "rp" | "br" | "hr" | "span" | "wbr" => SemanticRole::TextFlow,
+        "p" | "blockquote" | "pre" | "code" | "em" | "strong" | "b" | "i" | "u" | "s" | "small"
+        | "mark" | "del" | "ins" | "sub" | "sup" | "abbr" | "cite" | "q" | "time" | "kbd"
+        | "var" | "samp" | "bdi" | "bdo" | "ruby" | "rt" | "rp" | "br" | "hr" | "span" | "wbr" => {
+            SemanticRole::TextFlow
+        }
 
         // Form
-        "form"     => SemanticRole::Form(FormKind::Form),
-        "input"    => SemanticRole::Form(FormKind::Input),
-        "select"   => SemanticRole::Form(FormKind::Select),
+        "form" => SemanticRole::Form(FormKind::Form),
+        "input" => SemanticRole::Form(FormKind::Input),
+        "select" => SemanticRole::Form(FormKind::Select),
         "textarea" => SemanticRole::Form(FormKind::Textarea),
-        "button"   => SemanticRole::Form(FormKind::Button),
-        "label"    => SemanticRole::Form(FormKind::Label),
+        "button" => SemanticRole::Form(FormKind::Button),
+        "label" => SemanticRole::Form(FormKind::Label),
         "fieldset" => SemanticRole::Form(FormKind::Fieldset),
-        "legend"   => SemanticRole::Form(FormKind::Legend),
-        "option" | "optgroup" | "datalist" | "output" | "progress" | "meter"
-            => SemanticRole::Form(FormKind::Other),
+        "legend" => SemanticRole::Form(FormKind::Legend),
+        "option" | "optgroup" | "datalist" | "output" | "progress" | "meter" => {
+            SemanticRole::Form(FormKind::Other)
+        }
 
         // Links
-        "a" | "link" => SemanticRole::Link { href: get_attr("href") },
+        "a" | "link" => SemanticRole::Link {
+            href: get_attr("href"),
+        },
 
         // Media
-        "img" => SemanticRole::Media { src: get_attr("src"), alt: get_attr("alt") },
-        "video" | "audio" | "canvas" | "picture" | "figure" | "figcaption"
-        | "map" | "area" | "object" | "embed" | "iframe" | "source" | "track"
-            => SemanticRole::Media { src: get_attr("src"), alt: get_attr("alt") },
+        "img" => SemanticRole::Media {
+            src: get_attr("src"),
+            alt: get_attr("alt"),
+        },
+        "video" | "audio" | "canvas" | "picture" | "figure" | "figcaption" | "map" | "area"
+        | "object" | "embed" | "iframe" | "source" | "track" => SemanticRole::Media {
+            src: get_attr("src"),
+            alt: get_attr("alt"),
+        },
 
         // Non-content
         "script" => SemanticRole::Script { is_style: false },
-        "style"  => SemanticRole::Script { is_style: true },
+        "style" => SemanticRole::Script { is_style: true },
 
         // Lists
         "ul" | "ol" | "li" | "dl" | "dt" | "dd" | "menu" => SemanticRole::List,
 
         // Tables
-        "table" | "thead" | "tbody" | "tfoot" | "tr" | "th" | "td"
-        | "caption" | "col" | "colgroup" => SemanticRole::Table,
+        "table" | "thead" | "tbody" | "tfoot" | "tr" | "th" | "td" | "caption" | "col"
+        | "colgroup" => SemanticRole::Table,
 
         _ => SemanticRole::Generic,
     }
@@ -795,7 +893,9 @@ fn write_node(doc: &Document, id: NodeId, f: &mut fmt::Formatter<'_>, depth: usi
     match &node.data {
         NodeData::Document => {
             writeln!(f, "Document")?;
-            for &c in &node.children { write_node(doc, c, f, depth + 1)?; }
+            for &c in &node.children {
+                write_node(doc, c, f, depth + 1)?;
+            }
         }
         NodeData::Doctype(d) => {
             writeln!(f, "{indent}<!DOCTYPE {}>", d.name)?;
@@ -823,7 +923,9 @@ fn write_node(doc: &Document, id: NodeId, f: &mut fmt::Formatter<'_>, depth: usi
                 _ => String::new(),
             };
             writeln!(f, "{indent}<{}>{role_hint}", e.tag_name)?;
-            for &c in &node.children { write_node(doc, c, f, depth + 1)?; }
+            for &c in &node.children {
+                write_node(doc, c, f, depth + 1)?;
+            }
         }
     }
     Ok(())

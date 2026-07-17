@@ -50,12 +50,18 @@ impl Default for MutationInit {
 impl MutationInit {
     /// Convenience: observe child-list changes.
     pub fn child_list() -> Self {
-        MutationInit { child_list: true, ..Default::default() }
+        MutationInit {
+            child_list: true,
+            ..Default::default()
+        }
     }
 
     /// Convenience: observe attribute changes.
     pub fn attributes() -> Self {
-        MutationInit { attributes: true, ..Default::default() }
+        MutationInit {
+            attributes: true,
+            ..Default::default()
+        }
     }
 
     /// Convenience: observe all mutation types on the target and its subtree.
@@ -92,11 +98,19 @@ pub struct MutationObserver {
 
 impl MutationObserver {
     pub fn new(target: NodeId, init: MutationInit) -> Self {
-        MutationObserver { target, init, active: true }
+        MutationObserver {
+            target,
+            init,
+            active: true,
+        }
     }
 
-    pub fn target(&self)    -> NodeId { self.target }
-    pub fn is_active(&self) -> bool   { self.active }
+    pub fn target(&self) -> NodeId {
+        self.target
+    }
+    pub fn is_active(&self) -> bool {
+        self.active
+    }
 
     /// Drain all pending mutations from `doc` that match this observer's
     /// target and type filter.
@@ -104,10 +118,12 @@ impl MutationObserver {
     /// Records that do **not** match are put back into `doc.pending_mutations`
     /// so other observers can still see them.
     pub fn take_records(&self, doc: &mut Document) -> Vec<MutationRecord> {
-        if !self.active { return vec![]; }
+        if !self.active {
+            return vec![];
+        }
 
         let all = std::mem::take(&mut doc.pending_mutations);
-        let mut matched   = vec![];
+        let mut matched = vec![];
         let mut remaining = vec![];
 
         for record in all {
@@ -132,16 +148,22 @@ impl MutationObserver {
         // Check target: direct match or (subtree + descendant).
         let target_ok = record.target == self.target
             || (self.init.subtree && is_descendant(nodes, record.target, self.target));
-        if !target_ok { return false; }
+        if !target_ok {
+            return false;
+        }
 
         // Check mutation kind.
         match record.kind {
             MutationKind::ChildList => self.init.child_list,
             MutationKind::CharacterData => self.init.character_data,
             MutationKind::Attributes => {
-                if !self.init.attributes { return false; }
+                if !self.init.attributes {
+                    return false;
+                }
                 if !self.init.attribute_filter.is_empty() {
-                    return record.attribute_name.as_ref()
+                    return record
+                        .attribute_name
+                        .as_ref()
                         .map(|n| self.init.attribute_filter.iter().any(|f| f == n))
                         .unwrap_or(false);
                 }
@@ -155,7 +177,9 @@ impl MutationObserver {
 fn is_descendant(nodes: &[crate::html::dom::Node], node: NodeId, ancestor: NodeId) -> bool {
     let mut cur = nodes[node].parent;
     while let Some(id) = cur {
-        if id == ancestor { return true; }
+        if id == ancestor {
+            return true;
+        }
         cur = nodes[id].parent;
     }
     false

@@ -2,8 +2,8 @@
 
 use std::collections::VecDeque;
 
-use crate::html::dom::{NodeData, NodeId, DOCUMENT_NODE_ID};
 use crate::dom::{query_selector, query_selector_all};
+use crate::html::dom::{NodeData, NodeId, DOCUMENT_NODE_ID};
 
 use super::element::Element;
 use super::page::Page;
@@ -159,29 +159,29 @@ impl Page {
 /// Map an HTML tag name to its implicit ARIA role string.
 fn implicit_role(tag: &str) -> &'static str {
     match tag {
-        "a" | "link"    => "link",
-        "button"        => "button",
-        "input"         => "textbox",
-        "select"        => "listbox",
-        "textarea"      => "textbox",
-        "form"          => "form",
-        "nav"           => "navigation",
-        "main"          => "main",
-        "header"        => "banner",
-        "footer"        => "contentinfo",
-        "aside"         => "complementary",
-        "section"       => "region",
-        "article"       => "article",
+        "a" | "link" => "link",
+        "button" => "button",
+        "input" => "textbox",
+        "select" => "listbox",
+        "textarea" => "textbox",
+        "form" => "form",
+        "nav" => "navigation",
+        "main" => "main",
+        "header" => "banner",
+        "footer" => "contentinfo",
+        "aside" => "complementary",
+        "section" => "region",
+        "article" => "article",
         "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => "heading",
-        "img"           => "img",
-        "table"         => "table",
-        "tr"            => "row",
-        "td"            => "cell",
-        "th"            => "columnheader",
-        "ul" | "ol"     => "list",
-        "li"            => "listitem",
-        "dialog"        => "dialog",
-        "summary"       => "button",
-        _               => "",
+        "img" => "img",
+        "table" => "table",
+        "tr" => "row",
+        "td" => "cell",
+        "th" => "columnheader",
+        "ul" | "ol" => "list",
+        "li" => "listitem",
+        "dialog" => "dialog",
+        "summary" => "button",
+        _ => "",
     }
 }

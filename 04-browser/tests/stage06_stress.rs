@@ -38,7 +38,10 @@ fn create_ten_sessions() {
     let ids: Vec<String> = (0..10).map(|_| manager.create_session()).collect();
     assert_eq!(manager.session_count(), 10);
     for id in &ids {
-        assert!(manager.get_session(id).is_some(), "session {id} should exist");
+        assert!(
+            manager.get_session(id).is_some(),
+            "session {id} should exist"
+        );
     }
 }
 
@@ -63,8 +66,7 @@ fn delete_session() {
 
 #[test]
 fn session_creates_multiple_pages() {
-    let mut manager = SessionManager::new()
-        .with_per_session_limits(small_limits(5));
+    let mut manager = SessionManager::new().with_per_session_limits(small_limits(5));
     let sid = manager.create_session();
     let session = manager.get_session_mut(&sid).unwrap();
 
@@ -84,8 +86,7 @@ fn session_creates_multiple_pages() {
 
 #[test]
 fn ten_sessions_five_pages_each() {
-    let mut manager = SessionManager::new()
-        .with_per_session_limits(small_limits(10));
+    let mut manager = SessionManager::new().with_per_session_limits(small_limits(10));
 
     let session_ids: Vec<String> = (0..10).map(|_| manager.create_session()).collect();
 
@@ -150,14 +151,22 @@ fn different_cookies_per_session() {
     let sid_a = manager.create_session();
     let sid_b = manager.create_session();
 
-    manager.get_session_mut(&sid_a).unwrap()
+    manager
+        .get_session_mut(&sid_a)
+        .unwrap()
         .set_cookie("user", "alice", "site.com");
-    manager.get_session_mut(&sid_b).unwrap()
+    manager
+        .get_session_mut(&sid_b)
+        .unwrap()
         .set_cookie("user", "bob", "site.com");
 
-    let val_a = manager.get_session_mut(&sid_a).unwrap()
+    let val_a = manager
+        .get_session_mut(&sid_a)
+        .unwrap()
         .get_cookie("user", "site.com");
-    let val_b = manager.get_session_mut(&sid_b).unwrap()
+    let val_b = manager
+        .get_session_mut(&sid_b)
+        .unwrap()
         .get_cookie("user", "site.com");
 
     assert_eq!(val_a.as_deref(), Some("alice"));
@@ -170,15 +179,29 @@ fn page_dom_isolated_between_sessions() {
     let sid_a = manager.create_session();
     let sid_b = manager.create_session();
 
-    let pid_a = manager.get_session_mut(&sid_a).unwrap()
-        .load_page_from_html(&html_page("Session A")).unwrap();
-    let pid_b = manager.get_session_mut(&sid_b).unwrap()
-        .load_page_from_html(&html_page("Session B")).unwrap();
+    let pid_a = manager
+        .get_session_mut(&sid_a)
+        .unwrap()
+        .load_page_from_html(&html_page("Session A"))
+        .unwrap();
+    let pid_b = manager
+        .get_session_mut(&sid_b)
+        .unwrap()
+        .load_page_from_html(&html_page("Session B"))
+        .unwrap();
 
-    let title_a = manager.get_session(&sid_a).unwrap()
-        .get_page(&pid_a).unwrap().title();
-    let title_b = manager.get_session(&sid_b).unwrap()
-        .get_page(&pid_b).unwrap().title();
+    let title_a = manager
+        .get_session(&sid_a)
+        .unwrap()
+        .get_page(&pid_a)
+        .unwrap()
+        .title();
+    let title_b = manager
+        .get_session(&sid_b)
+        .unwrap()
+        .get_page(&pid_b)
+        .unwrap()
+        .title();
 
     assert_eq!(title_a, "Session A");
     assert_eq!(title_b, "Session B");
@@ -232,7 +255,9 @@ fn resource_monitor_tracks_usage() {
 
 #[test]
 fn resource_monitor_page_limit_check() {
-    let limits = ResourceLimits::new().with_max_pages(2).with_max_memory_mb(100);
+    let limits = ResourceLimits::new()
+        .with_max_pages(2)
+        .with_max_memory_mb(100);
     let mut monitor = ResourceMonitor::new(limits);
     monitor.on_page_opened(1);
     monitor.on_page_opened(1);
@@ -243,8 +268,10 @@ fn resource_monitor_page_limit_check() {
 fn page_pool_enforces_limit() {
     let limits = small_limits(2);
     let mut pool = PagePool::new(limits);
-    pool.load_page_from_html("<html><body>A</body></html>").unwrap();
-    pool.load_page_from_html("<html><body>B</body></html>").unwrap();
+    pool.load_page_from_html("<html><body>A</body></html>")
+        .unwrap();
+    pool.load_page_from_html("<html><body>B</body></html>")
+        .unwrap();
     let err = pool.load_page_from_html("<html><body>C</body></html>");
     assert!(err.is_err());
 }
@@ -326,14 +353,8 @@ fn session_crash_does_not_affect_other_pages() {
     assert_eq!(session.active_page_count(), 3);
 
     // DOM content of non-crashed pages is still accessible
-    assert_eq!(
-        session.get_page(&p1).unwrap().title(),
-        "Page 1"
-    );
-    assert_eq!(
-        session.get_page(&p3).unwrap().title(),
-        "Page 3"
-    );
+    assert_eq!(session.get_page(&p1).unwrap().title(), "Page 1");
+    assert_eq!(session.get_page(&p3).unwrap().title(), "Page 3");
 
     // Crashed page count
     assert_eq!(session.crash_recovery.crashed_count(), 1);
@@ -472,10 +493,8 @@ fn save_and_restore_sessions() {
             .collect();
         histories.sort();
 
-        let expected_urls: std::collections::HashSet<String> = histories
-            .iter()
-            .flat_map(|h| h.iter().cloned())
-            .collect();
+        let expected_urls: std::collections::HashSet<String> =
+            histories.iter().flat_map(|h| h.iter().cloned()).collect();
         assert!(expected_urls.contains("https://example.com/a") || loaded == 2);
     }
 
@@ -505,15 +524,16 @@ fn session_data_serialization() {
 fn graceful_shutdown_saves_sessions() {
     let tmp = std::env::temp_dir().join("agent_browser_shutdown_test.json");
 
-    let mut manager = SessionManager::new()
-        .with_per_session_limits(small_limits(5));
+    let mut manager = SessionManager::new().with_per_session_limits(small_limits(5));
 
     // Simulate active sessions
     for i in 0..5 {
         let sid = manager.create_session();
         let session = manager.get_session_mut(&sid).unwrap();
         session.history.push(format!("https://site{i}.example.com"));
-        session.load_page_from_html(&html_page(&format!("Site {i}"))).unwrap();
+        session
+            .load_page_from_html(&html_page(&format!("Site {i}")))
+            .unwrap();
     }
 
     assert_eq!(manager.session_count(), 5);
@@ -524,7 +544,9 @@ fn graceful_shutdown_saves_sessions() {
 
     // Simulate process restart: load sessions back
     let mut restored_manager = SessionManager::new();
-    let count = restored_manager.load_from_disk(&tmp).expect("reload failed");
+    let count = restored_manager
+        .load_from_disk(&tmp)
+        .expect("reload failed");
     assert_eq!(count, 5);
     assert_eq!(restored_manager.session_count(), 5);
 
@@ -546,9 +568,7 @@ async fn concurrent_session_creation() {
             let mut m = mgr.lock().await;
             let sid = m.create_session();
             let session = m.get_session_mut(&sid).unwrap();
-            let html = format!(
-                "<html><head><title>Task {i}</title></head><body></body></html>"
-            );
+            let html = format!("<html><head><title>Task {i}</title></head><body></body></html>");
             session.load_page_from_html(&html).unwrap()
         }));
     }
@@ -568,8 +588,7 @@ async fn concurrent_session_creation() {
 #[tokio::test]
 async fn concurrent_page_reads_same_session() {
     // Demonstrate that page content from different sessions can be read concurrently.
-    let mut manager = SessionManager::new()
-        .with_per_session_limits(small_limits(10));
+    let mut manager = SessionManager::new().with_per_session_limits(small_limits(10));
 
     let mut page_data: Vec<(String, String)> = Vec::new(); // (session_id, page_id)
     for i in 0..5 {
@@ -602,7 +621,11 @@ async fn concurrent_page_reads_same_session() {
 
     assert_eq!(titles.len(), 5);
     for (i, title) in titles.iter().enumerate() {
-        assert_eq!(title, &format!("Concurrent {i}"), "title mismatch at index {i}");
+        assert_eq!(
+            title,
+            &format!("Concurrent {i}"),
+            "title mismatch at index {i}"
+        );
     }
 }
 
@@ -632,7 +655,9 @@ fn resource_limits_defaults() {
 
 #[test]
 fn resource_monitor_approaching_limits() {
-    let limits = ResourceLimits::new().with_max_pages(10).with_max_memory_mb(100);
+    let limits = ResourceLimits::new()
+        .with_max_pages(10)
+        .with_max_memory_mb(100);
     let mut monitor = ResourceMonitor::new(limits);
 
     // Not near limits yet

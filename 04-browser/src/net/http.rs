@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use http::{Method, Request};
 use http_body_util::{BodyExt, Full};
-use hyper::body::Bytes;
+use hyper::body::{Body, Bytes};
 use hyper_util::client::legacy::Client;
 use hyper_util::rt::TokioExecutor;
 
@@ -11,16 +11,18 @@ use crate::net::cookies::{parse_set_cookie, CookieJar};
 use crate::net::tls::verified_connector;
 use crate::net::url::Url;
 
-type HyperClient =
-    Client<hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>, Full<Bytes>>;
+type HyperClient = Client<
+    hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>,
+    Full<Bytes>,
+>;
 
 #[derive(Debug, Clone)]
 pub struct HttpConfig {
     pub max_redirects: usize,
     pub connect_timeout: Duration,
     pub read_timeout: Duration,
+    pub max_response_body_bytes: usize,
     pub user_agent: String,
-    pub verify_certs: bool,
 }
 
 impl Default for HttpConfig {
@@ -29,8 +31,8 @@ impl Default for HttpConfig {
             max_redirects: 10,
             connect_timeout: Duration::from_secs(10),
             read_timeout: Duration::from_secs(30),
-            user_agent: "agent-browser/0.3 (build-your-own-x)".to_string(),
-            verify_certs: true,
+            max_response_body_bytes: 10 * 1024 * 1024,
+            user_agent: "agent-browser/0.6 (partial-browser-semantics)".to_string(),
         }
     }
 }
@@ -137,13 +139,13 @@ impl HttpClient {
         let mut current_url = url.clone();
         let mut redirect_count = 0;
         let mut current_method = method.clone();
+        let mut current_body = body.clone();
 
         loop {
-            let mut response =
-                self.single_request(&current_method, &current_url, body.as_deref(), jar)
-                    .await?;
+            let mut response = self
+                .single_request(&current_method, &current_url, current_body.as_deref(), jar)
+                .await?;
 
-            // Store cookies from response
             let domain = current_url.host().unwrap_or("").to_string();
             let path = current_url.path().to_string();
             if let Some(set_cookies) = response.headers.get("set-cookie").cloned() {
@@ -155,9 +157,7 @@ impl HttpClient {
             }
 
             let status = response.status;
-            let is_redirect = matches!(status, 301 | 302 | 303 | 307 | 308);
-
-            if is_redirect {
+            if matches!(status, 301 | 302 | 303 | 307 | 308) {
                 if redirect_count >= self.config.max_redirects {
                     return Err(format!(
                         "Too many redirects (max {})",
@@ -175,11 +175,15 @@ impl HttpClient {
                 if let Some(loc) = location {
                     let new_url = Url::resolve(&current_url, &loc)
                         .map_err(|e| format!("Invalid redirect URL '{loc}': {e}"))?;
+                    let decision =
+                        redirect_behavior(status, &current_method, current_body.is_some());
                     current_url = new_url;
-                    // 303 always becomes GET; 301/302 typically become GET for POST
-                    if matches!(status, 301 | 302 | 303) {
-                        current_method = Method::GET;
-                    }
+                    current_method = decision.method;
+                    current_body = if decision.preserve_body {
+                        current_body
+                    } else {
+                        None
+                    };
                     continue;
                 }
             }
@@ -247,12 +251,12 @@ impl HttpClient {
             headers.entry(k).or_default().push(v);
         }
 
-        let body_bytes = tokio::time::timeout(self.config.read_timeout, res.into_body().collect())
-            .await
-            .map_err(|_| "Body read timed out".to_string())?
-            .map_err(|e| format!("Body read error: {e}"))?
-            .to_bytes()
-            .to_vec();
+        let body_bytes = collect_body_limited(
+            res.into_body(),
+            self.config.max_response_body_bytes,
+            self.config.read_timeout,
+        )
+        .await?;
 
         let ct_str = headers
             .get("content-type")
@@ -265,11 +269,75 @@ impl HttpClient {
             status,
             headers,
             body: body_bytes,
-            final_url: url.clone(), // updated by caller
+            final_url: url.clone(),
             content_type,
             redirect_count: 0,
         })
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RedirectDecision {
+    method: Method,
+    preserve_body: bool,
+}
+
+fn redirect_behavior(status: u16, method: &Method, has_body: bool) -> RedirectDecision {
+    match status {
+        303 => {
+            if method == Method::HEAD {
+                RedirectDecision {
+                    method: Method::HEAD,
+                    preserve_body: false,
+                }
+            } else {
+                RedirectDecision {
+                    method: Method::GET,
+                    preserve_body: false,
+                }
+            }
+        }
+        301 | 302 if method == Method::POST => RedirectDecision {
+            method: Method::GET,
+            preserve_body: false,
+        },
+        301 | 302 | 307 | 308 => RedirectDecision {
+            method: method.clone(),
+            preserve_body: has_body,
+        },
+        _ => RedirectDecision {
+            method: method.clone(),
+            preserve_body: has_body,
+        },
+    }
+}
+
+async fn collect_body_limited<B>(
+    mut body: B,
+    max_bytes: usize,
+    timeout: Duration,
+) -> Result<Vec<u8>, String>
+where
+    B: Body<Data = Bytes> + Unpin,
+    B::Error: std::fmt::Display,
+{
+    let mut out = Vec::new();
+    while let Some(frame) = tokio::time::timeout(timeout, body.frame())
+        .await
+        .map_err(|_| "Body read timed out".to_string())?
+    {
+        let frame = frame.map_err(|e| format!("Body read error: {e}"))?;
+        if let Some(data) = frame.data_ref() {
+            if out.len().saturating_add(data.len()) > max_bytes {
+                return Err(format!(
+                    "Response body exceeded limit ({} bytes)",
+                    max_bytes
+                ));
+            }
+            out.extend_from_slice(data);
+        }
+    }
+    Ok(out)
 }
 
 pub fn detect_content_type(ct: &str) -> ContentType {
@@ -279,10 +347,72 @@ pub fn detect_content_type(ct: &str) -> ContentType {
         "text/html" | "application/xhtml+xml" => ContentType::Html,
         "application/json" | "application/ld+json" => ContentType::Json,
         "text/css" => ContentType::Css,
-        "application/javascript"
-        | "text/javascript"
-        | "application/x-javascript" => ContentType::JavaScript,
+        "application/javascript" | "text/javascript" | "application/x-javascript" => {
+            ContentType::JavaScript
+        }
         t if t.starts_with("text/") => ContentType::Text,
         _ => ContentType::Binary,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn redirect_policy_rewrites_post_for_301_302_303() {
+        let d301 = redirect_behavior(301, &Method::POST, true);
+        let d302 = redirect_behavior(302, &Method::POST, true);
+        let d303 = redirect_behavior(303, &Method::POST, true);
+
+        assert_eq!(d301.method, Method::GET);
+        assert!(!d301.preserve_body);
+        assert_eq!(d302.method, Method::GET);
+        assert!(!d302.preserve_body);
+        assert_eq!(d303.method, Method::GET);
+        assert!(!d303.preserve_body);
+    }
+
+    #[test]
+    fn redirect_policy_preserves_non_post_for_301_302_and_head_for_303() {
+        let head_303 = redirect_behavior(303, &Method::HEAD, false);
+        let put_301 = redirect_behavior(301, &Method::PUT, true);
+        let delete_302 = redirect_behavior(302, &Method::DELETE, false);
+
+        assert_eq!(head_303.method, Method::HEAD);
+        assert!(!head_303.preserve_body);
+        assert_eq!(put_301.method, Method::PUT);
+        assert!(put_301.preserve_body);
+        assert_eq!(delete_302.method, Method::DELETE);
+        assert!(!delete_302.preserve_body);
+    }
+
+    #[test]
+    fn redirect_policy_preserves_method_and_body_for_307_308() {
+        let d307 = redirect_behavior(307, &Method::POST, true);
+        let d308 = redirect_behavior(308, &Method::PUT, true);
+
+        assert_eq!(d307.method, Method::POST);
+        assert!(d307.preserve_body);
+        assert_eq!(d308.method, Method::PUT);
+        assert!(d308.preserve_body);
+    }
+
+    #[tokio::test]
+    async fn collect_body_limited_accepts_body_under_cap() {
+        let body = Full::new(Bytes::from_static(b"hello world"));
+        let bytes = collect_body_limited(body, 32, Duration::from_secs(1))
+            .await
+            .unwrap();
+        assert_eq!(bytes, b"hello world");
+    }
+
+    #[tokio::test]
+    async fn collect_body_limited_rejects_body_over_cap() {
+        let body = Full::new(Bytes::from(vec![b'x'; 64]));
+        let err = collect_body_limited(body, 16, Duration::from_secs(1))
+            .await
+            .unwrap_err();
+        assert!(err.contains("exceeded limit"));
     }
 }

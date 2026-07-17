@@ -39,49 +39,73 @@ fn body_text(html: &str) -> String {
 
 #[test]
 fn tokenizer_simple_document() {
-    let (tokens, errors) = tokenize("<!DOCTYPE html><html><head><title>Hi</title></head><body><p>Hello</p></body></html>");
+    let (tokens, errors) = tokenize(
+        "<!DOCTYPE html><html><head><title>Hi</title></head><body><p>Hello</p></body></html>",
+    );
     // Should have doctype, start tags, text, end tags
-    assert!(tokens.iter().any(|t| matches!(t, Token::Doctype { name, .. } if name == "html")));
-    assert!(tokens.iter().any(|t| matches!(t, Token::StartTag { name, .. } if name == "html")));
-    assert!(tokens.iter().any(|t| matches!(t, Token::Text(t) if t.contains("Hello"))));
-    assert!(tokens.iter().any(|t| matches!(t, Token::EndTag { name } if name == "body")));
+    assert!(tokens
+        .iter()
+        .any(|t| matches!(t, Token::Doctype { name, .. } if name == "html")));
+    assert!(tokens
+        .iter()
+        .any(|t| matches!(t, Token::StartTag { name, .. } if name == "html")));
+    assert!(tokens
+        .iter()
+        .any(|t| matches!(t, Token::Text(t) if t.contains("Hello"))));
+    assert!(tokens
+        .iter()
+        .any(|t| matches!(t, Token::EndTag { name } if name == "body")));
     assert!(tokens.last() == Some(&Token::Eof));
 }
 
 #[test]
 fn tokenizer_start_tag_attributes() {
     let (tokens, _) = tokenize(r#"<a href="https://example.com" target="_blank">link</a>"#);
-    let start = tokens.iter().find(|t| matches!(t, Token::StartTag { name, .. } if name == "a"));
+    let start = tokens
+        .iter()
+        .find(|t| matches!(t, Token::StartTag { name, .. } if name == "a"));
     assert!(start.is_some(), "should have <a> start tag");
     if let Some(Token::StartTag { attrs, .. }) = start {
-        assert!(attrs.iter().any(|a| a.name == "href" && a.value == "https://example.com"));
-        assert!(attrs.iter().any(|a| a.name == "target" && a.value == "_blank"));
+        assert!(attrs
+            .iter()
+            .any(|a| a.name == "href" && a.value == "https://example.com"));
+        assert!(attrs
+            .iter()
+            .any(|a| a.name == "target" && a.value == "_blank"));
     }
 }
 
 #[test]
 fn tokenizer_comment() {
     let (tokens, _) = tokenize("<!-- hello world -->");
-    assert!(tokens.iter().any(|t| matches!(t, Token::Comment(c) if c.contains("hello world"))));
+    assert!(tokens
+        .iter()
+        .any(|t| matches!(t, Token::Comment(c) if c.contains("hello world"))));
 }
 
 #[test]
 fn tokenizer_doctype_html5() {
     let (tokens, _) = tokenize("<!DOCTYPE html>");
-    assert!(tokens.iter().any(|t| matches!(t, Token::Doctype { name, .. } if name == "html")));
+    assert!(tokens
+        .iter()
+        .any(|t| matches!(t, Token::Doctype { name, .. } if name == "html")));
 }
 
 #[test]
 fn tokenizer_self_closing_tag() {
     let (tokens, _) = tokenize("<br/>");
-    assert!(tokens.iter().any(|t| matches!(t, Token::StartTag { name, self_closing: true, .. } if name == "br")));
+    assert!(tokens
+        .iter()
+        .any(|t| matches!(t, Token::StartTag { name, self_closing: true, .. } if name == "br")));
 }
 
 #[test]
 fn tokenizer_single_quoted_attr() {
     let (tokens, _) = tokenize("<div class='foo bar'>x</div>");
     if let Some(Token::StartTag { attrs, .. }) = tokens.first() {
-        assert!(attrs.iter().any(|a| a.name == "class" && a.value == "foo bar"));
+        assert!(attrs
+            .iter()
+            .any(|a| a.name == "class" && a.value == "foo bar"));
     } else {
         panic!("expected start tag");
     }
@@ -111,8 +135,15 @@ fn tokenizer_boolean_attr() {
 #[test]
 fn tokenizer_entity_in_text() {
     let (tokens, _) = tokenize("<p>foo &amp; bar &lt; baz &gt; qux</p>");
-    let text: String = tokens.iter()
-        .filter_map(|t| if let Token::Text(s) = t { Some(s.as_str()) } else { None })
+    let text: String = tokens
+        .iter()
+        .filter_map(|t| {
+            if let Token::Text(s) = t {
+                Some(s.as_str())
+            } else {
+                None
+            }
+        })
         .collect();
     assert!(text.contains('&'), "amp entity decoded");
     assert!(text.contains('<'), "lt entity decoded");
@@ -123,7 +154,10 @@ fn tokenizer_entity_in_text() {
 fn tokenizer_entity_in_attr() {
     let (tokens, _) = tokenize(r#"<a href="page?a=1&amp;b=2">link</a>"#);
     if let Some(Token::StartTag { attrs, .. }) = tokens.first() {
-        let href = attrs.iter().find(|a| a.name == "href").map(|a| a.value.as_str());
+        let href = attrs
+            .iter()
+            .find(|a| a.name == "href")
+            .map(|a| a.value.as_str());
         assert_eq!(href, Some("page?a=1&b=2"), "entity in attribute decoded");
     }
 }
@@ -131,8 +165,15 @@ fn tokenizer_entity_in_attr() {
 #[test]
 fn tokenizer_numeric_entity() {
     let (tokens, _) = tokenize("<p>&#65;&#x41;</p>");
-    let text: String = tokens.iter()
-        .filter_map(|t| if let Token::Text(s) = t { Some(s.as_str()) } else { None })
+    let text: String = tokens
+        .iter()
+        .filter_map(|t| {
+            if let Token::Text(s) = t {
+                Some(s.as_str())
+            } else {
+                None
+            }
+        })
         .collect();
     // Both &#65; and &#x41; should decode to 'A'
     assert!(text.contains("AA"), "numeric entities: got '{text}'");
@@ -144,10 +185,14 @@ fn tokenizer_script_raw_text() {
     let html = "<script>var x = '</div>'; if (a < b) {}</script><div>after</div>";
     let (tokens, _) = tokenize(html);
     // Should have exactly one EndTag for div (the real one after </script>)
-    let end_div_count = tokens.iter()
+    let end_div_count = tokens
+        .iter()
         .filter(|t| matches!(t, Token::EndTag { name } if name == "div"))
         .count();
-    assert_eq!(end_div_count, 1, "only one </div> end tag — the fake one is inside raw text");
+    assert_eq!(
+        end_div_count, 1,
+        "only one </div> end tag — the fake one is inside raw text"
+    );
 }
 
 #[test]
@@ -159,7 +204,8 @@ fn tokenizer_style_raw_text() {
     let html = "<style>body { color: red; }</style><p>after</p>";
     let (tokens, _) = tokenize(html);
     // There should be exactly one </style> end tag
-    let end_style = tokens.iter()
+    let end_style = tokens
+        .iter()
         .filter(|t| matches!(t, Token::EndTag { name } if name == "style"))
         .count();
     assert_eq!(end_style, 1);
@@ -198,23 +244,36 @@ fn parse_implied_html_head_body() {
     // No explicit html/head/body — tree builder should create them
     let doc = parse("<p>Hello world</p>");
     // body may or may not exist depending on impl, but p should be there
-    assert!(doc.find_element("p").is_some(), "p element should be in tree");
+    assert!(
+        doc.find_element("p").is_some(),
+        "p element should be in tree"
+    );
     let text = doc.text_content(0);
-    assert!(text.contains("Hello world"), "text content should be 'Hello world', got: '{text}'");
+    assert!(
+        text.contains("Hello world"),
+        "text content should be 'Hello world', got: '{text}'"
+    );
 }
 
 #[test]
 fn parse_doctype_in_document() {
     let doc = parse("<!DOCTYPE html><html><body></body></html>");
-    let has_doctype = doc.nodes.iter().any(|n| matches!(n.data, NodeData::Doctype(_)));
+    let has_doctype = doc
+        .nodes
+        .iter()
+        .any(|n| matches!(n.data, NodeData::Doctype(_)));
     assert!(has_doctype, "doctype should be in document");
 }
 
 #[test]
 fn parse_void_elements_no_children() {
-    let doc = parse("<html><body><img src='x.png' alt='x'><br><hr><input type='text'></body></html>");
+    let doc =
+        parse("<html><body><img src='x.png' alt='x'><br><hr><input type='text'></body></html>");
     let img_id = doc.find_element("img").expect("img not found");
-    assert!(doc.node(img_id).children.is_empty(), "void elements have no children");
+    assert!(
+        doc.node(img_id).children.is_empty(),
+        "void elements have no children"
+    );
 }
 
 #[test]
@@ -239,7 +298,10 @@ fn parse_adjacent_paragraphs_auto_close() {
     // Each p should have only its own text
     for &pid in &ps {
         let text = doc.text_content(pid);
-        assert!(!text.contains('\n') || text.trim().len() > 0, "p text should not be empty");
+        assert!(
+            !text.contains('\n') || text.trim().len() > 0,
+            "p text should not be empty"
+        );
     }
 }
 
@@ -249,7 +311,10 @@ fn parse_li_auto_close() {
     let lis = doc.find_all_elements("li");
     assert_eq!(lis.len(), 3, "should have 3 li elements");
     // Each li should have its own text
-    let texts: Vec<String> = lis.iter().map(|&id| doc.text_content(id).trim().to_string()).collect();
+    let texts: Vec<String> = lis
+        .iter()
+        .map(|&id| doc.text_content(id).trim().to_string())
+        .collect();
     assert!(texts.contains(&"A".to_string()));
     assert!(texts.contains(&"B".to_string()));
     assert!(texts.contains(&"C".to_string()));
@@ -287,8 +352,10 @@ fn parse_mismatched_tags_recovery() {
     // <b>bold <i>bold-italic</b> italic</i>
     let doc = parse("<p><b>bold <i>bold-italic</b> italic</i></p>");
     // Should not panic; should have b and i in tree somewhere
-    assert!(doc.find_element("b").is_some() || doc.find_element("i").is_some(),
-        "formatting elements should survive mismatch recovery");
+    assert!(
+        doc.find_element("b").is_some() || doc.find_element("i").is_some(),
+        "formatting elements should survive mismatch recovery"
+    );
     let text = doc.text_content(0);
     assert!(text.contains("bold"), "text content should be preserved");
 }
@@ -306,7 +373,34 @@ fn parse_deeply_nested() {
     html.push_str("</div>");
     let doc = parse(&html);
     let text = doc.text_content(0);
-    assert!(text.contains("deep content"), "content should survive deep nesting");
+    assert!(
+        text.contains("deep content"),
+        "content should survive deep nesting"
+    );
+}
+
+#[test]
+fn deeply_nested_text_outer_html_and_access_tree_do_not_overflow() {
+    let depth = 5000;
+    let mut html = String::new();
+    for _ in 0..depth {
+        html.push_str("<div>");
+    }
+    html.push_str("<p>deep content</p>");
+    for _ in 0..depth {
+        html.push_str("</div>");
+    }
+
+    let doc = parse(&html);
+    let text = doc.text_content(0);
+    assert!(text.contains("deep content"));
+
+    let serialized = doc.outer_html(0);
+    assert!(serialized.contains("deep content"));
+
+    let tree = build_access_tree(&doc);
+    assert!(tree.headings.is_empty());
+    assert_eq!(tree.root.role, AXRole::Document);
 }
 
 #[test]
@@ -314,14 +408,19 @@ fn parse_unclosed_elements_at_eof() {
     // Elements left open at EOF should still contain their text
     let doc = parse("<div><p>Text without closing tags");
     let text = doc.text_content(0);
-    assert!(text.contains("Text without closing tags"),
-        "text preserved even without closing tags");
+    assert!(
+        text.contains("Text without closing tags"),
+        "text preserved even without closing tags"
+    );
 }
 
 #[test]
 fn parse_comment_in_body() {
     let doc = parse("<body><!-- a comment --><p>text</p></body>");
-    let has_comment = doc.nodes.iter().any(|n| matches!(n.data, NodeData::Comment(ref c) if c.contains("a comment")));
+    let has_comment = doc
+        .nodes
+        .iter()
+        .any(|n| matches!(n.data, NodeData::Comment(ref c) if c.contains("a comment")));
     assert!(has_comment, "comment should be in the tree");
 }
 
@@ -337,7 +436,10 @@ fn parse_empty_input() {
 fn parse_text_only() {
     let doc = parse("Hello, world!");
     let text = doc.text_content(0);
-    assert!(text.contains("Hello, world!"), "plain text should be parsed");
+    assert!(
+        text.contains("Hello, world!"),
+        "plain text should be parsed"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -386,9 +488,18 @@ fn semantic_form_elements_classified() {
     let form_id = doc.find_element("form").expect("form not found");
     let input_id = doc.find_element("input").expect("input not found");
     let btn_id = doc.find_element("button").expect("button not found");
-    assert!(matches!(doc.node(form_id).element_data().unwrap().role, SemanticRole::Form(FormKind::Form)));
-    assert!(matches!(doc.node(input_id).element_data().unwrap().role, SemanticRole::Form(FormKind::Input)));
-    assert!(matches!(doc.node(btn_id).element_data().unwrap().role, SemanticRole::Form(FormKind::Button)));
+    assert!(matches!(
+        doc.node(form_id).element_data().unwrap().role,
+        SemanticRole::Form(FormKind::Form)
+    ));
+    assert!(matches!(
+        doc.node(input_id).element_data().unwrap().role,
+        SemanticRole::Form(FormKind::Input)
+    ));
+    assert!(matches!(
+        doc.node(btn_id).element_data().unwrap().role,
+        SemanticRole::Form(FormKind::Button)
+    ));
 }
 
 #[test]
@@ -396,8 +507,14 @@ fn semantic_scripts_classified() {
     let doc = parse("<script>var x = 1;</script><style>body {}</style>");
     let script_id = doc.find_element("script").expect("script not found");
     let style_id = doc.find_element("style").expect("style not found");
-    assert!(matches!(doc.node(script_id).element_data().unwrap().role, SemanticRole::Script { is_style: false }));
-    assert!(matches!(doc.node(style_id).element_data().unwrap().role, SemanticRole::Script { is_style: true }));
+    assert!(matches!(
+        doc.node(script_id).element_data().unwrap().role,
+        SemanticRole::Script { is_style: false }
+    ));
+    assert!(matches!(
+        doc.node(style_id).element_data().unwrap().role,
+        SemanticRole::Script { is_style: true }
+    ));
 }
 
 #[test]
@@ -406,7 +523,10 @@ fn semantic_structural_elements() {
     for tag in &["header", "nav", "main", "aside", "footer"] {
         let id = doc.find_element(tag).expect(&format!("{tag} not found"));
         let role = &doc.node(id).element_data().unwrap().role;
-        assert!(matches!(role, SemanticRole::Structural), "{tag} should be Structural, got {role:?}");
+        assert!(
+            matches!(role, SemanticRole::Structural),
+            "{tag} should be Structural, got {role:?}"
+        );
     }
 }
 
@@ -415,8 +535,13 @@ fn semantic_list_elements() {
     let doc = parse("<ul><li>A</li></ul><ol><li>B</li></ol>");
     for tag in &["ul", "ol", "li"] {
         let id = doc.find_element(tag).expect(&format!("{tag} not found"));
-        assert!(matches!(doc.node(id).element_data().unwrap().role, SemanticRole::List),
-            "{tag} should be List");
+        assert!(
+            matches!(
+                doc.node(id).element_data().unwrap().role,
+                SemanticRole::List
+            ),
+            "{tag} should be List"
+        );
     }
 }
 
@@ -439,25 +564,36 @@ fn access_links_extracted() {
     let doc = parse(r#"<a href="https://example.com">Example</a><a href="/local">Local</a>"#);
     let tree = build_access_tree(&doc);
     assert_eq!(tree.links.len(), 2);
-    assert!(tree.links.iter().any(|(text, href)| text == "Example" && href.contains("example.com")));
-    assert!(tree.links.iter().any(|(text, href)| text == "Local" && href == "/local"));
+    assert!(tree
+        .links
+        .iter()
+        .any(|(text, href)| text == "Example" && href.contains("example.com")));
+    assert!(tree
+        .links
+        .iter()
+        .any(|(text, href)| text == "Local" && href == "/local"));
 }
 
 #[test]
 fn access_form_extracted() {
-    let doc = parse(r#"
+    let doc = parse(
+        r#"
         <form action="/login" method="post">
             <input type="email" name="email" placeholder="Email">
             <input type="password" name="pass" placeholder="Password" required>
             <button type="submit">Sign in</button>
         </form>
-    "#);
+    "#,
+    );
     let tree = build_access_tree(&doc);
     assert_eq!(tree.forms.len(), 1);
     let form = &tree.forms[0];
     assert_eq!(form.action.as_deref(), Some("/login"));
     assert_eq!(form.controls.len(), 3); // email, password, button
-    assert!(form.controls.iter().any(|c| c.name.as_deref() == Some("email")));
+    assert!(form
+        .controls
+        .iter()
+        .any(|c| c.name.as_deref() == Some("email")));
     assert!(form.controls.iter().any(|c| c.required));
 }
 
@@ -466,8 +602,14 @@ fn access_landmarks_extracted() {
     let doc = parse("<header></header><nav></nav><main></main><aside></aside><footer></footer>");
     let tree = build_access_tree(&doc);
     assert!(!tree.landmarks.is_empty(), "should have landmarks");
-    assert!(tree.landmarks.iter().any(|(r, _)| matches!(r, agent_browser::html::access::LandmarkRole::Navigation)));
-    assert!(tree.landmarks.iter().any(|(r, _)| matches!(r, agent_browser::html::access::LandmarkRole::Main)));
+    assert!(tree
+        .landmarks
+        .iter()
+        .any(|(r, _)| matches!(r, agent_browser::html::access::LandmarkRole::Navigation)));
+    assert!(tree
+        .landmarks
+        .iter()
+        .any(|(r, _)| matches!(r, agent_browser::html::access::LandmarkRole::Main)));
 }
 
 #[test]
@@ -476,7 +618,10 @@ fn access_scripts_excluded() {
     let tree = build_access_tree(&doc);
     // The display output should not include script content
     let display = format!("{tree}");
-    assert!(!display.contains("var x = 1"), "script content should not appear in access tree");
+    assert!(
+        !display.contains("var x = 1"),
+        "script content should not appear in access tree"
+    );
 }
 
 #[test]
@@ -485,15 +630,23 @@ fn access_aria_label_used_as_name() {
     let tree = build_access_tree(&doc);
     // Walk tree looking for the button
     fn find_button(node: &agent_browser::html::AXNode) -> Option<&agent_browser::html::AXNode> {
-        if matches!(node.role, AXRole::Button) { return Some(node); }
+        if matches!(node.role, AXRole::Button) {
+            return Some(node);
+        }
         for child in &node.children {
-            if let Some(found) = find_button(child) { return Some(found); }
+            if let Some(found) = find_button(child) {
+                return Some(found);
+            }
         }
         None
     }
     let btn = find_button(&tree.root);
     assert!(btn.is_some(), "should find button node");
-    assert_eq!(btn.unwrap().name, "Close dialog", "aria-label should be used as name");
+    assert_eq!(
+        btn.unwrap().name,
+        "Close dialog",
+        "aria-label should be used as name"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -508,7 +661,11 @@ macro_rules! fixture_test {
             let doc = parse(html);
             // Must not panic, must be displayable
             let display = format!("{doc}");
-            assert!(!display.is_empty(), "display should not be empty for {}", $file);
+            assert!(
+                !display.is_empty(),
+                "display should not be empty for {}",
+                $file
+            );
             // Accessibility tree must also work
             let tree = build_access_tree(&doc);
             let _ = format!("{tree}");
@@ -523,9 +680,15 @@ fixture_test!(fixture_04_script_style, "fixtures/04_script_style.html");
 fixture_test!(fixture_05_forms, "fixtures/05_forms.html");
 fixture_test!(fixture_06_headings, "fixtures/06_headings.html");
 fixture_test!(fixture_07_links_media, "fixtures/07_links_media.html");
-fixture_test!(fixture_08_implicit_closing, "fixtures/08_implicit_closing.html");
+fixture_test!(
+    fixture_08_implicit_closing,
+    "fixtures/08_implicit_closing.html"
+);
 fixture_test!(fixture_09_self_closing, "fixtures/09_self_closing.html");
-fixture_test!(fixture_10_comments_doctype, "fixtures/10_comments_doctype.html");
+fixture_test!(
+    fixture_10_comments_doctype,
+    "fixtures/10_comments_doctype.html"
+);
 fixture_test!(fixture_11_empty, "fixtures/11_empty.html");
 fixture_test!(fixture_12_real_snippet, "fixtures/12_real_snippet.html");
 fixture_test!(fixture_13_attributes, "fixtures/13_attributes.html");
@@ -579,7 +742,10 @@ fn fixture_04_script_content_preserved() {
     for &sid in &script_ids {
         let text = doc.text_content(sid);
         if !text.is_empty() {
-            assert!(!text.contains("<"), "script text should not contain parsed tags, got: {text}");
+            assert!(
+                !text.contains("<"),
+                "script text should not contain parsed tags, got: {text}"
+            );
         }
     }
 }
@@ -597,8 +763,16 @@ fn fixture_12_real_page_semantic() {
     assert!(tree.links.len() >= 3, "should have navigation links");
 
     // Should have landmarks
-    assert!(tree.landmarks.iter().any(|(r, _)| matches!(r, agent_browser::html::access::LandmarkRole::Navigation)),
-        "should have navigation landmark");
-    assert!(tree.landmarks.iter().any(|(r, _)| matches!(r, agent_browser::html::access::LandmarkRole::Main)),
-        "should have main landmark");
+    assert!(
+        tree.landmarks
+            .iter()
+            .any(|(r, _)| matches!(r, agent_browser::html::access::LandmarkRole::Navigation)),
+        "should have navigation landmark"
+    );
+    assert!(
+        tree.landmarks
+            .iter()
+            .any(|(r, _)| matches!(r, agent_browser::html::access::LandmarkRole::Main)),
+        "should have main landmark"
+    );
 }

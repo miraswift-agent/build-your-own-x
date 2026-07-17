@@ -1,4 +1,5 @@
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use rquickjs::prelude::Rest;
 
@@ -29,28 +30,40 @@ pub trait JsContext: Send {
 pub struct QuickJsEngine;
 
 impl QuickJsEngine {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 }
 
 impl Default for QuickJsEngine {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl JsEngine for QuickJsEngine {
     fn create_context(&self) -> Result<Box<dyn JsContext + Send>, JsError> {
-        Ok(Box::new(QuickJsContext::new(ContextId::next(), WorldType::Main)?))
+        Ok(Box::new(QuickJsContext::new(
+            ContextId::next(),
+            WorldType::Main,
+        )?))
     }
 
     fn create_utility_context(&self) -> Result<Box<dyn JsContext + Send>, JsError> {
-        Ok(Box::new(QuickJsContext::new(ContextId::next(), WorldType::Utility)?))
+        Ok(Box::new(QuickJsContext::new(
+            ContextId::next(),
+            WorldType::Utility,
+        )?))
     }
 }
 
 // ─── QuickJS context ─────────────────────────────────────────────────────────
 
+const DEFAULT_EVAL_TIMEOUT: Duration = Duration::from_millis(200);
+
 pub struct QuickJsContext {
     // Runtime must be kept alive for the lifetime of Context.
-    _runtime: rquickjs::Runtime,
+    runtime: rquickjs::Runtime,
     context: rquickjs::Context,
     console_logs: Arc<Mutex<Vec<ConsoleMessage>>>,
     id: ContextId,
@@ -59,18 +72,23 @@ pub struct QuickJsContext {
 
 impl QuickJsContext {
     pub fn new(id: ContextId, world: WorldType) -> Result<Self, JsError> {
-        let runtime = rquickjs::Runtime::new()
-            .map_err(|e| JsError::new(format!("QuickJS runtime: {e}")))?;
+        let runtime =
+            rquickjs::Runtime::new().map_err(|e| JsError::new(format!("QuickJS runtime: {e}")))?;
+        runtime.set_max_stack_size(512 * 1024);
         let context = rquickjs::Context::full(&runtime)
             .map_err(|e| JsError::new(format!("QuickJS context: {e}")))?;
         let logs: Arc<Mutex<Vec<ConsoleMessage>>> = Arc::new(Mutex::new(Vec::new()));
 
-        setup_console(&context, &logs)
-            .map_err(|e| JsError::new(format!("console setup: {e}")))?;
-        setup_timers(&context)
-            .map_err(|e| JsError::new(format!("timer setup: {e}")))?;
+        setup_console(&context, &logs).map_err(|e| JsError::new(format!("console setup: {e}")))?;
+        setup_timers(&context).map_err(|e| JsError::new(format!("timer setup: {e}")))?;
 
-        Ok(Self { _runtime: runtime, context, console_logs: logs, id, world })
+        Ok(Self {
+            runtime,
+            context,
+            console_logs: logs,
+            id,
+            world,
+        })
     }
 }
 
@@ -163,7 +181,11 @@ fn rqs_to_display(val: &rquickjs::Value) -> String {
         Type::Bool => val.as_bool().map_or("false".into(), |b| b.to_string()),
         Type::Int => val.as_int().map_or("0".into(), |n| n.to_string()),
         Type::Float => val.as_float().map_or("0".into(), |n| {
-            if n.fract() == 0.0 { format!("{}", n as i64) } else { n.to_string() }
+            if n.fract() == 0.0 {
+                format!("{}", n as i64)
+            } else {
+                n.to_string()
+            }
         }),
         Type::String => val
             .as_string()
@@ -207,7 +229,9 @@ pub(crate) fn rqs_to_jsvalue(val: &rquickjs::Value) -> JsValue {
         Type::Int => JsValue::Number(val.as_int().unwrap_or(0) as f64),
         Type::Float => JsValue::Number(val.as_float().unwrap_or(0.0)),
         Type::String => JsValue::String(
-            val.as_string().and_then(|s| s.to_string().ok()).unwrap_or_default(),
+            val.as_string()
+                .and_then(|s| s.to_string().ok())
+                .unwrap_or_default(),
         ),
         Type::Array => {
             if let Some(arr) = val.as_array() {
@@ -234,7 +258,13 @@ fn extract_exception(val: rquickjs::Value) -> JsError {
         let message = exc.message().unwrap_or_else(|| "Unknown error".into());
         let stack = exc.stack();
         let (line, column) = parse_location_from_stack(stack.as_deref());
-        return JsError { message, stack, line, column, source_url: None };
+        return JsError {
+            message,
+            stack,
+            line,
+            column,
+            source_url: None,
+        };
     }
 
     // Fallback: regular object throws
@@ -247,7 +277,13 @@ fn extract_exception(val: rquickjs::Value) -> JsError {
             .unwrap_or_else(|| "Unknown error".into());
         let stack = obj.get::<_, String>("stack").ok();
         let (line, column) = parse_location_from_stack(stack.as_deref());
-        return JsError { message, stack, line, column, source_url: None };
+        return JsError {
+            message,
+            stack,
+            line,
+            column,
+            source_url: None,
+        };
     }
 
     if let Some(s) = val.as_string() {
@@ -260,7 +296,10 @@ fn extract_exception(val: rquickjs::Value) -> JsError {
 /// Parses `(line, column)` from a QuickJS-style stack trace.
 /// Stack line format: "    at script:2:5" or "    at <eval>:2:5"
 fn parse_location_from_stack(stack: Option<&str>) -> (Option<u32>, Option<u32>) {
-    let stack = match stack { Some(s) => s, None => return (None, None) };
+    let stack = match stack {
+        Some(s) => s,
+        None => return (None, None),
+    };
 
     for row in stack.lines().skip(1) {
         let trimmed = row.trim();
@@ -283,14 +322,32 @@ fn parse_location_from_stack(stack: Option<&str>) -> (Option<u32>, Option<u32>) 
 impl JsContext for QuickJsContext {
     fn eval(&mut self, script: &str) -> Result<JsValue, JsError> {
         let script = script.to_string();
-        self.context.with(|ctx| -> Result<JsValue, JsError> {
-            match ctx.eval::<rquickjs::Value, _>(script.as_str()) {
-                Ok(val) => Ok(rqs_to_jsvalue(&val)),
+        let deadline = Instant::now() + DEFAULT_EVAL_TIMEOUT;
+        self.runtime
+            .set_interrupt_handler(Some(Box::new(move || Instant::now() >= deadline)));
+
+        let result = self.context.with(|ctx| -> Result<JsValue, JsError> {
+            let value = match ctx.eval::<rquickjs::Value, _>(script.as_str()) {
+                Ok(val) => val,
                 Err(rquickjs::Error::Exception) => {
                     let exc = ctx.catch();
-                    Err(extract_exception(exc))
+                    return Err(extract_exception(exc));
                 }
-                Err(e) => Err(JsError::new(e.to_string())),
+                Err(e) => return Err(JsError::new(e.to_string())),
+            };
+
+            while ctx.execute_pending_job() {}
+            Ok(rqs_to_jsvalue(&value))
+        });
+
+        self.runtime.set_interrupt_handler(None);
+        result.map_err(|err| {
+            if err.message.is_empty() {
+                JsError::new("JavaScript evaluation failed")
+            } else if err.message.to_lowercase().contains("interrupt") {
+                JsError::new("JavaScript evaluation timed out")
+            } else {
+                err
             }
         })
     }
@@ -300,9 +357,16 @@ impl JsContext for QuickJsContext {
     }
 
     fn take_console_logs(&mut self) -> Vec<ConsoleMessage> {
-        self.console_logs.lock().map(|mut g| std::mem::take(&mut *g)).unwrap_or_default()
+        self.console_logs
+            .lock()
+            .map(|mut g| std::mem::take(&mut *g))
+            .unwrap_or_default()
     }
 
-    fn context_id(&self) -> ContextId { self.id }
-    fn world(&self) -> WorldType { self.world.clone() }
+    fn context_id(&self) -> ContextId {
+        self.id
+    }
+    fn world(&self) -> WorldType {
+        self.world.clone()
+    }
 }

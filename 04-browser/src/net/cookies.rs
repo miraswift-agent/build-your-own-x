@@ -52,6 +52,8 @@ pub fn parse_set_cookie(header: &str, request_domain: &str, request_path: &str) 
     }
     let value = name_value_str[eq + 1..].trim().to_string();
 
+    let request_domain = canonicalize_domain(request_domain)?;
+
     let mut cookie = Cookie {
         name,
         value,
@@ -78,11 +80,12 @@ pub fn parse_set_cookie(header: &str, request_domain: &str, request_path: &str) 
         match key.to_lowercase().as_str() {
             "domain" => {
                 if let Some(v) = val {
-                    let d = v.trim_start_matches('.').to_lowercase();
-                    if !d.is_empty() {
-                        cookie.domain = Some(d);
-                        cookie.host_only = false;
+                    let d = canonicalize_domain(v)?;
+                    if !domain_attribute_allowed(&request_domain, &d) {
+                        return None;
                     }
+                    cookie.domain = Some(d);
+                    cookie.host_only = false;
                 }
             }
             "path" => {
@@ -119,7 +122,7 @@ pub fn parse_set_cookie(header: &str, request_domain: &str, request_path: &str) 
     }
 
     if cookie.domain.is_none() {
-        cookie.domain = Some(request_domain.to_lowercase());
+        cookie.domain = Some(request_domain);
         cookie.host_only = true;
     }
     if cookie.path.is_none() {
@@ -127,6 +130,44 @@ pub fn parse_set_cookie(header: &str, request_domain: &str, request_path: &str) 
     }
 
     Some(cookie)
+}
+
+fn canonicalize_domain(domain: &str) -> Option<String> {
+    let domain = domain
+        .trim()
+        .trim_start_matches('.')
+        .trim_end_matches('.')
+        .to_lowercase();
+    if domain.is_empty() || domain.contains("..") || domain.contains('/') || domain.contains(':') {
+        return None;
+    }
+    Some(domain)
+}
+
+fn domain_attribute_allowed(request_domain: &str, cookie_domain: &str) -> bool {
+    if request_domain == cookie_domain {
+        return !looks_like_public_suffix(cookie_domain);
+    }
+
+    if !request_domain.ends_with(&format!(".{cookie_domain}")) {
+        return false;
+    }
+
+    !looks_like_public_suffix(cookie_domain)
+}
+
+fn looks_like_public_suffix(domain: &str) -> bool {
+    // Conservative fail-safe without a full PSL: reject obviously too-broad
+    // Domain attributes like `com` or `co.uk`.
+    let labels: Vec<&str> = domain
+        .split('.')
+        .filter(|label| !label.is_empty())
+        .collect();
+    match labels.len() {
+        0 | 1 => true,
+        2 if labels[0].len() <= 3 && labels[1].len() == 2 => true,
+        _ => false,
+    }
 }
 
 fn default_path(request_path: &str) -> String {
@@ -146,7 +187,6 @@ fn parse_http_date(s: &str) -> Option<SystemTime> {
     let s_lower = s.to_lowercase();
     let parts: Vec<&str> = s_lower.split_whitespace().collect();
 
-    // Expect: "Weekday, DD Mon YYYY HH:MM:SS GMT"
     if parts.len() < 5 {
         return None;
     }
@@ -281,8 +321,7 @@ fn domain_matches(cookie_domain: &str, request_domain: &str, host_only: bool) ->
     if host_only {
         cookie_domain == request_domain
     } else {
-        request_domain == cookie_domain
-            || request_domain.ends_with(&format!(".{cookie_domain}"))
+        request_domain == cookie_domain || request_domain.ends_with(&format!(".{cookie_domain}"))
     }
 }
 
@@ -294,4 +333,28 @@ fn path_matches(cookie_path: &str, request_path: &str) -> bool {
         return cookie_path.ends_with('/') || request_path[cookie_path.len()..].starts_with('/');
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accepts_domain_cookie_for_same_registrable_domain() {
+        let cookie = parse_set_cookie("id=1; Domain=example.com", "www.example.com", "/").unwrap();
+        assert_eq!(cookie.domain.as_deref(), Some("example.com"));
+        assert!(!cookie.host_only);
+    }
+
+    #[test]
+    fn rejects_cross_site_domain_cookie() {
+        let cookie = parse_set_cookie("id=1; Domain=bank.com", "attacker.com", "/");
+        assert!(cookie.is_none());
+    }
+
+    #[test]
+    fn rejects_obvious_public_suffix_cookie() {
+        assert!(parse_set_cookie("id=1; Domain=com", "example.com", "/").is_none());
+        assert!(parse_set_cookie("id=1; Domain=co.uk", "shop.co.uk", "/").is_none());
+    }
 }

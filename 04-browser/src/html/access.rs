@@ -62,14 +62,14 @@ pub enum AXRole {
 /// Landmark roles that map to HTML sectioning elements.
 #[derive(Debug, Clone, PartialEq)]
 pub enum LandmarkRole {
-    Banner,      // header (top-level)
-    Navigation,  // nav
-    Main,        // main
+    Banner,        // header (top-level)
+    Navigation,    // nav
+    Main,          // main
     Complementary, // aside
-    ContentInfo, // footer (top-level)
-    Search,      // search, form[role=search]
-    Form,        // form (with accessible name)
-    Region,      // section (with accessible name)
+    ContentInfo,   // footer (top-level)
+    Search,        // search, form[role=search]
+    Form,          // form (with accessible name)
+    Region,        // section (with accessible name)
 }
 
 // ---------------------------------------------------------------------------
@@ -151,75 +151,132 @@ pub fn build_access_tree(doc: &Document) -> AccessTree {
     let mut forms = vec![];
     let mut landmarks = vec![];
 
-    collect_info(doc, DOCUMENT_NODE_ID, &mut headings, &mut links, &mut forms, &mut landmarks);
+    collect_info(
+        doc,
+        DOCUMENT_NODE_ID,
+        &mut headings,
+        &mut links,
+        &mut forms,
+        &mut landmarks,
+    );
 
-    AccessTree { root: root_ax, headings, links, forms, landmarks }
+    AccessTree {
+        root: root_ax,
+        headings,
+        links,
+        forms,
+        landmarks,
+    }
 }
 
 fn build_node(doc: &Document, id: NodeId) -> AXNode {
-    let node = doc.node(id);
-    match &node.data {
-        NodeData::Document => {
-            let children = node.children.iter()
-                .filter_map(|&c| {
-                    let n = build_node(doc, c);
-                    if n.is_meaningful() { Some(n) } else { None }
-                })
-                .collect();
-            AXNode {
-                dom_id: id,
-                role: AXRole::Document,
+    let mut built: Vec<Option<AXNode>> = vec![None; doc.nodes.len()];
+    let mut stack = vec![(id, false)];
+
+    while let Some((node_id, visited)) = stack.pop() {
+        let node = doc.node(node_id);
+        if !visited {
+            stack.push((node_id, true));
+            for &child in node.children.iter().rev() {
+                stack.push((child, false));
+            }
+            continue;
+        }
+
+        let ax_node = match &node.data {
+            NodeData::Document => {
+                let children = node
+                    .children
+                    .iter()
+                    .filter_map(|&child| built[child].take())
+                    .filter(|child| child.is_meaningful())
+                    .collect();
+                AXNode {
+                    dom_id: node_id,
+                    role: AXRole::Document,
+                    name: String::new(),
+                    value: None,
+                    description: None,
+                    children,
+                }
+            }
+            NodeData::Text(t) => {
+                let trimmed = t.trim().to_string();
+                if trimmed.is_empty() {
+                    AXNode {
+                        dom_id: node_id,
+                        role: AXRole::None,
+                        name: String::new(),
+                        value: None,
+                        description: None,
+                        children: vec![],
+                    }
+                } else {
+                    AXNode {
+                        dom_id: node_id,
+                        role: AXRole::StaticText,
+                        name: trimmed,
+                        value: None,
+                        description: None,
+                        children: vec![],
+                    }
+                }
+            }
+            NodeData::Comment(_) | NodeData::Doctype(_) => AXNode {
+                dom_id: node_id,
+                role: AXRole::None,
                 name: String::new(),
                 value: None,
                 description: None,
-                children,
-            }
-        }
-        NodeData::Text(t) => {
-            let trimmed = t.trim().to_string();
-            if trimmed.is_empty() {
-                AXNode {
-                    dom_id: id, role: AXRole::None, name: String::new(),
-                    value: None, description: None, children: vec![],
+                children: vec![],
+            },
+            NodeData::Element(e) => {
+                if matches!(e.role, SemanticRole::Script { .. }) {
+                    AXNode {
+                        dom_id: node_id,
+                        role: AXRole::None,
+                        name: String::new(),
+                        value: None,
+                        description: None,
+                        children: vec![],
+                    }
+                } else {
+                    let role = compute_role(doc, node_id);
+                    let name = compute_name(doc, node_id);
+                    let value = compute_value(doc, node_id);
+                    let description = e
+                        .attr("aria-description")
+                        .or_else(|| e.attr("title"))
+                        .map(str::to_string);
+                    let children = node
+                        .children
+                        .iter()
+                        .filter_map(|&child| built[child].take())
+                        .filter(|child| child.role != AXRole::None)
+                        .collect();
+                    AXNode {
+                        dom_id: node_id,
+                        role,
+                        name,
+                        value,
+                        description,
+                        children,
+                    }
                 }
-            } else {
-                AXNode {
-                    dom_id: id, role: AXRole::StaticText, name: trimmed,
-                    value: None, description: None, children: vec![],
-                }
             }
-        }
-        NodeData::Comment(_) | NodeData::Doctype(_) => AXNode {
-            dom_id: id, role: AXRole::None, name: String::new(),
-            value: None, description: None, children: vec![],
-        },
-        NodeData::Element(e) => {
-            // Skip script and style entirely
-            if matches!(e.role, SemanticRole::Script { .. }) {
-                return AXNode {
-                    dom_id: id, role: AXRole::None, name: String::new(),
-                    value: None, description: None, children: vec![],
-                };
-            }
+        };
 
-            let role = compute_role(doc, id);
-            let name = compute_name(doc, id);
-            let value = compute_value(doc, id);
-            let description = e.attr("aria-description")
-                .or_else(|| e.attr("title"))
-                .map(str::to_string);
-
-            // Build children for non-leaf roles
-            let children: Vec<AXNode> = node.children.iter()
-                .filter_map(|&c| {
-                    let n = build_node(doc, c);
-                    if n.role != AXRole::None { Some(n) } else { None }
-                })
-                .collect();
-
-            AXNode { dom_id: id, role, name, value, description, children }
-        }
+        built[node_id] = Some(ax_node);
     }
+
+    built[id].take().unwrap_or(AXNode {
+        dom_id: id,
+        role: AXRole::None,
+        name: String::new(),
+        value: None,
+        description: None,
+        children: vec![],
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -228,7 +285,10 @@ fn build_node(doc: &Document, id: NodeId) -> AXNode {
 
 fn compute_role(doc: &Document, id: NodeId) -> AXRole {
     let node = doc.node(id);
-    let e = match node.element_data() { Some(e) => e, None => return AXRole::None };
+    let e = match node.element_data() {
+        Some(e) => e,
+        None => return AXRole::None,
+    };
 
     // Explicit ARIA role overrides
     if let Some(aria_role) = e.attr("aria-role").or_else(|| e.attr("role")) {
@@ -262,15 +322,15 @@ fn compute_role(doc: &Document, id: NodeId) -> AXRole {
             _ => AXRole::None,
         },
         SemanticRole::Form(kind) => match kind {
-            FormKind::Form     => AXRole::Form,
-            FormKind::Button   => AXRole::Button,
-            FormKind::Select   => AXRole::Select,
+            FormKind::Form => AXRole::Form,
+            FormKind::Button => AXRole::Button,
+            FormKind::Select => AXRole::Select,
             FormKind::Textarea => AXRole::Textarea,
-            FormKind::Input    => input_role(e.attr("type").unwrap_or("text")),
-            FormKind::Label    => AXRole::Label,
+            FormKind::Input => input_role(e.attr("type").unwrap_or("text")),
+            FormKind::Label => AXRole::Label,
             FormKind::Fieldset => AXRole::Generic,
-            FormKind::Legend   => AXRole::Generic,
-            FormKind::Other    => AXRole::None,
+            FormKind::Legend => AXRole::Generic,
+            FormKind::Other => AXRole::None,
         },
         SemanticRole::Media { .. } => match e.tag_name.as_str() {
             "img" => AXRole::Image,
@@ -288,25 +348,29 @@ fn compute_role(doc: &Document, id: NodeId) -> AXRole {
             "td" => AXRole::Cell,
             "th" => {
                 let scope = e.attr("scope").unwrap_or("col");
-                if scope == "row" { AXRole::RowHeader } else { AXRole::ColumnHeader }
+                if scope == "row" {
+                    AXRole::RowHeader
+                } else {
+                    AXRole::ColumnHeader
+                }
             }
             _ => AXRole::None,
         },
         SemanticRole::Structural => match e.tag_name.as_str() {
-            "nav"     => AXRole::Landmark(LandmarkRole::Navigation),
-            "main"    => AXRole::Landmark(LandmarkRole::Main),
-            "aside"   => AXRole::Landmark(LandmarkRole::Complementary),
-            "header"  => {
+            "nav" => AXRole::Landmark(LandmarkRole::Navigation),
+            "main" => AXRole::Landmark(LandmarkRole::Main),
+            "aside" => AXRole::Landmark(LandmarkRole::Complementary),
+            "header" => {
                 // Only landmark if not inside article/section
                 AXRole::Landmark(LandmarkRole::Banner)
             }
-            "footer"  => AXRole::Landmark(LandmarkRole::ContentInfo),
+            "footer" => AXRole::Landmark(LandmarkRole::ContentInfo),
             "section" => AXRole::Section,
             "article" => AXRole::Article,
             _ => AXRole::Generic,
         },
         SemanticRole::TextFlow => match e.tag_name.as_str() {
-            "p"          => AXRole::Paragraph,
+            "p" => AXRole::Paragraph,
             "blockquote" => AXRole::Blockquote,
             "code" | "pre" | "kbd" | "samp" | "var" => AXRole::Code,
             _ => AXRole::Generic,
@@ -319,11 +383,11 @@ fn compute_role(doc: &Document, id: NodeId) -> AXRole {
 fn input_role(input_type: &str) -> AXRole {
     match input_type {
         "checkbox" => AXRole::Checkbox,
-        "radio"    => AXRole::Radio,
-        "range"    => AXRole::Slider,
+        "radio" => AXRole::Radio,
+        "range" => AXRole::Slider,
         "submit" | "button" | "image" | "reset" => AXRole::Button,
-        "hidden"   => AXRole::None,
-        _          => AXRole::TextInput,
+        "hidden" => AXRole::None,
+        _ => AXRole::TextInput,
     }
 }
 
@@ -333,7 +397,10 @@ fn input_role(input_type: &str) -> AXRole {
 
 fn compute_name(doc: &Document, id: NodeId) -> String {
     let node = doc.node(id);
-    let e = match node.element_data() { Some(e) => e, None => return String::new() };
+    let e = match node.element_data() {
+        Some(e) => e,
+        None => return String::new(),
+    };
 
     // 1. aria-labelledby → collect text of referenced elements (skip — no ids map)
     // 2. aria-label
@@ -350,7 +417,9 @@ fn compute_name(doc: &Document, id: NodeId) -> String {
             // Try value for submit/button inputs
             let t = e.attr("type").unwrap_or("text");
             if matches!(t, "submit" | "button" | "reset") {
-                if let Some(v) = e.attr("value") { return v.trim().to_string(); }
+                if let Some(v) = e.attr("value") {
+                    return v.trim().to_string();
+                }
             }
             // Label text via id (simplified: skip — would need a label → input mapping)
             // Fall back to placeholder
@@ -360,14 +429,18 @@ fn compute_name(doc: &Document, id: NodeId) -> String {
             // Text content of the anchor
             let text = doc.text_content(id);
             let trimmed = text.trim().to_string();
-            if !trimmed.is_empty() { return trimmed; }
+            if !trimmed.is_empty() {
+                return trimmed;
+            }
             // Fall back to title
             return e.attr("title").unwrap_or("").trim().to_string();
         }
         "button" => {
             let text = doc.text_content(id);
             let trimmed = text.trim().to_string();
-            if !trimmed.is_empty() { return trimmed; }
+            if !trimmed.is_empty() {
+                return trimmed;
+            }
             return e.attr("value").unwrap_or("").trim().to_string();
         }
         _ => {}
@@ -381,9 +454,13 @@ fn compute_name(doc: &Document, id: NodeId) -> String {
     // For form elements: name attribute or placeholder
     if matches!(&e.role, SemanticRole::Form(_)) {
         let from_aria = e.attr("aria-label").unwrap_or("");
-        if !from_aria.is_empty() { return from_aria.trim().to_string(); }
+        if !from_aria.is_empty() {
+            return from_aria.trim().to_string();
+        }
         let from_placeholder = e.attr("placeholder").unwrap_or("");
-        if !from_placeholder.is_empty() { return from_placeholder.trim().to_string(); }
+        if !from_placeholder.is_empty() {
+            return from_placeholder.trim().to_string();
+        }
         return e.attr("name").unwrap_or("").trim().to_string();
     }
 
@@ -411,13 +488,22 @@ fn compute_value(doc: &Document, id: NodeId) -> Option<String> {
                 e.attr("name").map(|v| format!("name={v}")),
                 e.attr("placeholder").map(|v| format!("placeholder={v}")),
                 e.attr("value").map(|v| format!("value={v}")),
-                if e.attr("required").is_some() { Some("required".into()) } else { None },
-            ].into_iter().flatten().collect();
-            if parts.is_empty() { None } else { Some(parts.join(", ")) }
+                if e.attr("required").is_some() {
+                    Some("required".into())
+                } else {
+                    None
+                },
+            ]
+            .into_iter()
+            .flatten()
+            .collect();
+            if parts.is_empty() {
+                None
+            } else {
+                Some(parts.join(", "))
+            }
         }
-        "select" | "textarea" => {
-            e.attr("name").map(|n| format!("name={n}"))
-        }
+        "select" | "textarea" => e.attr("name").map(|n| format!("name={n}")),
         _ => None,
     }
 }
@@ -434,83 +520,91 @@ fn collect_info(
     forms: &mut Vec<FormSummary>,
     landmarks: &mut Vec<(LandmarkRole, String)>,
 ) {
-    let node = doc.node(id);
-    match &node.data {
-        NodeData::Element(e) => {
-            // Skip scripts entirely
-            if matches!(e.role, SemanticRole::Script { .. }) { return; }
-
-            match &e.role {
-                SemanticRole::Heading { level } => {
-                    let text = doc.text_content(id).trim().to_string();
-                    if !text.is_empty() {
-                        headings.push((*level, text));
-                    }
+    let mut stack = vec![id];
+    while let Some(node_id) = stack.pop() {
+        let node = doc.node(node_id);
+        match &node.data {
+            NodeData::Element(e) => {
+                if matches!(e.role, SemanticRole::Script { .. }) {
+                    continue;
                 }
-                SemanticRole::Link { href } => {
-                    if e.tag_name == "a" {
-                        let text = doc.text_content(id).trim().to_string();
-                        let href_str = href.clone().unwrap_or_default();
-                        if !text.is_empty() || !href_str.is_empty() {
-                            links.push((text, href_str));
+
+                match &e.role {
+                    SemanticRole::Heading { level } => {
+                        let text = doc.text_content(node_id).trim().to_string();
+                        if !text.is_empty() {
+                            headings.push((*level, text));
                         }
                     }
-                }
-                SemanticRole::Form(FormKind::Form) => {
-                    let action = e.attr("action").map(str::to_string);
-                    let method = e.attr("method").map(str::to_string);
-                    let mut controls = vec![];
-                    collect_form_controls(doc, id, &mut controls);
-                    forms.push(FormSummary { action, method, controls });
-                }
-                SemanticRole::Structural => {
-                    let landmark = match e.tag_name.as_str() {
-                        "nav"    => Some(LandmarkRole::Navigation),
-                        "main"   => Some(LandmarkRole::Main),
-                        "aside"  => Some(LandmarkRole::Complementary),
-                        "header" => Some(LandmarkRole::Banner),
-                        "footer" => Some(LandmarkRole::ContentInfo),
-                        _ => None,
-                    };
-                    if let Some(lm) = landmark {
-                        let name = e.attr("aria-label").unwrap_or("").to_string();
-                        landmarks.push((lm, name));
+                    SemanticRole::Link { href } => {
+                        if e.tag_name == "a" {
+                            let text = doc.text_content(node_id).trim().to_string();
+                            let href_str = href.clone().unwrap_or_default();
+                            if !text.is_empty() || !href_str.is_empty() {
+                                links.push((text, href_str));
+                            }
+                        }
                     }
+                    SemanticRole::Form(FormKind::Form) => {
+                        let action = e.attr("action").map(str::to_string);
+                        let method = e.attr("method").map(str::to_string);
+                        let mut controls = vec![];
+                        collect_form_controls(doc, node_id, &mut controls);
+                        forms.push(FormSummary {
+                            action,
+                            method,
+                            controls,
+                        });
+                    }
+                    SemanticRole::Structural => {
+                        let landmark = match e.tag_name.as_str() {
+                            "nav" => Some(LandmarkRole::Navigation),
+                            "main" => Some(LandmarkRole::Main),
+                            "aside" => Some(LandmarkRole::Complementary),
+                            "header" => Some(LandmarkRole::Banner),
+                            "footer" => Some(LandmarkRole::ContentInfo),
+                            _ => None,
+                        };
+                        if let Some(lm) = landmark {
+                            let name = e.attr("aria-label").unwrap_or("").to_string();
+                            landmarks.push((lm, name));
+                        }
+                    }
+                    _ => {}
                 }
-                _ => {}
-            }
 
-            // Recurse
-            let children: Vec<NodeId> = node.children.clone();
-            for c in children {
-                collect_info(doc, c, headings, links, forms, landmarks);
+                for &child in node.children.iter().rev() {
+                    stack.push(child);
+                }
             }
-        }
-        NodeData::Document => {
-            let children: Vec<NodeId> = node.children.clone();
-            for c in children {
-                collect_info(doc, c, headings, links, forms, landmarks);
+            NodeData::Document => {
+                for &child in node.children.iter().rev() {
+                    stack.push(child);
+                }
             }
+            _ => {}
         }
-        _ => {}
     }
 }
 
 fn collect_form_controls(doc: &Document, id: NodeId, controls: &mut Vec<FormControl>) {
-    let node = doc.node(id);
-    match &node.data {
-        NodeData::Element(e) => {
-            let is_control = matches!(&e.role,
+    let mut stack = vec![id];
+    while let Some(node_id) = stack.pop() {
+        let node = doc.node(node_id);
+        if let NodeData::Element(e) = &node.data {
+            let is_control = matches!(
+                &e.role,
                 SemanticRole::Form(FormKind::Input)
-                | SemanticRole::Form(FormKind::Select)
-                | SemanticRole::Form(FormKind::Textarea)
-                | SemanticRole::Form(FormKind::Button)
+                    | SemanticRole::Form(FormKind::Select)
+                    | SemanticRole::Form(FormKind::Textarea)
+                    | SemanticRole::Form(FormKind::Button)
             );
             if is_control {
                 controls.push(FormControl {
                     kind: e.tag_name.clone(),
                     name: e.attr("name").map(str::to_string),
-                    label: e.attr("aria-label")
+                    label: e
+                        .attr("aria-label")
                         .or_else(|| e.attr("placeholder"))
                         .map(str::to_string),
                     input_type: e.attr("type").map(str::to_string),
@@ -518,12 +612,10 @@ fn collect_form_controls(doc: &Document, id: NodeId, controls: &mut Vec<FormCont
                     required: e.attr("required").is_some(),
                 });
             }
-            let children: Vec<NodeId> = node.children.clone();
-            for c in children {
-                collect_form_controls(doc, c, controls);
+            for &child in node.children.iter().rev() {
+                stack.push(child);
             }
         }
-        _ => {}
     }
 }
 
@@ -539,7 +631,11 @@ impl fmt::Display for AccessTree {
         if !self.landmarks.is_empty() {
             writeln!(f, "\nLandmarks:")?;
             for (role, name) in &self.landmarks {
-                let label = if name.is_empty() { "(unnamed)".to_string() } else { name.clone() };
+                let label = if name.is_empty() {
+                    "(unnamed)".to_string()
+                } else {
+                    name.clone()
+                };
                 writeln!(f, "  [{role:?}] {label}")?;
             }
         }

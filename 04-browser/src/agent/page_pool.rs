@@ -152,7 +152,10 @@ impl PagePool {
     }
 
     pub fn active_page_count(&self) -> usize {
-        self.pages.values().filter(|e| e.state != PageState::Closed).count()
+        self.pages
+            .values()
+            .filter(|e| e.state != PageState::Closed)
+            .count()
     }
 
     pub fn monitor(&self) -> &ResourceMonitor {

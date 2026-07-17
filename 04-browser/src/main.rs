@@ -1,4 +1,4 @@
-//! agent-browser — Stage 06: Production Readiness
+//! agent-browser — agent-first headless browser with partial browser semantics
 //!
 //! Usage:
 //!   agent-browser serve [--port N] [--max-pages N] [--max-memory MB] [--session-timeout DURATION]
@@ -28,11 +28,11 @@
 //!   AGENT_BROWSER_MAX_MEMORY_MB    Max memory per session in MB (default 512)
 //!   AGENT_BROWSER_SESSION_TIMEOUT  Session idle timeout, e.g. 30m, 1h (default 30m)
 
-mod html;
-mod dom;
-mod net;
-mod js;
 mod agent;
+mod dom;
+mod html;
+mod js;
+mod net;
 
 use std::env;
 use std::fs;
@@ -42,13 +42,13 @@ use std::process;
 use std::sync::Arc;
 use std::time::Duration;
 
-use html::{build_access_tree, parse, tokenize};
+use agent::{Page, ResourceLimits, SessionManager};
 use dom::{build_enhanced_access_tree, query_selector_all};
 use html::dom::DOCUMENT_NODE_ID;
-use net::{CookieJar, HttpClient, Url};
-use js::engine::{JsEngine, QuickJsEngine};
+use html::{build_access_tree, parse, tokenize};
 use js::cdp::CdpServer;
-use agent::{Page, ResourceLimits, SessionManager};
+use js::engine::{JsEngine, QuickJsEngine};
+use net::{CookieJar, HttpClient, Url};
 
 #[tokio::main]
 async fn main() {
@@ -98,10 +98,10 @@ async fn run_agent(args: &[String], prog: &str) {
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
-            "--extract-links"   => do_links = true,
-            "--extract-tables"  => do_tables = true,
-            "--extract-text"    => do_text = true,
-            "--metadata"        => do_metadata = true,
+            "--extract-links" => do_links = true,
+            "--extract-tables" => do_tables = true,
+            "--extract-text" => do_text = true,
+            "--metadata" => do_metadata = true,
             "--query" => {
                 i += 1;
                 query_sel = args.get(i).map(|s| s.as_str());
@@ -112,7 +112,7 @@ async fn run_agent(args: &[String], prog: &str) {
             }
             "--type" => {
                 i += 1;
-                type_sel  = args.get(i).map(|s| s.as_str());
+                type_sel = args.get(i).map(|s| s.as_str());
                 i += 1;
                 type_text = args.get(i).map(|s| s.as_str());
             }
@@ -140,10 +140,18 @@ async fn run_agent(args: &[String], prog: &str) {
         let m = page.extract_metadata();
         println!("Title:       {}", m.title);
         println!("URL:         {}", page.url().unwrap_or("(none)"));
-        if let Some(d) = &m.description { println!("Description: {d}"); }
-        if let Some(t) = &m.og_title   { println!("og:title:    {t}"); }
-        if let Some(d) = &m.og_description { println!("og:desc:     {d}"); }
-        if let Some(u) = &m.canonical_url  { println!("Canonical:   {u}"); }
+        if let Some(d) = &m.description {
+            println!("Description: {d}");
+        }
+        if let Some(t) = &m.og_title {
+            println!("og:title:    {t}");
+        }
+        if let Some(d) = &m.og_description {
+            println!("og:desc:     {d}");
+        }
+        if let Some(u) = &m.canonical_url {
+            println!("Canonical:   {u}");
+        }
         println!();
     }
 
@@ -182,7 +190,7 @@ async fn run_agent(args: &[String], prog: &str) {
         let elements = page.query_all(sel);
         println!("{} element(s) for {sel:?}:", elements.len());
         for el in &elements {
-            let tag  = el.tag_name().unwrap_or_else(|| "?".to_string());
+            let tag = el.tag_name().unwrap_or_else(|| "?".to_string());
             let text: String = el.text_content().trim().chars().take(60).collect();
             println!("  <{tag}> {:?}", text);
         }
@@ -194,7 +202,7 @@ async fn run_agent(args: &[String], prog: &str) {
         use agent::Action;
         match page.execute(Action::Click(sel.to_string())) {
             Ok(msg) => println!("{msg}"),
-            Err(e)  => eprintln!("click error: {e}"),
+            Err(e) => eprintln!("click error: {e}"),
         }
     }
 
@@ -203,7 +211,7 @@ async fn run_agent(args: &[String], prog: &str) {
         use agent::Action;
         match page.execute(Action::Type(sel.to_string(), text.to_string())) {
             Ok(msg) => println!("{msg}"),
-            Err(e)  => eprintln!("type error: {e}"),
+            Err(e) => eprintln!("type error: {e}"),
         }
     }
 
@@ -220,7 +228,7 @@ async fn run_agent(args: &[String], prog: &str) {
     }
 }
 
-// ─── Stage 06: Production serve mode ─────────────────────────────────────────
+// ─── Session-aware serve mode ────────────────────────────────────────────────
 
 async fn run_serve(args: &[String]) {
     // Defaults (lowest priority)
@@ -231,16 +239,24 @@ async fn run_serve(args: &[String]) {
 
     // Environment variable overrides
     if let Ok(v) = std::env::var("AGENT_BROWSER_PORT") {
-        if let Ok(p) = v.parse() { port = p; }
+        if let Ok(p) = v.parse() {
+            port = p;
+        }
     }
     if let Ok(v) = std::env::var("AGENT_BROWSER_MAX_PAGES") {
-        if let Ok(n) = v.parse() { max_pages = n; }
+        if let Ok(n) = v.parse() {
+            max_pages = n;
+        }
     }
     if let Ok(v) = std::env::var("AGENT_BROWSER_MAX_MEMORY_MB") {
-        if let Ok(n) = v.parse() { max_memory_mb = n; }
+        if let Ok(n) = v.parse() {
+            max_memory_mb = n;
+        }
     }
     if let Ok(v) = std::env::var("AGENT_BROWSER_SESSION_TIMEOUT") {
-        if let Some(d) = parse_duration_arg(&v) { session_timeout = d; }
+        if let Some(d) = parse_duration_arg(&v) {
+            session_timeout = d;
+        }
     }
 
     // CLI argument overrides (highest priority)
@@ -361,9 +377,8 @@ async fn run_health_server(port: u16, session_manager: Arc<tokio::sync::Mutex<Se
                 let pages = sm.total_active_pages();
                 drop(sm);
 
-                let body = format!(
-                    r#"{{"status":"ok","sessions":{sessions},"total_pages":{pages}}}"#
-                );
+                let body =
+                    format!(r#"{{"status":"ok","sessions":{sessions},"total_pages":{pages}}}"#);
                 let response = format!(
                     "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
                     body.len(),
@@ -387,7 +402,9 @@ async fn shutdown_signal() {
     }
     #[cfg(not(unix))]
     {
-        tokio::signal::ctrl_c().await.expect("Ctrl-C handler failed");
+        tokio::signal::ctrl_c()
+            .await
+            .expect("Ctrl-C handler failed");
     }
 }
 
@@ -433,7 +450,10 @@ async fn run_cdp(args: &[String]) {
     });
 
     println!("CDP server listening on {}", server.debugger_url());
-    println!("Connect with: playwright chromium.connectOverCDP(\"{}\")", server.debugger_url());
+    println!(
+        "Connect with: playwright chromium.connectOverCDP(\"{}\")",
+        server.debugger_url()
+    );
     server.run().await;
 }
 
@@ -462,7 +482,8 @@ fn run_eval(args: &[String], prog: &str) {
 }
 
 fn run_inspect(args: &[String]) {
-    let port: u16 = args.iter()
+    let port: u16 = args
+        .iter()
         .position(|a| a == "--port" || a == "-p")
         .and_then(|i| args.get(i + 1))
         .and_then(|p| p.parse().ok())
@@ -507,14 +528,25 @@ async fn run_fetch(args: &[String], prog: &str) {
         process::exit(1);
     });
 
-    println!("Status:       {} {}", response.status, status_text(response.status));
+    println!(
+        "Status:       {} {}",
+        response.status,
+        status_text(response.status)
+    );
     println!("URL:          {}", response.final_url);
     println!("Redirects:    {}", response.redirect_count);
     println!("Body length:  {} bytes", response.body.len());
     println!("Content-Type: {:?}", response.content_type);
     println!();
 
-    let interesting_headers = ["content-type", "content-length", "server", "date", "cache-control", "etag"];
+    let interesting_headers = [
+        "content-type",
+        "content-length",
+        "server",
+        "date",
+        "cache-control",
+        "etag",
+    ];
     for h in &interesting_headers {
         if let Some(v) = response.header(h) {
             println!("  {h}: {v}");
@@ -687,18 +719,32 @@ fn read_file_input(file: Option<&str>) -> String {
 
 fn status_text(code: u16) -> &'static str {
     match code {
-        200 => "OK", 201 => "Created", 204 => "No Content",
-        301 => "Moved Permanently", 302 => "Found", 303 => "See Other",
-        304 => "Not Modified", 307 => "Temporary Redirect", 308 => "Permanent Redirect",
-        400 => "Bad Request", 401 => "Unauthorized", 403 => "Forbidden",
-        404 => "Not Found", 405 => "Method Not Allowed", 429 => "Too Many Requests",
-        500 => "Internal Server Error", 502 => "Bad Gateway", 503 => "Service Unavailable",
+        200 => "OK",
+        201 => "Created",
+        204 => "No Content",
+        301 => "Moved Permanently",
+        302 => "Found",
+        303 => "See Other",
+        304 => "Not Modified",
+        307 => "Temporary Redirect",
+        308 => "Permanent Redirect",
+        400 => "Bad Request",
+        401 => "Unauthorized",
+        403 => "Forbidden",
+        404 => "Not Found",
+        405 => "Method Not Allowed",
+        429 => "Too Many Requests",
+        500 => "Internal Server Error",
+        502 => "Bad Gateway",
+        503 => "Service Unavailable",
         _ => "",
     }
 }
 
 fn print_help(prog: &str) {
-    println!("agent-browser — Stage 06: Production Readiness");
+    println!("agent-browser — agent-first headless browser");
+    println!("partial browser semantics: fetch/parse/query runtime, not a rendering engine");
+    println!("security note: JS eval is time-bounded, but browser-grade CSP/origin enforcement is still partial");
     println!();
     println!("USAGE:");
     println!("  {prog} serve [--port N] [--max-pages N] [--max-memory MB] [--session-timeout D]");
@@ -711,7 +757,9 @@ fn print_help(prog: &str) {
     println!("  {prog} select \"SELECTOR\" [FILE]         Query DOM with CSS selector");
     println!("  {prog} tokens [FILE]                    Show raw token stream");
     println!("  {prog} cdp [--port N]                       Start CDP server (default port 9222)");
-    println!("  {prog} eval SCRIPT                          Evaluate JS expression and print result");
+    println!(
+        "  {prog} eval SCRIPT                          Evaluate JS expression and print result"
+    );
     println!("  {prog} inspect [--port N]                   Print CDP endpoint URL");
     println!("  {prog} agent <URL> --extract-links          Extract all links");
     println!("  {prog} agent <URL> --extract-tables         Extract all tables");

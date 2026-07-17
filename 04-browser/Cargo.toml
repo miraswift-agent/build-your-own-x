@@ -2,7 +2,7 @@
 name = "agent-browser"
 version = "0.6.0"
 edition = "2021"
-description = "An agent-first headless browser — Stage 06: Production Readiness"
+description = "An agent-first headless browser with partial browser semantics"
 
 [[bin]]
 name = "agent-browser"

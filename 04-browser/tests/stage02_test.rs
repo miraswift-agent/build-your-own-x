@@ -1,11 +1,11 @@
 //! Stage 02 tests: DOM Tree, selector matching, mutation observers, enhanced accessibility.
 
-use agent_browser::html::{parse, ElementCategory, ElementData, NodeData, SemanticRole};
-use agent_browser::html::dom::{Attribute, MutationKind, DOCUMENT_NODE_ID};
 use agent_browser::dom::{
     build_enhanced_access_tree, is_focusable_element, query_selector, query_selector_all,
     InteractiveKind, MutationInit, MutationObserver,
 };
+use agent_browser::html::dom::{Attribute, MutationKind, DOCUMENT_NODE_ID};
+use agent_browser::html::{parse, ElementCategory, ElementData, NodeData, SemanticRole};
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -20,9 +20,7 @@ fn make_element(tag: &str) -> NodeData {
 }
 
 fn make_element_with_attrs(tag: &str, attrs: &[(&str, &str)]) -> NodeData {
-    let attr_list: Vec<Attribute> = attrs.iter()
-        .map(|(k, v)| Attribute::new(*k, *v))
-        .collect();
+    let attr_list: Vec<Attribute> = attrs.iter().map(|(k, v)| Attribute::new(*k, *v)).collect();
     let (category, role) = agent_browser::html::dom::classify_element(tag, &attr_list);
     NodeData::Element(ElementData {
         tag_name: tag.to_string(),
@@ -139,7 +137,8 @@ fn test_select_attr_suffix() {
 
 #[test]
 fn test_select_attr_substring() {
-    let doc = parse(r#"<div data-component="nav-bar">X</div><div data-component="sidebar">Y</div>"#);
+    let doc =
+        parse(r#"<div data-component="nav-bar">X</div><div data-component="sidebar">Y</div>"#);
     let results = query_selector_all(&doc, DOCUMENT_NODE_ID, "[data-component*=nav]").unwrap();
     assert_eq!(results.len(), 1);
 }
@@ -295,7 +294,7 @@ fn test_dom_navigation() {
     let doc = parse("<div><p>A</p><span>B</span><em>C</em></div>");
     let div = doc.find_element("div").unwrap();
     let first = doc.first_child_of(div).unwrap();
-    let last  = doc.last_child_of(div).unwrap();
+    let last = doc.last_child_of(div).unwrap();
     assert_ne!(first, last);
     // Navigate next sibling from first child
     let next = doc.next_sibling_of(first);
@@ -351,7 +350,10 @@ fn test_dom_outer_html() {
     let p = doc.find_element("p").unwrap();
     let outer = doc.outer_html(p);
     assert!(outer.starts_with("<p"), "outer_html should start with <p");
-    assert!(outer.contains("note"), "outer_html should contain class attribute");
+    assert!(
+        outer.contains("note"),
+        "outer_html should contain class attribute"
+    );
     assert!(outer.contains("Hello"), "outer_html should contain text");
     assert!(outer.ends_with("</p>"), "outer_html should end with </p>");
 }
@@ -369,7 +371,7 @@ fn test_dom_insert_child() {
 fn test_dom_remove_node() {
     let mut doc = parse("<div><p>Remove me</p><span>Keep me</span></div>");
     let div = doc.find_element("div").unwrap();
-    let p   = doc.find_element("p").unwrap();
+    let p = doc.find_element("p").unwrap();
     doc.remove_node(p);
     assert!(!doc.children_of(div).contains(&p));
     assert!(!doc.text_content(div).contains("Remove me"));
@@ -378,13 +380,16 @@ fn test_dom_remove_node() {
 #[test]
 fn test_dom_insert_before() {
     let mut doc = parse("<div><span>Second</span></div>");
-    let div  = doc.find_element("div").unwrap();
+    let div = doc.find_element("div").unwrap();
     let span = doc.find_element("span").unwrap();
-    let new  = doc.insert_node_before(div, span, NodeData::Text("First".to_string()));
+    let new = doc.insert_node_before(div, span, NodeData::Text("First".to_string()));
     let children = doc.children_of(div).to_vec();
-    let new_pos  = children.iter().position(|&c| c == new).unwrap();
+    let new_pos = children.iter().position(|&c| c == new).unwrap();
     let span_pos = children.iter().position(|&c| c == span).unwrap();
-    assert!(new_pos < span_pos, "inserted node should come before ref node");
+    assert!(
+        new_pos < span_pos,
+        "inserted node should come before ref node"
+    );
 }
 
 #[test]
@@ -418,7 +423,7 @@ fn test_mutation_child_list_append() {
 fn test_mutation_child_list_remove() {
     let mut doc = parse("<div><p>Hello</p></div>");
     let div = doc.find_element("div").unwrap();
-    let p   = doc.find_element("p").unwrap();
+    let p = doc.find_element("p").unwrap();
 
     let observer = MutationObserver::new(div, MutationInit::child_list());
 
@@ -452,11 +457,14 @@ fn test_mutation_attribute_filter() {
     let div = doc.find_element("div").unwrap();
 
     // Only watch 'id' changes
-    let observer = MutationObserver::new(div, MutationInit {
-        attributes: true,
-        attribute_filter: vec!["id".to_string()],
-        ..Default::default()
-    });
+    let observer = MutationObserver::new(
+        div,
+        MutationInit {
+            attributes: true,
+            attribute_filter: vec!["id".to_string()],
+            ..Default::default()
+        },
+    );
 
     doc.set_attribute(div, "class", "new"); // not watched
     doc.set_attribute(div, "id", "container"); // watched
@@ -470,13 +478,16 @@ fn test_mutation_attribute_filter() {
 fn test_mutation_subtree() {
     let mut doc = parse("<div><p></p></div>");
     let div = doc.find_element("div").unwrap();
-    let p   = doc.find_element("p").unwrap();
+    let p = doc.find_element("p").unwrap();
 
-    let observer = MutationObserver::new(div, MutationInit {
-        child_list: true,
-        subtree: true,
-        ..Default::default()
-    });
+    let observer = MutationObserver::new(
+        div,
+        MutationInit {
+            child_list: true,
+            subtree: true,
+            ..Default::default()
+        },
+    );
 
     // Mutation on p (descendant of div)
     doc.insert_child(p, NodeData::Text("hello".into()));
@@ -497,7 +508,10 @@ fn test_mutation_disconnect() {
     doc.insert_child(div, NodeData::Text("hello".into()));
 
     let records = observer.take_records(&mut doc);
-    assert!(records.is_empty(), "disconnected observer should get no records");
+    assert!(
+        records.is_empty(),
+        "disconnected observer should get no records"
+    );
 }
 
 #[test]
@@ -520,17 +534,22 @@ fn test_mutation_take_records_drains() {
 #[test]
 fn test_mutation_character_data() {
     let mut doc = parse("<p>Old text</p>");
-    let p       = doc.find_element("p").unwrap();
+    let p = doc.find_element("p").unwrap();
     // Find the text node child
-    let text_node = doc.children_of(p).iter()
+    let text_node = doc
+        .children_of(p)
+        .iter()
         .find(|&&c| doc.nodes[c].is_text())
         .copied()
         .expect("p should have a text node");
 
-    let observer = MutationObserver::new(text_node, MutationInit {
-        character_data: true,
-        ..Default::default()
-    });
+    let observer = MutationObserver::new(
+        text_node,
+        MutationInit {
+            character_data: true,
+            ..Default::default()
+        },
+    );
 
     doc.set_text_content(text_node, "New text".to_string());
 
@@ -546,10 +565,16 @@ fn test_mutation_character_data() {
 fn test_access_interactive_link() {
     let doc = parse(r#"<a href="/home">Home</a><a>No href</a>"#);
     let tree = build_enhanced_access_tree(&doc);
-    let links: Vec<_> = tree.interactive.iter()
+    let links: Vec<_> = tree
+        .interactive
+        .iter()
         .filter(|e| e.kind == InteractiveKind::Link)
         .collect();
-    assert_eq!(links.len(), 1, "only <a> with href should be interactive link");
+    assert_eq!(
+        links.len(),
+        1,
+        "only <a> with href should be interactive link"
+    );
     assert_eq!(links[0].name, "Home");
 }
 
@@ -557,7 +582,9 @@ fn test_access_interactive_link() {
 fn test_access_interactive_button() {
     let doc = parse(r#"<button>Click me</button>"#);
     let tree = build_enhanced_access_tree(&doc);
-    let buttons: Vec<_> = tree.interactive.iter()
+    let buttons: Vec<_> = tree
+        .interactive
+        .iter()
         .filter(|e| e.kind == InteractiveKind::Button)
         .collect();
     assert_eq!(buttons.len(), 1);
@@ -566,7 +593,8 @@ fn test_access_interactive_button() {
 
 #[test]
 fn test_access_interactive_input_types() {
-    let doc = parse(r#"
+    let doc = parse(
+        r#"
         <form>
             <input type="text" placeholder="Name">
             <input type="password" placeholder="Pass">
@@ -576,7 +604,8 @@ fn test_access_interactive_input_types() {
             <input type="submit" value="Submit">
             <input type="hidden" name="token">
         </form>
-    "#);
+    "#,
+    );
     let tree = build_enhanced_access_tree(&doc);
     let kinds: Vec<&InteractiveKind> = tree.interactive.iter().map(|e| &e.kind).collect();
     assert!(kinds.contains(&&InteractiveKind::TextInput));
@@ -586,54 +615,92 @@ fn test_access_interactive_input_types() {
     assert!(kinds.contains(&&InteractiveKind::Radio));
     assert!(kinds.contains(&&InteractiveKind::Submit));
     // hidden inputs should NOT be interactive
-    assert!(!kinds.iter().any(|k| matches!(k, InteractiveKind::Other(s) if s.contains("hidden"))));
+    assert!(!kinds
+        .iter()
+        .any(|k| matches!(k, InteractiveKind::Other(s) if s.contains("hidden"))));
 }
 
 #[test]
 fn test_access_focusable_detection() {
-    let doc = parse(r#"
+    let doc = parse(
+        r#"
         <a href="/foo">Link</a>
         <button>Btn</button>
         <input type="text">
         <div>Not focusable</div>
-    "#);
-    let a   = doc.find_element("a").unwrap();
+    "#,
+    );
+    let a = doc.find_element("a").unwrap();
     let btn = doc.find_element("button").unwrap();
     let inp = doc.find_element("input").unwrap();
     let div = doc.find_element("div").unwrap();
-    assert!( is_focusable_element(&doc, a),   "<a href> should be focusable");
-    assert!( is_focusable_element(&doc, btn), "<button> should be focusable");
-    assert!( is_focusable_element(&doc, inp), "<input> should be focusable");
-    assert!(!is_focusable_element(&doc, div), "<div> should not be focusable");
+    assert!(
+        is_focusable_element(&doc, a),
+        "<a href> should be focusable"
+    );
+    assert!(
+        is_focusable_element(&doc, btn),
+        "<button> should be focusable"
+    );
+    assert!(
+        is_focusable_element(&doc, inp),
+        "<input> should be focusable"
+    );
+    assert!(
+        !is_focusable_element(&doc, div),
+        "<div> should not be focusable"
+    );
 }
 
 #[test]
 fn test_access_aria_label() {
     let doc = parse(r#"<button aria-label="Close dialog">X</button>"#);
     let tree = build_enhanced_access_tree(&doc);
-    let btn = tree.interactive.iter().find(|e| e.kind == InteractiveKind::Button).unwrap();
-    assert_eq!(btn.name, "Close dialog", "aria-label should override text content");
+    let btn = tree
+        .interactive
+        .iter()
+        .find(|e| e.kind == InteractiveKind::Button)
+        .unwrap();
+    assert_eq!(
+        btn.name, "Close dialog",
+        "aria-label should override text content"
+    );
 }
 
 #[test]
 fn test_access_aria_labelledby() {
-    let doc = parse(r#"
+    let doc = parse(
+        r#"
         <label id="lbl">Your name</label>
         <input type="text" aria-labelledby="lbl">
-    "#);
+    "#,
+    );
     let tree = build_enhanced_access_tree(&doc);
-    let input = tree.interactive.iter().find(|e| e.kind == InteractiveKind::TextInput).unwrap();
-    assert_eq!(input.name, "Your name", "aria-labelledby should resolve to label text");
+    let input = tree
+        .interactive
+        .iter()
+        .find(|e| e.kind == InteractiveKind::TextInput)
+        .unwrap();
+    assert_eq!(
+        input.name, "Your name",
+        "aria-labelledby should resolve to label text"
+    );
 }
 
 #[test]
 fn test_access_label_for() {
-    let doc = parse(r#"
+    let doc = parse(
+        r#"
         <label for="name">Full Name</label>
         <input id="name" type="text">
-    "#);
+    "#,
+    );
     let tree = build_enhanced_access_tree(&doc);
-    let input = tree.interactive.iter().find(|e| e.kind == InteractiveKind::TextInput).unwrap();
+    let input = tree
+        .interactive
+        .iter()
+        .find(|e| e.kind == InteractiveKind::TextInput)
+        .unwrap();
     assert_eq!(input.name, "Full Name", "label[for] should name the input");
 }
 
@@ -641,7 +708,11 @@ fn test_access_label_for() {
 fn test_access_disabled_element() {
     let doc = parse(r#"<button disabled>Can't click</button>"#);
     let tree = build_enhanced_access_tree(&doc);
-    let btn = tree.interactive.iter().find(|e| e.kind == InteractiveKind::Button).unwrap();
+    let btn = tree
+        .interactive
+        .iter()
+        .find(|e| e.kind == InteractiveKind::Button)
+        .unwrap();
     assert!(btn.is_disabled, "disabled button should be marked");
     assert!(!btn.is_focusable, "disabled button should not be focusable");
 }
@@ -683,13 +754,17 @@ fn test_integration_parse_query_observe() {
     let mut doc = parse(html);
 
     // Selector queries
-    let h1 = query_selector(&doc, DOCUMENT_NODE_ID, "h1").unwrap().unwrap();
+    let h1 = query_selector(&doc, DOCUMENT_NODE_ID, "h1")
+        .unwrap()
+        .unwrap();
     assert_eq!(doc.text_content(h1).trim(), "Welcome");
 
     let links = query_selector_all(&doc, DOCUMENT_NODE_ID, "nav a[href]").unwrap();
     assert_eq!(links.len(), 2);
 
-    let lead = query_selector(&doc, DOCUMENT_NODE_ID, "p.lead").unwrap().unwrap();
+    let lead = query_selector(&doc, DOCUMENT_NODE_ID, "p.lead")
+        .unwrap()
+        .unwrap();
     assert!(doc.text_content(lead).contains("First"));
 
     let paras = query_selector_all(&doc, DOCUMENT_NODE_ID, "article > p").unwrap();
@@ -697,12 +772,15 @@ fn test_integration_parse_query_observe() {
 
     // DOM mutation + observation
     let main = doc.find_element("main").unwrap();
-    let observer = MutationObserver::new(main, MutationInit {
-        child_list: true,
-        subtree: true,
-        attributes: true,
-        ..Default::default()
-    });
+    let observer = MutationObserver::new(
+        main,
+        MutationInit {
+            child_list: true,
+            subtree: true,
+            attributes: true,
+            ..Default::default()
+        },
+    );
 
     let article = doc.find_element("article").unwrap();
     doc.set_attribute(article, "class", "post featured");
@@ -721,7 +799,10 @@ fn test_integration_parse_query_observe() {
     // Accessibility tree
     let ax = build_enhanced_access_tree(&doc);
     assert!(!ax.base.headings.is_empty(), "should have headings");
-    assert!(!ax.interactive.is_empty(), "should have interactive elements");
+    assert!(
+        !ax.interactive.is_empty(),
+        "should have interactive elements"
+    );
 }
 
 #[test]
@@ -747,12 +828,18 @@ fn test_integration_form_selectors() {
 
     // Accessibility
     let ax = build_enhanced_access_tree(&doc);
-    let text_input = ax.interactive.iter().find(|e| e.kind == InteractiveKind::TextInput);
+    let text_input = ax
+        .interactive
+        .iter()
+        .find(|e| e.kind == InteractiveKind::TextInput);
     assert!(text_input.is_some());
     // Should be named via label[for]
     assert_eq!(text_input.unwrap().name, "Username");
 
-    let pw = ax.interactive.iter().find(|e| e.kind == InteractiveKind::PasswordInput);
+    let pw = ax
+        .interactive
+        .iter()
+        .find(|e| e.kind == InteractiveKind::PasswordInput);
     assert!(pw.is_some());
     assert_eq!(pw.unwrap().name, "Password");
 }

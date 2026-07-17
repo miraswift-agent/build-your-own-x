@@ -4,8 +4,8 @@ use std::collections::VecDeque;
 
 use serde_json::{json, Value};
 
-use crate::html::dom::{Document, NodeData, NodeId, DOCUMENT_NODE_ID};
 use crate::dom::query_selector_all;
+use crate::html::dom::{Document, NodeData, NodeId, DOCUMENT_NODE_ID};
 
 use super::page::Page;
 
@@ -41,8 +41,7 @@ impl Page {
     /// Each row is a `Vec<String>` of cell text values.
     pub fn extract_table(&self, selector: &str) -> Vec<Vec<String>> {
         let doc = self.doc.lock().unwrap();
-        let table_ids =
-            query_selector_all(&doc, DOCUMENT_NODE_ID, selector).unwrap_or_default();
+        let table_ids = query_selector_all(&doc, DOCUMENT_NODE_ID, selector).unwrap_or_default();
         let mut out = Vec::new();
         for table_id in table_ids {
             extract_rows_from_table(&doc, table_id, &mut out);
@@ -70,7 +69,11 @@ impl Page {
                     _ => (None, "get".to_string()),
                 };
                 let inputs = collect_inputs(&doc, form_id);
-                FormInfo { action, method, inputs }
+                FormInfo {
+                    action,
+                    method,
+                    inputs,
+                }
             })
             .collect()
     }
@@ -109,8 +112,7 @@ impl Page {
         });
 
         if schema == "tables" || schema.is_empty() || schema == "full" {
-            let table_ids =
-                query_selector_all(&doc, DOCUMENT_NODE_ID, "table").unwrap_or_default();
+            let table_ids = query_selector_all(&doc, DOCUMENT_NODE_ID, "table").unwrap_or_default();
             let tables: Vec<Value> = table_ids
                 .into_iter()
                 .map(|tid| {
@@ -153,9 +155,9 @@ fn extract_metadata_from_doc(doc: &Document) -> PageMetadata {
             }
             if let Some(prop) = e.attr("property") {
                 match prop.to_lowercase().as_str() {
-                    "og:title"       => og_title = e.attr("content").map(str::to_string),
+                    "og:title" => og_title = e.attr("content").map(str::to_string),
                     "og:description" => og_description = e.attr("content").map(str::to_string),
-                    "og:image"       => og_image = e.attr("content").map(str::to_string),
+                    "og:image" => og_image = e.attr("content").map(str::to_string),
                     _ => {}
                 }
             }
@@ -164,13 +166,23 @@ fn extract_metadata_from_doc(doc: &Document) -> PageMetadata {
 
     for link_id in doc.find_all_elements("link") {
         if let NodeData::Element(e) = &doc.nodes[link_id].data {
-            if e.attr("rel").map(|r| r.eq_ignore_ascii_case("canonical")).unwrap_or(false) {
+            if e.attr("rel")
+                .map(|r| r.eq_ignore_ascii_case("canonical"))
+                .unwrap_or(false)
+            {
                 canonical_url = e.attr("href").map(str::to_string);
             }
         }
     }
 
-    PageMetadata { title, description, og_title, og_description, og_image, canonical_url }
+    PageMetadata {
+        title,
+        description,
+        og_title,
+        og_description,
+        og_image,
+        canonical_url,
+    }
 }
 
 /// Extract `(text, href)` links starting from `root`.
@@ -274,44 +286,43 @@ fn collect_inputs(doc: &Document, form_id: NodeId) -> Vec<InputInfo> {
     inputs
 }
 
-/// Recursively collect visible text, skipping `<script>`, `<style>`,
-/// `hidden` attribute, and inline `display:none` / `visibility:hidden`.
+/// Collect visible text, skipping `<script>`, `<style>`, `hidden`, and
+/// inline `display:none` / `visibility:hidden`, without recursive descent.
 fn collect_text(doc: &Document, node_id: NodeId, out: &mut String) {
-    let node = &doc.nodes[node_id];
-    match &node.data {
-        NodeData::Text(t) => {
-            let trimmed = t.trim();
-            if !trimmed.is_empty() {
-                if !out.is_empty() && !out.ends_with('\n') {
-                    out.push(' ');
-                }
-                out.push_str(trimmed);
-            }
-        }
-        NodeData::Element(e) => {
-            // Skip non-content elements.
-            if matches!(e.tag_name.as_str(), "script" | "style" | "noscript") {
-                return;
-            }
-            // Skip hidden elements.
-            if e.attr("hidden").is_some() {
-                return;
-            }
-            if let Some(style) = e.attr("style") {
-                let s = style.to_lowercase().replace(' ', "");
-                if s.contains("display:none") || s.contains("visibility:hidden") {
-                    return;
+    let mut stack = vec![node_id];
+    while let Some(id) = stack.pop() {
+        let node = &doc.nodes[id];
+        match &node.data {
+            NodeData::Text(t) => {
+                let trimmed = t.trim();
+                if !trimmed.is_empty() {
+                    if !out.is_empty() && !out.ends_with('\n') {
+                        out.push(' ');
+                    }
+                    out.push_str(trimmed);
                 }
             }
-            let children: Vec<NodeId> = node.children.clone();
-            for child in children {
-                collect_text(doc, child, out);
+            NodeData::Element(e) => {
+                if matches!(e.tag_name.as_str(), "script" | "style" | "noscript") {
+                    continue;
+                }
+                if e.attr("hidden").is_some() {
+                    continue;
+                }
+                if let Some(style) = e.attr("style") {
+                    let s = style.to_lowercase().replace(' ', "");
+                    if s.contains("display:none") || s.contains("visibility:hidden") {
+                        continue;
+                    }
+                }
+                for &child in node.children.iter().rev() {
+                    stack.push(child);
+                }
             }
-        }
-        _ => {
-            let children: Vec<NodeId> = node.children.clone();
-            for child in children {
-                collect_text(doc, child, out);
+            _ => {
+                for &child in node.children.iter().rev() {
+                    stack.push(child);
+                }
             }
         }
     }

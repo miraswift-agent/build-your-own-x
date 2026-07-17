@@ -2,8 +2,8 @@
 
 use std::sync::{Arc, Mutex};
 
-use crate::html::dom::{Document, NodeData, NodeId, DOCUMENT_NODE_ID};
 use crate::dom::{query_selector, query_selector_all};
+use crate::html::dom::{Document, NodeData, NodeId, DOCUMENT_NODE_ID};
 
 pub struct Element {
     pub node_id: NodeId,

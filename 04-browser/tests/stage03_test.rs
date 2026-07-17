@@ -1,9 +1,9 @@
 //! Stage 03: Network & Protocol tests
 
-use agent_browser::net::{CookieJar, HttpClient, Url};
 use agent_browser::net::cookies::parse_set_cookie;
 use agent_browser::net::http::detect_content_type;
 use agent_browser::net::http::ContentType;
+use agent_browser::net::{CookieJar, HttpClient, Url};
 
 // ============================================================
 // URL Tests
@@ -104,7 +104,10 @@ fn cookie_parse_with_attrs() {
     assert_eq!(cookie.path, Some("/api".to_string()));
     assert!(cookie.secure);
     assert!(cookie.http_only);
-    assert_eq!(cookie.same_site, agent_browser::net::cookies::SameSite::Strict);
+    assert_eq!(
+        cookie.same_site,
+        agent_browser::net::cookies::SameSite::Strict
+    );
 }
 
 #[test]
@@ -125,6 +128,18 @@ fn cookie_parse_domain() {
     let cookie = parse_set_cookie("id=1; Domain=example.com", "www.example.com", "/").unwrap();
     assert_eq!(cookie.domain, Some("example.com".to_string()));
     assert!(!cookie.host_only);
+}
+
+#[test]
+fn cookie_parse_rejects_cross_site_domain_injection() {
+    let cookie = parse_set_cookie("id=1; Domain=bank.com", "attacker.com", "/");
+    assert!(cookie.is_none());
+}
+
+#[test]
+fn cookie_parse_rejects_obvious_supercookies() {
+    assert!(parse_set_cookie("id=1; Domain=com", "example.com", "/").is_none());
+    assert!(parse_set_cookie("id=1; Domain=co.uk", "shop.co.uk", "/").is_none());
 }
 
 #[test]
@@ -233,11 +248,20 @@ fn cookie_header_format() {
 #[test]
 fn content_type_detection() {
     assert_eq!(detect_content_type("text/html"), ContentType::Html);
-    assert_eq!(detect_content_type("text/html; charset=utf-8"), ContentType::Html);
+    assert_eq!(
+        detect_content_type("text/html; charset=utf-8"),
+        ContentType::Html
+    );
     assert_eq!(detect_content_type("application/json"), ContentType::Json);
     assert_eq!(detect_content_type("text/css"), ContentType::Css);
-    assert_eq!(detect_content_type("application/javascript"), ContentType::JavaScript);
-    assert_eq!(detect_content_type("text/javascript"), ContentType::JavaScript);
+    assert_eq!(
+        detect_content_type("application/javascript"),
+        ContentType::JavaScript
+    );
+    assert_eq!(
+        detect_content_type("text/javascript"),
+        ContentType::JavaScript
+    );
     assert_eq!(detect_content_type("text/plain"), ContentType::Text);
     assert_eq!(detect_content_type("image/png"), ContentType::Binary);
     assert_eq!(detect_content_type(""), ContentType::Binary);
@@ -270,7 +294,10 @@ async fn integration_fetch_https_certificate_verification() {
     let mut jar = CookieJar::new();
     let url = Url::parse("https://www.iana.org/domains/reserved").unwrap();
 
-    let response = client.get(&url, &mut jar).await.expect("HTTPS fetch failed");
+    let response = client
+        .get(&url, &mut jar)
+        .await
+        .expect("HTTPS fetch failed");
     assert_eq!(response.status, 200);
     assert_eq!(response.content_type, ContentType::Html);
     assert!(response.body_as_str().contains("IANA") || response.body_as_str().contains("html"));
@@ -278,20 +305,53 @@ async fn integration_fetch_https_certificate_verification() {
 
 #[tokio::test]
 async fn integration_redirect_following() {
-    // httpbin.org/redirect/1 always issues a redirect to /get
+    // Local redirect server — no flaky external dependency (httpbin 503s).
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("local_addr");
+    let port = addr.port();
+
+    let server = tokio::spawn(async move {
+        // First connection: 302 to /final
+        let (mut sock, _) = listener.accept().await.expect("accept redirect");
+        let mut buf = [0u8; 1024];
+        let _ = sock.read(&mut buf).await;
+        let resp = format!(
+            "HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:{port}/final\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        );
+        sock.write_all(resp.as_bytes()).await.expect("write 302");
+        drop(sock);
+
+        // Second connection: 200 body
+        let (mut sock, _) = listener.accept().await.expect("accept final");
+        let mut buf = [0u8; 1024];
+        let _ = sock.read(&mut buf).await;
+        let body = b"redirect-ok";
+        let resp = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        );
+        sock.write_all(resp.as_bytes()).await.expect("write 200");
+        sock.write_all(body).await.expect("write body");
+    });
+
+    // Give the server a moment; client follows the redirect itself.
     let client = HttpClient::with_defaults();
     let mut jar = CookieJar::new();
-    let url = Url::parse("https://httpbin.org/redirect/1").unwrap();
+    let url = Url::parse(&format!("http://127.0.0.1:{port}/start")).unwrap();
 
     let response = client.get(&url, &mut jar).await.expect("fetch failed");
     assert_eq!(response.status, 200);
-    // Should have followed redirect — final URL is /get
+    assert_eq!(response.final_url.path(), "/final");
     assert!(
-        response.final_url.path().contains("get"),
-        "expected redirect to /get, got: {}",
-        response.final_url
+        response.redirect_count > 0,
+        "expected at least one redirect"
     );
-    assert!(response.redirect_count > 0, "expected at least one redirect");
+    assert_eq!(response.body_as_str(), "redirect-ok");
+
+    server.await.expect("server task");
 }
 
 #[tokio::test]
@@ -315,10 +375,7 @@ async fn integration_fetch_and_parse_dom() {
     assert!(!h1s.is_empty(), "expected at least one h1 on example.com");
 
     let h1_text = doc.text_content(h1s[0]).trim().to_string();
-    assert!(
-        h1_text.contains("Example Domain"),
-        "h1 text was: {h1_text}"
-    );
+    assert!(h1_text.contains("Example Domain"), "h1 text was: {h1_text}");
 }
 
 #[test]

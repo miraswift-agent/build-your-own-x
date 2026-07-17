@@ -15,13 +15,11 @@
 use std::collections::HashMap;
 use std::fmt;
 
-use crate::html::dom::{Document, NodeData, NodeId, SemanticRole, DOCUMENT_NODE_ID};
 use crate::html::access::{build_access_tree, AccessTree};
+use crate::html::dom::{Document, NodeData, NodeId, SemanticRole, DOCUMENT_NODE_ID};
 
 // Re-export base types so callers only need `dom::access`.
-pub use crate::html::access::{
-    AXNode, AXRole, FormControl, FormSummary, LandmarkRole,
-};
+pub use crate::html::access::{AXNode, AXRole, FormControl, FormSummary, LandmarkRole};
 
 // ─── Interactive element kinds ────────────────────────────────────────────────
 
@@ -49,21 +47,21 @@ pub enum InteractiveKind {
 impl InteractiveKind {
     pub fn as_str(&self) -> &str {
         match self {
-            Self::Link          => "link",
-            Self::Button        => "button",
-            Self::TextInput     => "text-input",
+            Self::Link => "link",
+            Self::Button => "button",
+            Self::TextInput => "text-input",
             Self::PasswordInput => "password-input",
-            Self::NumberInput   => "number-input",
-            Self::EmailInput    => "email-input",
-            Self::SearchInput   => "search-input",
-            Self::Checkbox      => "checkbox",
-            Self::Radio         => "radio",
-            Self::Select        => "select",
-            Self::Textarea      => "textarea",
-            Self::Submit        => "submit",
-            Self::Reset         => "reset",
-            Self::FileInput     => "file-input",
-            Self::Other(s)      => s.as_str(),
+            Self::NumberInput => "number-input",
+            Self::EmailInput => "email-input",
+            Self::SearchInput => "search-input",
+            Self::Checkbox => "checkbox",
+            Self::Radio => "radio",
+            Self::Select => "select",
+            Self::Textarea => "textarea",
+            Self::Submit => "submit",
+            Self::Reset => "reset",
+            Self::FileInput => "file-input",
+            Self::Other(s) => s.as_str(),
         }
     }
 }
@@ -101,25 +99,36 @@ pub struct EnhancedAccessTree {
 
 impl EnhancedAccessTree {
     /// Headings shortcut.
-    pub fn headings(&self) -> &[(u8, String)] { &self.base.headings }
+    pub fn headings(&self) -> &[(u8, String)] {
+        &self.base.headings
+    }
     /// Links shortcut.
-    pub fn links(&self) -> &[(String, String)] { &self.base.links }
+    pub fn links(&self) -> &[(String, String)] {
+        &self.base.links
+    }
     /// Forms shortcut.
-    pub fn forms(&self) -> &[FormSummary] { &self.base.forms }
+    pub fn forms(&self) -> &[FormSummary] {
+        &self.base.forms
+    }
 }
 
 /// Build an enhanced accessibility tree from a parsed `Document`.
 pub fn build_enhanced_access_tree(doc: &Document) -> EnhancedAccessTree {
-    let base    = build_access_tree(doc);
-    let id_map  = build_id_map(doc);
+    let base = build_access_tree(doc);
+    let id_map = build_id_map(doc);
     let interactive = collect_interactive(doc, &id_map);
-    EnhancedAccessTree { base, interactive, id_map }
+    EnhancedAccessTree {
+        base,
+        interactive,
+        id_map,
+    }
 }
 
 // ─── ID map ───────────────────────────────────────────────────────────────────
 
 pub fn build_id_map(doc: &Document) -> HashMap<String, NodeId> {
-    doc.nodes.iter()
+    doc.nodes
+        .iter()
         .enumerate()
         .filter_map(|(id, node)| {
             node.element_data()
@@ -131,7 +140,10 @@ pub fn build_id_map(doc: &Document) -> HashMap<String, NodeId> {
 
 // ─── Interactive element detection ───────────────────────────────────────────
 
-fn collect_interactive(doc: &Document, id_map: &HashMap<String, NodeId>) -> Vec<InteractiveElement> {
+fn collect_interactive(
+    doc: &Document,
+    id_map: &HashMap<String, NodeId>,
+) -> Vec<InteractiveElement> {
     let mut result = vec![];
     let mut queue = std::collections::VecDeque::new();
     queue.push_back(DOCUMENT_NODE_ID);
@@ -158,54 +170,68 @@ fn detect_interactive(
         "button" => InteractiveKind::Button,
         "select" => InteractiveKind::Select,
         "textarea" => InteractiveKind::Textarea,
-        "input" => {
-            match e.attr("type").unwrap_or("text").to_lowercase().as_str() {
-                "text"           => InteractiveKind::TextInput,
-                "email"          => InteractiveKind::EmailInput,
-                "password"       => InteractiveKind::PasswordInput,
-                "number"         => InteractiveKind::NumberInput,
-                "search"         => InteractiveKind::SearchInput,
-                "tel" | "url" | "date" | "time" | "datetime-local"
-                | "month" | "week" | "color" => InteractiveKind::TextInput,
-                "checkbox"       => InteractiveKind::Checkbox,
-                "radio"          => InteractiveKind::Radio,
-                "submit"         => InteractiveKind::Submit,
-                "reset"          => InteractiveKind::Reset,
-                "button" | "image" => InteractiveKind::Button,
-                "file"           => InteractiveKind::FileInput,
-                "hidden"         => return None,
-                other            => InteractiveKind::Other(format!("input[{other}]")),
+        "input" => match e.attr("type").unwrap_or("text").to_lowercase().as_str() {
+            "text" => InteractiveKind::TextInput,
+            "email" => InteractiveKind::EmailInput,
+            "password" => InteractiveKind::PasswordInput,
+            "number" => InteractiveKind::NumberInput,
+            "search" => InteractiveKind::SearchInput,
+            "tel" | "url" | "date" | "time" | "datetime-local" | "month" | "week" | "color" => {
+                InteractiveKind::TextInput
             }
-        }
+            "checkbox" => InteractiveKind::Checkbox,
+            "radio" => InteractiveKind::Radio,
+            "submit" => InteractiveKind::Submit,
+            "reset" => InteractiveKind::Reset,
+            "button" | "image" => InteractiveKind::Button,
+            "file" => InteractiveKind::FileInput,
+            "hidden" => return None,
+            other => InteractiveKind::Other(format!("input[{other}]")),
+        },
         _ => {
             // ARIA role overrides
             let role = e.attr("role").or_else(|| e.attr("aria-role"))?;
             match role {
-                "button"             => InteractiveKind::Button,
-                "link"               => InteractiveKind::Link,
-                "checkbox"           => InteractiveKind::Checkbox,
-                "radio"              => InteractiveKind::Radio,
-                "textbox"            => InteractiveKind::TextInput,
+                "button" => InteractiveKind::Button,
+                "link" => InteractiveKind::Link,
+                "checkbox" => InteractiveKind::Checkbox,
+                "radio" => InteractiveKind::Radio,
+                "textbox" => InteractiveKind::TextInput,
                 "combobox" | "listbox" => InteractiveKind::Select,
-                _                    => return None,
+                _ => return None,
             }
         }
     };
 
     let name = compute_accessible_name(doc, id, id_map);
     let value = match e.tag_name.as_str() {
-        "a"    => e.attr("href").map(str::to_string),
-        "input" => e.attr("value")
+        "a" => e.attr("href").map(str::to_string),
+        "input" => e
+            .attr("value")
             .or_else(|| e.attr("placeholder"))
             .map(str::to_string),
         _ => None,
     };
-    let is_disabled  = e.attr("disabled").is_some()
-        || e.attr("aria-disabled").map(|v| v == "true").unwrap_or(false);
+    let is_disabled = e.attr("disabled").is_some()
+        || e.attr("aria-disabled")
+            .map(|v| v == "true")
+            .unwrap_or(false);
     let is_focusable = is_focusable_element(doc, id);
-    let attributes   = e.attrs.iter().map(|a| (a.name.clone(), a.value.clone())).collect();
+    let attributes = e
+        .attrs
+        .iter()
+        .map(|a| (a.name.clone(), a.value.clone()))
+        .collect();
 
-    Some(InteractiveElement { node_id: id, kind, name, value, is_focusable, is_disabled, attributes })
+    Some(InteractiveElement {
+        node_id: id,
+        kind,
+        name,
+        value,
+        is_focusable,
+        is_disabled,
+        attributes,
+    })
 }
 
 // ─── Accessible name computation ─────────────────────────────────────────────
@@ -222,23 +248,31 @@ pub fn compute_accessible_name(
     id: NodeId,
     id_map: &HashMap<String, NodeId>,
 ) -> String {
-    let e = match doc.nodes[id].element_data() { Some(e) => e, None => return String::new() };
+    let e = match doc.nodes[id].element_data() {
+        Some(e) => e,
+        None => return String::new(),
+    };
 
     // 1. aria-labelledby — join text of referenced elements
     if let Some(refs) = e.attr("aria-labelledby") {
-        let name: String = refs.split_whitespace()
+        let name: String = refs
+            .split_whitespace()
             .filter_map(|ref_id| id_map.get(ref_id))
             .map(|&nid| doc.text_content(nid).trim().to_string())
             .filter(|s| !s.is_empty())
             .collect::<Vec<_>>()
             .join(" ");
-        if !name.is_empty() { return name; }
+        if !name.is_empty() {
+            return name;
+        }
     }
 
     // 2. aria-label
     if let Some(label) = e.attr("aria-label") {
         let s = label.trim().to_string();
-        if !s.is_empty() { return s; }
+        if !s.is_empty() {
+            return s;
+        }
     }
 
     // 3. Native sources
@@ -251,20 +285,26 @@ pub fn compute_accessible_name(
             if matches!(t, "submit" | "button" | "reset") {
                 if let Some(v) = e.attr("value") {
                     let s = v.trim().to_string();
-                    if !s.is_empty() { return s; }
+                    if !s.is_empty() {
+                        return s;
+                    }
                 }
             }
             // Label lookup via for="id"
             if let Some(elem_id) = e.attr("id") {
                 if let Some(label_text) = find_label_for(doc, elem_id) {
-                    if !label_text.is_empty() { return label_text; }
+                    if !label_text.is_empty() {
+                        return label_text;
+                    }
                 }
             }
             return e.attr("placeholder").unwrap_or("").trim().to_string();
         }
         "a" | "button" => {
             let text = doc.text_content(id).trim().to_string();
-            if !text.is_empty() { return text; }
+            if !text.is_empty() {
+                return text;
+            }
         }
         _ => {}
     }
@@ -277,7 +317,9 @@ pub fn compute_accessible_name(
     // 4. title
     if let Some(t) = e.attr("title") {
         let s = t.trim().to_string();
-        if !s.is_empty() { return s; }
+        if !s.is_empty() {
+            return s;
+        }
     }
 
     String::new()
@@ -302,7 +344,10 @@ fn find_label_for(doc: &Document, target_id: &str) -> Option<String> {
 
 /// Returns `true` if the element can receive keyboard focus.
 pub fn is_focusable_element(doc: &Document, id: NodeId) -> bool {
-    let e = match doc.nodes[id].element_data() { Some(e) => e, None => return false };
+    let e = match doc.nodes[id].element_data() {
+        Some(e) => e,
+        None => return false,
+    };
 
     // Explicit tabindex
     if let Some(tab) = e.attr("tabindex") {
@@ -311,11 +356,10 @@ pub fn is_focusable_element(doc: &Document, id: NodeId) -> bool {
 
     // Naturally focusable (not disabled, right type)
     match e.tag_name.as_str() {
-        "a"        => e.attr("href").is_some(),
+        "a" => e.attr("href").is_some(),
         "button" | "select" | "textarea" => e.attr("disabled").is_none(),
-        "input"    => {
-            e.attr("disabled").is_none()
-                && e.attr("type").map(|t| t != "hidden").unwrap_or(true)
+        "input" => {
+            e.attr("disabled").is_none() && e.attr("type").map(|t| t != "hidden").unwrap_or(true)
         }
         "details" | "summary" => true,
         _ => false,
@@ -334,13 +378,16 @@ pub fn compute_accessible_description(
 
     // aria-describedby
     if let Some(refs) = e.attr("aria-describedby") {
-        let desc: String = refs.split_whitespace()
+        let desc: String = refs
+            .split_whitespace()
             .filter_map(|ref_id| id_map.get(ref_id))
             .map(|&nid| doc.text_content(nid).trim().to_string())
             .filter(|s| !s.is_empty())
             .collect::<Vec<_>>()
             .join(" ");
-        if !desc.is_empty() { return Some(desc); }
+        if !desc.is_empty() {
+            return Some(desc);
+        }
     }
 
     // title (if not already used as name)
@@ -356,9 +403,17 @@ impl fmt::Display for EnhancedAccessTree {
         if !self.interactive.is_empty() {
             writeln!(f, "\nInteractive Elements:")?;
             for elem in &self.interactive {
-                let name = if elem.name.is_empty() { "(unnamed)" } else { &elem.name };
-                let dis  = if elem.is_disabled { " [disabled]" } else { "" };
-                let foc  = if elem.is_focusable { " (focusable)" } else { "" };
+                let name = if elem.name.is_empty() {
+                    "(unnamed)"
+                } else {
+                    &elem.name
+                };
+                let dis = if elem.is_disabled { " [disabled]" } else { "" };
+                let foc = if elem.is_focusable {
+                    " (focusable)"
+                } else {
+                    ""
+                };
                 writeln!(f, "  [{}] {}{}{}", elem.kind.as_str(), name, dis, foc)?;
                 if let Some(v) = &elem.value {
                     writeln!(f, "    value={v}")?;

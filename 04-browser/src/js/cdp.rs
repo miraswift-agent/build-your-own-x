@@ -53,14 +53,21 @@ pub struct CdpMsg {
 impl CdpMsg {
     fn ok(id: i64, result: Json) -> Self {
         Self {
-            id: Some(id), method: None, params: None,
-            result: Some(result), error: None, session_id: None,
+            id: Some(id),
+            method: None,
+            params: None,
+            result: Some(result),
+            error: None,
+            session_id: None,
         }
     }
 
     fn err(id: i64, code: i32, message: &str) -> Self {
         Self {
-            id: Some(id), method: None, params: None, result: None,
+            id: Some(id),
+            method: None,
+            params: None,
+            result: None,
             error: Some(json!({ "code": code, "message": message })),
             session_id: None,
         }
@@ -68,8 +75,12 @@ impl CdpMsg {
 
     fn event(method: &str, params: Json) -> Self {
         Self {
-            id: None, method: Some(method.into()), params: Some(params),
-            result: None, error: None, session_id: None,
+            id: None,
+            method: Some(method.into()),
+            params: Some(params),
+            result: None,
+            error: None,
+            session_id: None,
         }
     }
 
@@ -85,9 +96,11 @@ impl CdpMsg {
 
 // ─── Browser state ────────────────────────────────────────────────────────────
 
+type SharedJsContext = Arc<Mutex<Box<dyn JsContext + Send>>>;
+
 struct PageTarget {
     info: TargetInfo,
-    context: Box<dyn JsContext + Send>,
+    context: SharedJsContext,
     runtime_enabled: bool,
     console_enabled: bool,
     page_enabled: bool,
@@ -103,15 +116,20 @@ struct BrowserState {
 
 impl BrowserState {
     fn new(port: u16) -> Self {
-        Self { targets: HashMap::new(), sessions: HashMap::new(), port }
+        Self {
+            targets: HashMap::new(),
+            sessions: HashMap::new(),
+            port,
+        }
     }
 
     fn create_target(&mut self, url: &str) -> String {
         let target_id = uuid::Uuid::new_v4().to_string();
-        let context: Box<dyn JsContext + Send> =
+        let context: SharedJsContext = Arc::new(Mutex::new(
             QuickJsEngine::new().create_context().unwrap_or_else(|_| {
                 Box::new(QuickJsContext::new(ContextId::next(), WorldType::Main).unwrap())
-            });
+            }),
+        ));
 
         self.targets.insert(
             target_id.clone(),
@@ -140,7 +158,8 @@ impl BrowserState {
         if let Some(t) = self.targets.get_mut(target_id) {
             t.info.attached = true;
         }
-        self.sessions.insert(session_id.clone(), target_id.to_string());
+        self.sessions
+            .insert(session_id.clone(), target_id.to_string());
         Some(session_id)
     }
 
@@ -262,9 +281,7 @@ impl BrowserState {
                     "jsVersion": "QuickJS"
                 }),
             ),
-            "Target.setDiscoverTargets" | "Target.setAutoAttach" => {
-                CdpMsg::ok(id, json!({}))
-            }
+            "Target.setDiscoverTargets" | "Target.setAutoAttach" => CdpMsg::ok(id, json!({})),
             unknown => CdpMsg::err(id, -32601, &format!("Method not found: {unknown}")),
         };
 
@@ -282,35 +299,125 @@ fn handle_session_message(
     let mut out = Vec::new();
 
     let resp = match method {
-        "Runtime.enable" => { target.runtime_enabled = true; CdpMsg::ok(id, json!({})) }
-        "Runtime.disable" => { target.runtime_enabled = false; CdpMsg::ok(id, json!({})) }
+        "Runtime.enable" => {
+            target.runtime_enabled = true;
+            CdpMsg::ok(id, json!({}))
+        }
+        "Runtime.disable" => {
+            target.runtime_enabled = false;
+            CdpMsg::ok(id, json!({}))
+        }
 
-        "Runtime.evaluate" => {
-            let expression = params
-                .and_then(|p| p.get("expression")).and_then(|v| v.as_str()).unwrap_or("");
-            let return_by_value = params
-                .and_then(|p| p.get("returnByValue")).and_then(|v| v.as_bool()).unwrap_or(false);
+        "Runtime.evaluate" | "Runtime.callFunctionOn" => CdpMsg::err(
+            id,
+            -32603,
+            "Runtime evaluation must be dispatched outside the browser-state lock",
+        ),
 
-            match target.context.eval(expression) {
-                Ok(val) => {
-                    let remote = js_value_to_remote_object(&val, return_by_value);
-                    for log in target.context.take_console_logs() {
-                        if target.console_enabled {
-                            out.push(CdpMsg::event("Console.messageAdded", json!({
-                                "message": {
-                                    "source": "console-api",
-                                    "level": log.level.as_str(),
-                                    "text": log.message,
-                                    "url": log.url,
-                                    "line": log.line,
-                                    "column": log.column
-                                }
-                            })));
-                        }
-                    }
-                    CdpMsg::ok(id, json!({ "result": remote }))
+        "Runtime.getProperties" => CdpMsg::ok(id, json!({ "result": [] })),
+
+        "Console.enable" => {
+            target.console_enabled = true;
+            CdpMsg::ok(id, json!({}))
+        }
+        "Console.disable" => {
+            target.console_enabled = false;
+            CdpMsg::ok(id, json!({}))
+        }
+
+        "Page.enable" => {
+            target.page_enabled = true;
+            CdpMsg::ok(id, json!({}))
+        }
+        "Page.disable" => {
+            target.page_enabled = false;
+            CdpMsg::ok(id, json!({}))
+        }
+
+        "Page.navigate" => {
+            let url = params
+                .and_then(|p| p.get("url"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("about:blank");
+            let frame_id = uuid::Uuid::new_v4().to_string();
+            target.info.url = url.to_string();
+            target.info.title = url.to_string();
+            if target.page_enabled {
+                out.push(CdpMsg::event(
+                    "Page.frameNavigated",
+                    json!({
+                        "frame": {
+                            "id": frame_id, "url": url,
+                            "securityOrigin": url, "mimeType": "text/html"
+                        },
+                        "type": "Navigation"
+                    }),
+                ));
+            }
+            CdpMsg::ok(
+                id,
+                json!({ "frameId": frame_id, "loaderId": uuid::Uuid::new_v4().to_string() }),
+            )
+        }
+
+        "Network.enable" => {
+            target.network_enabled = true;
+            CdpMsg::ok(id, json!({}))
+        }
+        "Network.disable" => {
+            target.network_enabled = false;
+            CdpMsg::ok(id, json!({}))
+        }
+
+        unknown => CdpMsg::err(id, -32601, &format!("Method not found: {unknown}")),
+    };
+
+    out.push(resp);
+    out
+}
+
+fn evaluate_target_context(
+    context: &SharedJsContext,
+    expression: &str,
+    return_by_value: bool,
+    console_enabled: bool,
+    id: i64,
+) -> Vec<CdpMsg> {
+    let mut out = Vec::new();
+    let mut guard = match context.lock() {
+        Ok(guard) => guard,
+        Err(_) => {
+            out.push(CdpMsg::err(id, -32603, "JavaScript context lock poisoned"));
+            return out;
+        }
+    };
+
+    match guard.eval(expression) {
+        Ok(val) => {
+            let remote = js_value_to_remote_object(&val, return_by_value);
+            for log in guard.take_console_logs() {
+                if console_enabled {
+                    out.push(CdpMsg::event(
+                        "Console.messageAdded",
+                        json!({
+                            "message": {
+                                "source": "console-api",
+                                "level": log.level.as_str(),
+                                "text": log.message,
+                                "url": log.url,
+                                "line": log.line,
+                                "column": log.column
+                            }
+                        }),
+                    ));
                 }
-                Err(e) => CdpMsg::ok(id, json!({
+            }
+            out.push(CdpMsg::ok(id, json!({ "result": remote })));
+        }
+        Err(e) => {
+            out.push(CdpMsg::ok(
+                id,
+                json!({
                     "result": { "type": "undefined" },
                     "exceptionDetails": {
                         "exceptionId": 1,
@@ -323,58 +430,77 @@ fn handle_session_message(
                             "description": e.message
                         }
                     }
-                })),
-            }
+                }),
+            ));
         }
+    }
 
-        "Runtime.callFunctionOn" => {
-            let func_decl = params
-                .and_then(|p| p.get("functionDeclaration")).and_then(|v| v.as_str())
-                .unwrap_or("function(){}");
-            let script = format!("({func_decl})()");
-            match target.context.eval(&script) {
-                Ok(val) => CdpMsg::ok(id, json!({ "result": js_value_to_remote_object(&val, false) })),
-                Err(e) => CdpMsg::ok(id, json!({
-                    "result": { "type": "undefined" },
-                    "exceptionDetails": { "text": e.message }
-                })),
+    out
+}
+
+fn dispatch_runtime_message(state: &Arc<Mutex<BrowserState>>, msg: &CdpMsg) -> Vec<CdpMsg> {
+    let id = msg.id.unwrap_or(0);
+    let method = msg.method.as_deref().unwrap_or("");
+    let params = msg.params.as_ref();
+    let session_id = msg.session_id.as_deref();
+
+    let (context, console_enabled, sid) = {
+        let mut guard = match state.lock() {
+            Ok(guard) => guard,
+            Err(_) => return vec![CdpMsg::err(id, -32603, "Browser state lock poisoned")],
+        };
+
+        let sid = match session_id {
+            Some(sid) => sid.to_string(),
+            None => return guard.handle(msg),
+        };
+        let target_id = match guard.sessions.get(&sid).cloned() {
+            Some(target_id) => target_id,
+            None => {
+                return vec![CdpMsg::err(id, -32001, "Session not found").with_session(Some(&sid))]
             }
-        }
-
-        "Runtime.getProperties" => CdpMsg::ok(id, json!({ "result": [] })),
-
-        "Console.enable" => { target.console_enabled = true; CdpMsg::ok(id, json!({})) }
-        "Console.disable" => { target.console_enabled = false; CdpMsg::ok(id, json!({})) }
-
-        "Page.enable" => { target.page_enabled = true; CdpMsg::ok(id, json!({})) }
-        "Page.disable" => { target.page_enabled = false; CdpMsg::ok(id, json!({})) }
-
-        "Page.navigate" => {
-            let url = params
-                .and_then(|p| p.get("url")).and_then(|v| v.as_str()).unwrap_or("about:blank");
-            let frame_id = uuid::Uuid::new_v4().to_string();
-            target.info.url = url.to_string();
-            target.info.title = url.to_string();
-            if target.page_enabled {
-                out.push(CdpMsg::event("Page.frameNavigated", json!({
-                    "frame": {
-                        "id": frame_id, "url": url,
-                        "securityOrigin": url, "mimeType": "text/html"
-                    },
-                    "type": "Navigation"
-                })));
+        };
+        let target = match guard.targets.get_mut(&target_id) {
+            Some(target) => target,
+            None => {
+                return vec![CdpMsg::err(id, -32001, "Target not found").with_session(Some(&sid))]
             }
-            CdpMsg::ok(id, json!({ "frameId": frame_id, "loaderId": uuid::Uuid::new_v4().to_string() }))
-        }
-
-        "Network.enable" => { target.network_enabled = true; CdpMsg::ok(id, json!({})) }
-        "Network.disable" => { target.network_enabled = false; CdpMsg::ok(id, json!({})) }
-
-        unknown => CdpMsg::err(id, -32601, &format!("Method not found: {unknown}")),
+        };
+        (Arc::clone(&target.context), target.console_enabled, sid)
     };
 
-    out.push(resp);
-    out
+    let mut responses = match method {
+        "Runtime.evaluate" => {
+            let expression = params
+                .and_then(|p| p.get("expression"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let return_by_value = params
+                .and_then(|p| p.get("returnByValue"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            evaluate_target_context(&context, expression, return_by_value, console_enabled, id)
+        }
+        "Runtime.callFunctionOn" => {
+            let func_decl = params
+                .and_then(|p| p.get("functionDeclaration"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("function(){}");
+            let script = format!("({func_decl})()");
+            evaluate_target_context(&context, &script, false, console_enabled, id)
+        }
+        _ => match state.lock() {
+            Ok(mut guard) => guard.handle(msg),
+            Err(_) => vec![CdpMsg::err(id, -32603, "Browser state lock poisoned")],
+        },
+    };
+
+    for response in &mut responses {
+        if response.session_id.is_none() {
+            response.session_id = Some(sid.clone());
+        }
+    }
+    responses
 }
 
 fn js_value_to_remote_object(val: &JsValue, return_by_value: bool) -> Json {
@@ -384,8 +510,14 @@ fn js_value_to_remote_object(val: &JsValue, return_by_value: bool) -> Json {
         obj.insert("subtype".into(), Json::String(sub.into()));
     }
     if return_by_value
-        || matches!(val, JsValue::Bool(_) | JsValue::Number(_) | JsValue::String(_)
-                       | JsValue::Null | JsValue::Undefined)
+        || matches!(
+            val,
+            JsValue::Bool(_)
+                | JsValue::Number(_)
+                | JsValue::String(_)
+                | JsValue::Null
+                | JsValue::Undefined
+        )
     {
         obj.insert("value".into(), val.to_json());
     }
@@ -422,8 +554,12 @@ async fn read_headers(stream: &mut TcpStream) -> Vec<u8> {
             Ok(0) | Err(_) => break,
             Ok(_) => {
                 buf.push(one[0]);
-                if buf.ends_with(b"\r\n\r\n") { break; }
-                if buf.len() > 8192 { break; }
+                if buf.ends_with(b"\r\n\r\n") {
+                    break;
+                }
+                if buf.len() > 8192 {
+                    break;
+                }
             }
         }
     }
@@ -449,17 +585,19 @@ async fn handle_http(mut stream: TcpStream, headers: &str, state: Arc<Mutex<Brow
     let port = state.lock().map(|s| s.port).unwrap_or(9222);
 
     let body = match path {
-        "/json/version" | "/json/version/" => {
-            json!({
-                "Browser": "agent-browser/0.4.0",
-                "Protocol-Version": "1.3",
-                "webSocketDebuggerUrl": format!("ws://127.0.0.1:{port}"),
-                "V8-Version": "QuickJS"
-            }).to_string()
-        }
+        "/json/version" | "/json/version/" => json!({
+            "Browser": "agent-browser/0.4.0",
+            "Protocol-Version": "1.3",
+            "webSocketDebuggerUrl": format!("ws://127.0.0.1:{port}"),
+            "V8-Version": "QuickJS"
+        })
+        .to_string(),
         "/json" | "/json/" | "/json/list" | "/json/list/" => {
-            let targets: Vec<Json> = state.lock().map(|s| {
-                s.target_info_list().into_iter().map(|t| {
+            let targets: Vec<Json> =
+                state
+                    .lock()
+                    .map(|s| {
+                        s.target_info_list().into_iter().map(|t| {
                     json!({
                         "id": t.target_id,
                         "title": t.title,
@@ -469,13 +607,17 @@ async fn handle_http(mut stream: TcpStream, headers: &str, state: Arc<Mutex<Brow
                             format!("ws://127.0.0.1:{port}/devtools/page/{}", t.target_id)
                     })
                 }).collect()
-            }).unwrap_or_default();
+                    })
+                    .unwrap_or_default();
             serde_json::to_string(&targets).unwrap_or_default()
         }
         _ => json!([]).to_string(),
     };
 
-    stream.write_all(http_json_response(&body).as_bytes()).await.ok();
+    stream
+        .write_all(http_json_response(&body).as_bytes())
+        .await
+        .ok();
 }
 
 async fn handle_websocket<S>(stream: S, state: Arc<Mutex<BrowserState>>)
@@ -491,7 +633,9 @@ where
 
     tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
-            if ws_tx.send(Message::Text(msg.into())).await.is_err() { break; }
+            if ws_tx.send(Message::Text(msg.into())).await.is_err() {
+                break;
+            }
         }
     });
 
@@ -505,8 +649,10 @@ where
             Ok(m) => m,
             Err(_) => continue,
         };
-        let responses = state.lock().map(|mut s| s.handle(&cdp_msg)).unwrap_or_default();
-        for r in responses { tx.send(r.to_text()).ok(); }
+        let responses = dispatch_runtime_message(&state, &cdp_msg);
+        for r in responses {
+            tx.send(r.to_text()).ok();
+        }
     }
 }
 
@@ -522,7 +668,10 @@ impl Unpin for PeekedStream {}
 
 impl PeekedStream {
     fn new(inner: TcpStream, peeked: Vec<u8>) -> Self {
-        Self { peeked: std::io::Cursor::new(peeked), inner }
+        Self {
+            peeked: std::io::Cursor::new(peeked),
+            inner,
+        }
     }
 }
 
@@ -581,23 +730,39 @@ impl CdpServer {
         let port = listener.local_addr().map(|a| a.port()).unwrap_or(9222);
         let mut state = BrowserState::new(port);
         state.create_target("about:blank");
-        Ok(Self { state: Arc::new(Mutex::new(state)), listener, port })
+        Ok(Self {
+            state: Arc::new(Mutex::new(state)),
+            listener,
+            port,
+        })
     }
 
     pub fn create_target(&self, url: &str) -> String {
-        self.state.lock().map(|mut s| s.create_target(url)).unwrap_or_default()
+        self.state
+            .lock()
+            .map(|mut s| s.create_target(url))
+            .unwrap_or_default()
     }
 
     pub fn attach(&self, target_id: &str) -> Option<String> {
-        self.state.lock().ok().and_then(|mut s| s.attach_session(target_id))
+        self.state
+            .lock()
+            .ok()
+            .and_then(|mut s| s.attach_session(target_id))
     }
 
     pub fn detach(&self, session_id: &str) -> bool {
-        self.state.lock().map(|mut s| s.detach_session(session_id)).unwrap_or(false)
+        self.state
+            .lock()
+            .map(|mut s| s.detach_session(session_id))
+            .unwrap_or(false)
     }
 
     pub fn targets(&self) -> Vec<TargetInfo> {
-        self.state.lock().map(|s| s.target_info_list()).unwrap_or_default()
+        self.state
+            .lock()
+            .map(|s| s.target_info_list())
+            .unwrap_or_default()
     }
 
     pub fn evaluate_in_session(
@@ -605,10 +770,13 @@ impl CdpServer {
         session_id: &str,
         expression: &str,
     ) -> Option<Result<JsValue, JsError>> {
-        let mut guard = self.state.lock().ok()?;
-        let target_id = guard.sessions.get(session_id)?.clone();
-        let target = guard.targets.get_mut(&target_id)?;
-        Some(target.context.eval(expression))
+        let context = {
+            let guard = self.state.lock().ok()?;
+            let target_id = guard.sessions.get(session_id)?.clone();
+            Arc::clone(&guard.targets.get(&target_id)?.context)
+        };
+        let mut ctx = context.lock().ok()?;
+        Some(ctx.eval(expression))
     }
 
     pub fn evaluate_in_target(
@@ -616,9 +784,12 @@ impl CdpServer {
         target_id: &str,
         expression: &str,
     ) -> Option<Result<JsValue, JsError>> {
-        let mut guard = self.state.lock().ok()?;
-        let target = guard.targets.get_mut(target_id)?;
-        Some(target.context.eval(expression))
+        let context = {
+            let guard = self.state.lock().ok()?;
+            Arc::clone(&guard.targets.get(target_id)?.context)
+        };
+        let mut ctx = context.lock().ok()?;
+        Some(ctx.eval(expression))
     }
 
     pub fn debugger_url(&self) -> String {

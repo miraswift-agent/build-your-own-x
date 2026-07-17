@@ -11,20 +11,20 @@
 //!   `:nth-last-child(n)`, `:not(...)`, `:empty`, `:root`
 //! - Selector lists: `,`
 
-use std::collections::VecDeque;
 use crate::html::dom::{Document, NodeData, NodeId, DOCUMENT_NODE_ID};
+use std::collections::VecDeque;
 
 // ─── Selector AST ─────────────────────────────────────────────────────────────
 
 /// Attribute matching operator.
 #[derive(Debug, Clone, PartialEq)]
 pub enum AttrOp {
-    Exact,      // [attr=val]
-    Includes,   // [attr~=val]  — space-separated word match
-    DashMatch,  // [attr|=val]  — val or val-…
-    Prefix,     // [attr^=val]
-    Suffix,     // [attr$=val]
-    Substring,  // [attr*=val]
+    Exact,     // [attr=val]
+    Includes,  // [attr~=val]  — space-separated word match
+    DashMatch, // [attr|=val]  — val or val-…
+    Prefix,    // [attr^=val]
+    Suffix,    // [attr$=val]
+    Substring, // [attr*=val]
 }
 
 /// An attribute selector with optional operator/value.
@@ -72,10 +72,10 @@ pub enum SimpleSelector {
 /// Combinator between compound selectors.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Combinator {
-    Descendant,       // ' '  (whitespace)
-    Child,            // >
-    AdjacentSibling,  // +
-    GeneralSibling,   // ~
+    Descendant,      // ' '  (whitespace)
+    Child,           // >
+    AdjacentSibling, // +
+    GeneralSibling,  // ~
 }
 
 /// A compound selector: multiple simple selectors on the same element.
@@ -115,25 +115,39 @@ struct Parser<'a> {
 
 impl<'a> Parser<'a> {
     fn new(input: &'a str) -> Self {
-        Parser { bytes: input.as_bytes(), pos: 0 }
+        Parser {
+            bytes: input.as_bytes(),
+            pos: 0,
+        }
     }
 
-    fn eof(&self) -> bool { self.pos >= self.bytes.len() }
+    fn eof(&self) -> bool {
+        self.pos >= self.bytes.len()
+    }
 
-    fn peek(&self) -> Option<u8> { self.bytes.get(self.pos).copied() }
+    fn peek(&self) -> Option<u8> {
+        self.bytes.get(self.pos).copied()
+    }
 
     fn next(&mut self) -> Option<u8> {
         let ch = self.bytes.get(self.pos).copied();
-        if ch.is_some() { self.pos += 1; }
+        if ch.is_some() {
+            self.pos += 1;
+        }
         ch
     }
 
     fn expect(&mut self, ch: u8) -> Result<(), SelectorError> {
         match self.peek() {
-            Some(c) if c == ch => { self.pos += 1; Ok(()) }
+            Some(c) if c == ch => {
+                self.pos += 1;
+                Ok(())
+            }
             got => Err(SelectorError(format!(
                 "expected '{}', got {:?} at pos {}",
-                ch as char, got.map(|c| c as char), self.pos
+                ch as char,
+                got.map(|c| c as char),
+                self.pos
             ))),
         }
     }
@@ -148,19 +162,31 @@ impl<'a> Parser<'a> {
     fn parse_ident(&mut self) -> Result<String, SelectorError> {
         let start = self.pos;
         // Allow leading '-'
-        if self.peek() == Some(b'-') { self.pos += 1; }
+        if self.peek() == Some(b'-') {
+            self.pos += 1;
+        }
         match self.peek() {
-            Some(c) if c.is_ascii_alphabetic() || c == b'_' => { self.pos += 1; }
+            Some(c) if c.is_ascii_alphabetic() || c == b'_' => {
+                self.pos += 1;
+            }
             _ => {
                 self.pos = start;
-                return Err(SelectorError(format!("expected identifier at pos {}", start)));
+                return Err(SelectorError(format!(
+                    "expected identifier at pos {}",
+                    start
+                )));
             }
         }
         while let Some(c) = self.peek() {
-            if c.is_ascii_alphanumeric() || c == b'_' || c == b'-' { self.pos += 1; }
-            else { break; }
+            if c.is_ascii_alphanumeric() || c == b'_' || c == b'-' {
+                self.pos += 1;
+            } else {
+                break;
+            }
         }
-        let s = std::str::from_utf8(&self.bytes[start..self.pos]).unwrap_or("").to_string();
+        let s = std::str::from_utf8(&self.bytes[start..self.pos])
+            .unwrap_or("")
+            .to_string();
         if s.is_empty() {
             Err(SelectorError(format!("empty identifier at pos {start}")))
         } else {
@@ -190,13 +216,19 @@ impl<'a> Parser<'a> {
                 // Unquoted: consume until ] or whitespace
                 let start = self.pos;
                 while let Some(c) = self.peek() {
-                    if matches!(c, b']' | b' ' | b'\t' | b'\n' | b'\r') { break; }
+                    if matches!(c, b']' | b' ' | b'\t' | b'\n' | b'\r') {
+                        break;
+                    }
                     self.pos += 1;
                 }
                 if self.pos == start {
-                    return Err(SelectorError(format!("empty attribute value at pos {start}")));
+                    return Err(SelectorError(format!(
+                        "empty attribute value at pos {start}"
+                    )));
                 }
-                Ok(std::str::from_utf8(&self.bytes[start..self.pos]).unwrap_or("").to_string())
+                Ok(std::str::from_utf8(&self.bytes[start..self.pos])
+                    .unwrap_or("")
+                    .to_string())
             }
         }
     }
@@ -208,8 +240,8 @@ impl<'a> Parser<'a> {
         if let Ok(ident) = self.parse_ident() {
             match ident.to_lowercase().as_str() {
                 "even" => return Ok(NthArg::Even),
-                "odd"  => return Ok(NthArg::Odd),
-                "n"    => {
+                "odd" => return Ok(NthArg::Odd),
+                "n" => {
                     let b = self.parse_nth_offset()?;
                     return Ok(NthArg::AnPlusB(1, b));
                 }
@@ -220,9 +252,15 @@ impl<'a> Parser<'a> {
 
         // Parse optional sign
         let sign: i32 = match self.peek() {
-            Some(b'-') => { self.pos += 1; -1 }
-            Some(b'+') => { self.pos += 1;  1 }
-            _          => 1,
+            Some(b'-') => {
+                self.pos += 1;
+                -1
+            }
+            Some(b'+') => {
+                self.pos += 1;
+                1
+            }
+            _ => 1,
         };
 
         // Collect digits
@@ -235,8 +273,11 @@ impl<'a> Parser<'a> {
         // Check for 'n'
         if matches!(self.peek(), Some(b'n') | Some(b'N')) {
             self.pos += 1; // consume 'n'
-            let a: i32 = if digits.is_empty() { sign }
-                         else { sign * digits.parse::<i32>().unwrap_or(0) };
+            let a: i32 = if digits.is_empty() {
+                sign
+            } else {
+                sign * digits.parse::<i32>().unwrap_or(0)
+            };
             self.skip_ws();
             let b = self.parse_nth_offset()?;
             Ok(NthArg::AnPlusB(a, b))
@@ -251,9 +292,17 @@ impl<'a> Parser<'a> {
     fn parse_nth_offset(&mut self) -> Result<i32, SelectorError> {
         self.skip_ws();
         let b_sign: i32 = match self.peek() {
-            Some(b'+') => { self.pos += 1; self.skip_ws(); 1  }
-            Some(b'-') => { self.pos += 1; self.skip_ws(); -1 }
-            _          => return Ok(0),
+            Some(b'+') => {
+                self.pos += 1;
+                self.skip_ws();
+                1
+            }
+            Some(b'-') => {
+                self.pos += 1;
+                self.skip_ws();
+                -1
+            }
+            _ => return Ok(0),
         };
         let b_start = self.pos;
         while self.peek().map(|c| c.is_ascii_digit()).unwrap_or(false) {
@@ -273,19 +322,19 @@ impl<'a> Parser<'a> {
         }
         let name = self.parse_ident()?.to_lowercase();
         match name.as_str() {
-            "first-child"     => Ok(PseudoClass::FirstChild),
-            "last-child"      => Ok(PseudoClass::LastChild),
-            "only-child"      => Ok(PseudoClass::OnlyChild),
-            "empty"           => Ok(PseudoClass::Empty),
-            "root"            => Ok(PseudoClass::Root),
-            "nth-child"       => {
+            "first-child" => Ok(PseudoClass::FirstChild),
+            "last-child" => Ok(PseudoClass::LastChild),
+            "only-child" => Ok(PseudoClass::OnlyChild),
+            "empty" => Ok(PseudoClass::Empty),
+            "root" => Ok(PseudoClass::Root),
+            "nth-child" => {
                 self.expect(b'(')?;
                 let arg = self.parse_nth_arg()?;
                 self.skip_ws();
                 self.expect(b')')?;
                 Ok(PseudoClass::NthChild(arg))
             }
-            "nth-last-child"  => {
+            "nth-last-child" => {
                 self.expect(b'(')?;
                 let arg = self.parse_nth_arg()?;
                 self.skip_ws();
@@ -312,36 +361,53 @@ impl<'a> Parser<'a> {
         let op_value = match self.peek() {
             Some(b']') => None,
             Some(b'=') => {
-                self.pos += 1; self.skip_ws();
+                self.pos += 1;
+                self.skip_ws();
                 Some((AttrOp::Exact, self.parse_value()?))
             }
             Some(b'~') => {
-                self.pos += 1; self.expect(b'=')?; self.skip_ws();
+                self.pos += 1;
+                self.expect(b'=')?;
+                self.skip_ws();
                 Some((AttrOp::Includes, self.parse_value()?))
             }
             Some(b'|') => {
-                self.pos += 1; self.expect(b'=')?; self.skip_ws();
+                self.pos += 1;
+                self.expect(b'=')?;
+                self.skip_ws();
                 Some((AttrOp::DashMatch, self.parse_value()?))
             }
             Some(b'^') => {
-                self.pos += 1; self.expect(b'=')?; self.skip_ws();
+                self.pos += 1;
+                self.expect(b'=')?;
+                self.skip_ws();
                 Some((AttrOp::Prefix, self.parse_value()?))
             }
             Some(b'$') => {
-                self.pos += 1; self.expect(b'=')?; self.skip_ws();
+                self.pos += 1;
+                self.expect(b'=')?;
+                self.skip_ws();
                 Some((AttrOp::Suffix, self.parse_value()?))
             }
             Some(b'*') => {
-                self.pos += 1; self.expect(b'=')?; self.skip_ws();
+                self.pos += 1;
+                self.expect(b'=')?;
+                self.skip_ws();
                 Some((AttrOp::Substring, self.parse_value()?))
             }
-            got => return Err(SelectorError(format!(
-                "unexpected '{}' in attribute selector", got.map(|c| c as char).unwrap_or('?')
-            ))),
+            got => {
+                return Err(SelectorError(format!(
+                    "unexpected '{}' in attribute selector",
+                    got.map(|c| c as char).unwrap_or('?')
+                )))
+            }
         };
         self.skip_ws();
         // Optional case-insensitivity flag 'i' or 's'
-        if matches!(self.peek(), Some(b'i') | Some(b'I') | Some(b's') | Some(b'S')) {
+        if matches!(
+            self.peek(),
+            Some(b'i') | Some(b'I') | Some(b's') | Some(b'S')
+        ) {
             self.pos += 1;
             self.skip_ws();
         }
@@ -351,7 +417,10 @@ impl<'a> Parser<'a> {
 
     fn parse_simple(&mut self) -> Result<SimpleSelector, SelectorError> {
         match self.peek() {
-            Some(b'*') => { self.pos += 1; Ok(SimpleSelector::Universal) }
+            Some(b'*') => {
+                self.pos += 1;
+                Ok(SimpleSelector::Universal)
+            }
             Some(b'.') => {
                 self.pos += 1;
                 Ok(SimpleSelector::Class(self.parse_ident()?))
@@ -361,13 +430,18 @@ impl<'a> Parser<'a> {
                 // IDs can contain alphanumeric, underscore, hyphen
                 let start = self.pos;
                 while let Some(c) = self.peek() {
-                    if c.is_ascii_alphanumeric() || c == b'_' || c == b'-' { self.pos += 1; }
-                    else { break; }
+                    if c.is_ascii_alphanumeric() || c == b'_' || c == b'-' {
+                        self.pos += 1;
+                    } else {
+                        break;
+                    }
                 }
                 if self.pos == start {
                     return Err(SelectorError("empty #id selector".into()));
                 }
-                let id = std::str::from_utf8(&self.bytes[start..self.pos]).unwrap_or("").to_string();
+                let id = std::str::from_utf8(&self.bytes[start..self.pos])
+                    .unwrap_or("")
+                    .to_string();
                 Ok(SimpleSelector::Id(id))
             }
             Some(b'[') => Ok(SimpleSelector::Attr(self.parse_attr_selector()?)),
@@ -375,7 +449,10 @@ impl<'a> Parser<'a> {
                 let saved = self.pos;
                 match self.parse_pseudo() {
                     Ok(p) => Ok(SimpleSelector::Pseudo(p)),
-                    Err(e) => { self.pos = saved; Err(e) }
+                    Err(e) => {
+                        self.pos = saved;
+                        Err(e)
+                    }
                 }
             }
             Some(c) if c.is_ascii_alphabetic() || c == b'_' || c == b'-' => {
@@ -383,7 +460,8 @@ impl<'a> Parser<'a> {
             }
             got => Err(SelectorError(format!(
                 "unexpected '{}' in selector at pos {}",
-                got.map(|c| c as char).unwrap_or('?'), self.pos
+                got.map(|c| c as char).unwrap_or('?'),
+                self.pos
             ))),
         }
     }
@@ -394,16 +472,21 @@ impl<'a> Parser<'a> {
         loop {
             // Stop at combinators, commas, closing parens, EOF
             match self.peek() {
-                None | Some(b' ' | b'\t' | b'\n' | b'\r' | b'>' | b'+' | b'~' | b',' | b')') => break,
+                None | Some(b' ' | b'\t' | b'\n' | b'\r' | b'>' | b'+' | b'~' | b',' | b')') => {
+                    break
+                }
                 _ => {}
             }
             match self.parse_simple() {
-                Ok(s)  => parts.push(s),
+                Ok(s) => parts.push(s),
                 Err(_) => break,
             }
         }
         if parts.is_empty() {
-            Err(SelectorError(format!("empty compound selector at pos {}", self.pos)))
+            Err(SelectorError(format!(
+                "empty compound selector at pos {}",
+                self.pos
+            )))
         } else {
             Ok(CompoundSelector(parts))
         }
@@ -417,9 +500,21 @@ impl<'a> Parser<'a> {
             self.pos += 1;
         }
         match self.peek() {
-            Some(b'>') => { self.pos += 1; self.skip_ws(); Some(Combinator::Child) }
-            Some(b'+') => { self.pos += 1; self.skip_ws(); Some(Combinator::AdjacentSibling) }
-            Some(b'~') => { self.pos += 1; self.skip_ws(); Some(Combinator::GeneralSibling) }
+            Some(b'>') => {
+                self.pos += 1;
+                self.skip_ws();
+                Some(Combinator::Child)
+            }
+            Some(b'+') => {
+                self.pos += 1;
+                self.skip_ws();
+                Some(Combinator::AdjacentSibling)
+            }
+            Some(b'~') => {
+                self.pos += 1;
+                self.skip_ws();
+                Some(Combinator::GeneralSibling)
+            }
             None | Some(b',') | Some(b')') => None,
             _ if had_ws => Some(Combinator::Descendant),
             _ => None,
@@ -435,8 +530,11 @@ impl<'a> Parser<'a> {
                 None => break,
                 Some(comb) => match self.parse_compound() {
                     Ok(compound) => tail.push((comb, compound)),
-                    Err(_)       => { self.pos = saved; break; }
-                }
+                    Err(_) => {
+                        self.pos = saved;
+                        break;
+                    }
+                },
             }
         }
         Ok(ComplexSelector { head, tail })
@@ -447,7 +545,9 @@ impl<'a> Parser<'a> {
         let mut list = vec![self.parse_complex()?];
         loop {
             self.skip_ws();
-            if self.peek() != Some(b',') { break; }
+            if self.peek() != Some(b',') {
+                break;
+            }
             self.pos += 1;
             self.skip_ws();
             list.push(self.parse_complex()?);
@@ -464,7 +564,8 @@ pub fn parse_selector(input: &str) -> Result<SelectorList, SelectorError> {
     if !p.eof() {
         return Err(SelectorError(format!(
             "unexpected '{}' at pos {}",
-            p.peek().map(|c| c as char).unwrap_or('?'), p.pos
+            p.peek().map(|c| c as char).unwrap_or('?'),
+            p.pos
         )));
     }
     Ok(list)
@@ -494,7 +595,12 @@ fn matches_complex(doc: &Document, node_id: NodeId, sel: &ComplexSelector) -> bo
         return false;
     }
     // Walk the rest right-to-left.
-    matches_ancestors(doc, node_id, &compounds[..compounds.len() - 1], &combinators)
+    matches_ancestors(
+        doc,
+        node_id,
+        &compounds[..compounds.len() - 1],
+        &combinators,
+    )
 }
 
 /// Recursively verify the left portion of a complex selector.
@@ -511,9 +617,9 @@ fn matches_ancestors(
     if compounds.is_empty() {
         return true;
     }
-    let compound   = *compounds.last().unwrap();
+    let compound = *compounds.last().unwrap();
     let combinator = *combinators.last().unwrap();
-    let rest_c  = &compounds[..compounds.len() - 1];
+    let rest_c = &compounds[..compounds.len() - 1];
     let rest_cb = &combinators[..combinators.len() - 1];
 
     match combinator {
@@ -529,30 +635,40 @@ fn matches_ancestors(
             }
             false
         }
-        Combinator::Child => {
-            match doc.nodes[node_id].parent {
-                Some(par) if matches_compound(doc, par, compound) => {
-                    matches_ancestors(doc, par, rest_c, rest_cb)
-                }
-                _ => false,
+        Combinator::Child => match doc.nodes[node_id].parent {
+            Some(par) if matches_compound(doc, par, compound) => {
+                matches_ancestors(doc, par, rest_c, rest_cb)
             }
-        }
+            _ => false,
+        },
         Combinator::AdjacentSibling => {
-            let par = match doc.nodes[node_id].parent { Some(p) => p, None => return false };
+            let par = match doc.nodes[node_id].parent {
+                Some(p) => p,
+                None => return false,
+            };
             let sibs = &doc.nodes[par].children;
-            let pos = match sibs.iter().position(|&c| c == node_id) { Some(p) => p, None => return false };
-            if pos == 0 { return false; }
+            let pos = match sibs.iter().position(|&c| c == node_id) {
+                Some(p) => p,
+                None => return false,
+            };
+            if pos == 0 {
+                return false;
+            }
             let prev = sibs[pos - 1];
-            matches_compound(doc, prev, compound)
-                && matches_ancestors(doc, prev, rest_c, rest_cb)
+            matches_compound(doc, prev, compound) && matches_ancestors(doc, prev, rest_c, rest_cb)
         }
         Combinator::GeneralSibling => {
-            let par = match doc.nodes[node_id].parent { Some(p) => p, None => return false };
+            let par = match doc.nodes[node_id].parent {
+                Some(p) => p,
+                None => return false,
+            };
             let sibs = &doc.nodes[par].children;
-            let pos = match sibs.iter().position(|&c| c == node_id) { Some(p) => p, None => return false };
+            let pos = match sibs.iter().position(|&c| c == node_id) {
+                Some(p) => p,
+                None => return false,
+            };
             sibs[..pos].iter().any(|&sib| {
-                matches_compound(doc, sib, compound)
-                    && matches_ancestors(doc, sib, rest_c, rest_cb)
+                matches_compound(doc, sib, compound) && matches_ancestors(doc, sib, rest_c, rest_cb)
             })
         }
     }
@@ -566,14 +682,17 @@ fn matches_simple(doc: &Document, node_id: NodeId, sel: &SimpleSelector) -> bool
     let node = &doc.nodes[node_id];
     match sel {
         SimpleSelector::Universal => node.is_element(),
-        SimpleSelector::Type(tag) => node.element_data()
+        SimpleSelector::Type(tag) => node
+            .element_data()
             .map(|e| e.tag_name == *tag)
             .unwrap_or(false),
-        SimpleSelector::Class(cls) => node.element_data()
+        SimpleSelector::Class(cls) => node
+            .element_data()
             .and_then(|e| e.attr("class"))
             .map(|c| c.split_whitespace().any(|w| w == cls))
             .unwrap_or(false),
-        SimpleSelector::Id(id) => node.element_data()
+        SimpleSelector::Id(id) => node
+            .element_data()
             .and_then(|e| e.attr("id"))
             .map(|v| v == id)
             .unwrap_or(false),
@@ -586,15 +705,18 @@ fn matches_simple(doc: &Document, node_id: NodeId, sel: &SimpleSelector) -> bool
 }
 
 fn matches_attr(e: &crate::html::dom::ElementData, sel: &AttrSelector) -> bool {
-    let val = match e.attr(&sel.name) { Some(v) => v, None => return false };
+    let val = match e.attr(&sel.name) {
+        Some(v) => v,
+        None => return false,
+    };
     match &sel.op_value {
         None => true,
-        Some((AttrOp::Exact,      exp)) => val == exp,
-        Some((AttrOp::Includes,   word)) => val.split_whitespace().any(|w| w == word),
-        Some((AttrOp::DashMatch,  pfx)) => val == pfx || val.starts_with(&format!("{pfx}-")),
-        Some((AttrOp::Prefix,     pfx)) => val.starts_with(pfx.as_str()),
-        Some((AttrOp::Suffix,     sfx)) => val.ends_with(sfx.as_str()),
-        Some((AttrOp::Substring,  sub)) => val.contains(sub.as_str()),
+        Some((AttrOp::Exact, exp)) => val == exp,
+        Some((AttrOp::Includes, word)) => val.split_whitespace().any(|w| w == word),
+        Some((AttrOp::DashMatch, pfx)) => val == pfx || val.starts_with(&format!("{pfx}-")),
+        Some((AttrOp::Prefix, pfx)) => val.starts_with(pfx.as_str()),
+        Some((AttrOp::Suffix, sfx)) => val.ends_with(sfx.as_str()),
+        Some((AttrOp::Substring, sub)) => val.contains(sub.as_str()),
     }
 }
 
@@ -602,7 +724,8 @@ fn matches_pseudo(doc: &Document, node_id: NodeId, pseudo: &PseudoClass) -> bool
     match pseudo {
         PseudoClass::Root => {
             doc.nodes[node_id].parent == Some(DOCUMENT_NODE_ID)
-                && doc.nodes[node_id].element_data()
+                && doc.nodes[node_id]
+                    .element_data()
                     .map(|e| e.tag_name == "html")
                     .unwrap_or(false)
         }
@@ -614,21 +737,32 @@ fn matches_pseudo(doc: &Document, node_id: NodeId, pseudo: &PseudoClass) -> bool
                 })
         }
         PseudoClass::FirstChild => {
-            let par = match doc.nodes[node_id].parent { Some(p) => p, None => return false };
+            let par = match doc.nodes[node_id].parent {
+                Some(p) => p,
+                None => return false,
+            };
             doc.nodes[par].children.first() == Some(&node_id)
         }
         PseudoClass::LastChild => {
-            let par = match doc.nodes[node_id].parent { Some(p) => p, None => return false };
+            let par = match doc.nodes[node_id].parent {
+                Some(p) => p,
+                None => return false,
+            };
             doc.nodes[par].children.last() == Some(&node_id)
         }
         PseudoClass::OnlyChild => {
-            let par = match doc.nodes[node_id].parent { Some(p) => p, None => return false };
-            let elems: Vec<_> = doc.nodes[par].children.iter()
+            let par = match doc.nodes[node_id].parent {
+                Some(p) => p,
+                None => return false,
+            };
+            let elems: Vec<_> = doc.nodes[par]
+                .children
+                .iter()
                 .filter(|&&c| doc.nodes[c].is_element())
                 .collect();
             elems.len() == 1 && *elems[0] == node_id
         }
-        PseudoClass::NthChild(arg)     => nth_match(doc, node_id, arg, false),
+        PseudoClass::NthChild(arg) => nth_match(doc, node_id, arg, false),
         PseudoClass::NthLastChild(arg) => nth_match(doc, node_id, arg, true),
         PseudoClass::Not(inner) => {
             // :not() is true if the element does NOT match the inner compound.
@@ -638,23 +772,36 @@ fn matches_pseudo(doc: &Document, node_id: NodeId, pseudo: &PseudoClass) -> bool
 }
 
 fn nth_match(doc: &Document, node_id: NodeId, arg: &NthArg, from_end: bool) -> bool {
-    let par = match doc.nodes[node_id].parent { Some(p) => p, None => return false };
-    let elems: Vec<NodeId> = doc.nodes[par].children.iter()
+    let par = match doc.nodes[node_id].parent {
+        Some(p) => p,
+        None => return false,
+    };
+    let elems: Vec<NodeId> = doc.nodes[par]
+        .children
+        .iter()
         .filter(|&&c| doc.nodes[c].is_element())
         .copied()
         .collect();
-    let pos = match elems.iter().position(|&c| c == node_id) { Some(p) => p, None => return false };
+    let pos = match elems.iter().position(|&c| c == node_id) {
+        Some(p) => p,
+        None => return false,
+    };
     // 1-based index
     let n = if from_end { elems.len() - pos } else { pos + 1 } as i32;
     match arg {
         NthArg::Even => n % 2 == 0,
-        NthArg::Odd  => n % 2 == 1,
+        NthArg::Odd => n % 2 == 1,
         NthArg::Index(i) => n == *i as i32,
         NthArg::AnPlusB(a, b) => {
-            if *a == 0 { return n == *b; }
+            if *a == 0 {
+                return n == *b;
+            }
             let diff = n - b;
-            if *a > 0 { diff >= 0 && diff % a == 0 }
-            else      { diff <= 0 && diff % a == 0 }
+            if *a > 0 {
+                diff >= 0 && diff % a == 0
+            } else {
+                diff <= 0 && diff % a == 0
+            }
         }
     }
 }
@@ -681,16 +828,18 @@ pub fn query_selector_all(
     Ok(query_selector_all_with(doc, context, &list))
 }
 
-pub fn query_selector_with(
-    doc: &Document,
-    context: NodeId,
-    list: &SelectorList,
-) -> Option<NodeId> {
+pub fn query_selector_with(doc: &Document, context: NodeId, list: &SelectorList) -> Option<NodeId> {
     let mut q = VecDeque::new();
-    for &c in &doc.nodes[context].children { q.push_back(c); }
+    for &c in &doc.nodes[context].children {
+        q.push_back(c);
+    }
     while let Some(id) = q.pop_front() {
-        if matches_selector_list(doc, id, list) { return Some(id); }
-        for &c in &doc.nodes[id].children { q.push_back(c); }
+        if matches_selector_list(doc, id, list) {
+            return Some(id);
+        }
+        for &c in &doc.nodes[id].children {
+            q.push_back(c);
+        }
     }
     None
 }
@@ -702,10 +851,16 @@ pub fn query_selector_all_with(
 ) -> Vec<NodeId> {
     let mut result = vec![];
     let mut q = VecDeque::new();
-    for &c in &doc.nodes[context].children { q.push_back(c); }
+    for &c in &doc.nodes[context].children {
+        q.push_back(c);
+    }
     while let Some(id) = q.pop_front() {
-        if matches_selector_list(doc, id, list) { result.push(id); }
-        for &c in &doc.nodes[id].children { q.push_back(c); }
+        if matches_selector_list(doc, id, list) {
+            result.push(id);
+        }
+        for &c in &doc.nodes[id].children {
+            q.push_back(c);
+        }
     }
     result
 }

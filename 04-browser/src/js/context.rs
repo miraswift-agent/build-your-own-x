@@ -15,19 +15,32 @@ pub enum JsValue {
 
 impl JsValue {
     pub fn as_bool(&self) -> Option<bool> {
-        match self { JsValue::Bool(b) => Some(*b), _ => None }
+        match self {
+            JsValue::Bool(b) => Some(*b),
+            _ => None,
+        }
     }
 
     pub fn as_number(&self) -> Option<f64> {
-        match self { JsValue::Number(n) => Some(*n), _ => None }
+        match self {
+            JsValue::Number(n) => Some(*n),
+            _ => None,
+        }
     }
 
     pub fn as_str(&self) -> Option<&str> {
-        match self { JsValue::String(s) => Some(s.as_str()), _ => None }
+        match self {
+            JsValue::String(s) => Some(s.as_str()),
+            _ => None,
+        }
     }
 
-    pub fn is_undefined(&self) -> bool { matches!(self, JsValue::Undefined) }
-    pub fn is_null(&self) -> bool { matches!(self, JsValue::Null) }
+    pub fn is_undefined(&self) -> bool {
+        matches!(self, JsValue::Undefined)
+    }
+    pub fn is_null(&self) -> bool {
+        matches!(self, JsValue::Null)
+    }
 
     /// CDP type string for Runtime.RemoteObject
     pub fn type_str(&self) -> &'static str {
@@ -92,7 +105,14 @@ impl std::fmt::Display for JsValue {
             JsValue::String(s) => write!(f, "{s}"),
             JsValue::Object(_) => write!(f, "[object Object]"),
             JsValue::Array(arr) => {
-                write!(f, "{}", arr.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(","))
+                write!(
+                    f,
+                    "{}",
+                    arr.iter()
+                        .map(|v| v.to_string())
+                        .collect::<Vec<_>>()
+                        .join(",")
+                )
             }
             JsValue::Function => write!(f, "function"),
         }
@@ -111,7 +131,13 @@ pub struct JsError {
 
 impl JsError {
     pub fn new(message: impl Into<String>) -> Self {
-        Self { message: message.into(), stack: None, line: None, column: None, source_url: None }
+        Self {
+            message: message.into(),
+            stack: None,
+            line: None,
+            column: None,
+            source_url: None,
+        }
     }
 }
 
@@ -193,7 +219,9 @@ impl ContextId {
         ContextId(COUNTER.fetch_add(1, Ordering::SeqCst))
     }
 
-    pub fn as_u64(self) -> u64 { self.0 }
+    pub fn as_u64(self) -> u64 {
+        self.0
+    }
 }
 
 impl std::fmt::Display for ContextId {

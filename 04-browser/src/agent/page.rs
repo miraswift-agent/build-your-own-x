@@ -1,13 +1,12 @@
 //! Page — the top-level agent interface for a loaded web page.
 
-use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use crate::dom::query_selector;
 use crate::html::dom::{Document, NodeData, NodeId, DOCUMENT_NODE_ID};
 use crate::html::parse;
 use crate::net::{CookieJar, HttpClient, Url};
-use crate::dom::{query_selector, query_selector_all};
 
 use super::element::Element;
 
@@ -201,45 +200,46 @@ impl Default for Page {
 }
 
 fn collect_visible_text(doc: &Document, node_id: NodeId, out: &mut String) {
-    let node = doc.node(node_id);
-    match &node.data {
-        NodeData::Text(t) => {
-            let trimmed = t.trim();
-            if !trimmed.is_empty() {
-                out.push_str(trimmed);
-                out.push('\n');
-            }
-        }
-        NodeData::Element(e) => {
-            if matches!(e.tag_name.as_str(), "script" | "style" | "noscript") {
-                return;
-            }
-            // Honour simple inline display:none / visibility:hidden.
-            if let Some(style) = e.attr("style") {
-                let s = style.to_lowercase().replace(' ', "");
-                if s.contains("display:none") || s.contains("visibility:hidden") {
-                    return;
+    let mut stack = vec![node_id];
+    while let Some(id) = stack.pop() {
+        let node = doc.node(id);
+        match &node.data {
+            NodeData::Text(t) => {
+                let trimmed = t.trim();
+                if !trimmed.is_empty() {
+                    out.push_str(trimmed);
+                    out.push('\n');
                 }
             }
-            if e.attr("hidden").is_some() {
-                return;
+            NodeData::Element(e) => {
+                if matches!(e.tag_name.as_str(), "script" | "style" | "noscript") {
+                    continue;
+                }
+                if let Some(style) = e.attr("style") {
+                    let s = style.to_lowercase().replace(' ', "");
+                    if s.contains("display:none") || s.contains("visibility:hidden") {
+                        continue;
+                    }
+                }
+                if e.attr("hidden").is_some() {
+                    continue;
+                }
+                if let Some(level_char) = e
+                    .tag_name
+                    .strip_prefix('h')
+                    .and_then(|s| s.parse::<usize>().ok())
+                {
+                    out.push_str(&"#".repeat(level_char));
+                    out.push(' ');
+                }
+                for &child in node.children.iter().rev() {
+                    stack.push(child);
+                }
             }
-            // Prefix headings with markdown-style hashes.
-            if let Some(level_char) = e.tag_name.strip_prefix('h')
-                .and_then(|s| s.parse::<usize>().ok())
-            {
-                out.push_str(&"#".repeat(level_char));
-                out.push(' ');
-            }
-            let children: Vec<NodeId> = node.children.clone();
-            for child in children {
-                collect_visible_text(doc, child, out);
-            }
-        }
-        _ => {
-            let children: Vec<NodeId> = node.children.clone();
-            for child in children {
-                collect_visible_text(doc, child, out);
+            _ => {
+                for &child in node.children.iter().rev() {
+                    stack.push(child);
+                }
             }
         }
     }

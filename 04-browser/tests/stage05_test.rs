@@ -9,7 +9,8 @@ use agent_browser::agent::{Action, ActionChain, Page};
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 fn simple_page() -> Page {
-    Page::from_html(r#"<!DOCTYPE html>
+    Page::from_html(
+        r#"<!DOCTYPE html>
 <html>
 <head>
   <title>Test Page</title>
@@ -39,7 +40,8 @@ fn simple_page() -> Page {
     </tbody>
   </table>
 </body>
-</html>"#)
+</html>"#,
+    )
 }
 
 // ─── Page API ─────────────────────────────────────────────────────────────────
@@ -83,15 +85,42 @@ fn page_screenshot_returns_text_representation() {
     assert!(shot.contains("Hello World"), "screenshot: {shot}");
     assert!(shot.contains("Welcome"), "screenshot: {shot}");
     // Hidden elements should not appear
-    assert!(!shot.contains("Hidden content"), "screenshot should omit hidden: {shot}");
-    assert!(!shot.contains("Also hidden"), "screenshot should omit display:none: {shot}");
+    assert!(
+        !shot.contains("Hidden content"),
+        "screenshot should omit hidden: {shot}"
+    );
+    assert!(
+        !shot.contains("Also hidden"),
+        "screenshot should omit display:none: {shot}"
+    );
 }
 
 #[test]
 fn page_screenshot_has_heading_prefix() {
     let page = simple_page();
     let shot = page.screenshot();
-    assert!(shot.contains("# Hello World"), "h1 should be prefixed: {shot}");
+    assert!(
+        shot.contains("# Hello World"),
+        "h1 should be prefixed: {shot}"
+    );
+}
+
+#[test]
+fn page_screenshot_handles_deeply_nested_documents() {
+    let depth = 5000;
+    let mut html = String::new();
+    for _ in 0..depth {
+        html.push_str("<section>");
+    }
+    html.push_str("<h1>Nested title</h1><p>Nested body</p>");
+    for _ in 0..depth {
+        html.push_str("</section>");
+    }
+
+    let page = Page::from_html(&html);
+    let shot = page.screenshot();
+    assert!(shot.contains("# Nested title"), "screenshot: {shot}");
+    assert!(shot.contains("Nested body"), "screenshot: {shot}");
 }
 
 #[test]
@@ -147,7 +176,10 @@ fn element_class_list() {
     let page = simple_page();
     let el = page.query("h1").expect("h1 must exist");
     let classes = el.class_list();
-    assert!(classes.contains(&"headline".to_string()), "classes: {classes:?}");
+    assert!(
+        classes.contains(&"headline".to_string()),
+        "classes: {classes:?}"
+    );
     assert!(classes.contains(&"big".to_string()), "classes: {classes:?}");
 }
 
@@ -185,7 +217,9 @@ fn element_is_visible_true_for_normal() {
 #[test]
 fn element_is_visible_false_for_display_none() {
     let page = simple_page();
-    let el = page.query("[style=\"display:none\"]").expect("display:none element must exist");
+    let el = page
+        .query("[style=\"display:none\"]")
+        .expect("display:none element must exist");
     assert!(!el.is_visible());
 }
 
@@ -199,15 +233,15 @@ fn element_is_visible_false_for_hidden_attr() {
 #[test]
 fn element_is_enabled_for_normal_input() {
     let page = simple_page();
-    let el = page.query("input[name=username]").expect("username input must exist");
+    let el = page
+        .query("input[name=username]")
+        .expect("username input must exist");
     assert!(el.is_enabled());
 }
 
 #[test]
 fn element_is_enabled_false_for_disabled() {
-    let page = Page::from_html(
-        "<html><body><input name='x' disabled></body></html>",
-    );
+    let page = Page::from_html("<html><body><input name='x' disabled></body></html>");
     let el = page.query("input").expect("input must exist");
     assert!(!el.is_enabled());
 }
@@ -215,7 +249,9 @@ fn element_is_enabled_false_for_disabled() {
 #[test]
 fn element_type_text_sets_value() {
     let page = simple_page();
-    let el = page.query("input[name=username]").expect("username input must exist");
+    let el = page
+        .query("input[name=username]")
+        .expect("username input must exist");
     el.type_text("testuser");
     assert_eq!(el.get_attribute("value"), Some("testuser".to_string()));
 }
@@ -269,15 +305,16 @@ fn query_all_returns_all_matches() {
 fn query_role_heading() {
     let page = simple_page();
     let headings = page.query_role("heading");
-    assert!(!headings.is_empty(), "should find headings by implicit role");
+    assert!(
+        !headings.is_empty(),
+        "should find headings by implicit role"
+    );
     assert_eq!(headings[0].text_content(), "Hello World");
 }
 
 #[test]
 fn query_role_explicit_aria() {
-    let page = Page::from_html(
-        r#"<html><body><div role="banner">Banner</div></body></html>"#,
-    );
+    let page = Page::from_html(r#"<html><body><div role="banner">Banner</div></body></html>"#);
     let els = page.query_role("banner");
     assert_eq!(els.len(), 1);
     assert_eq!(els[0].text_content(), "Banner");
@@ -307,7 +344,9 @@ fn query_input_by_name() {
 #[test]
 fn query_input_by_placeholder() {
     let page = simple_page();
-    let el = page.query_input("Enter username").expect("input by placeholder");
+    let el = page
+        .query_input("Enter username")
+        .expect("input by placeholder");
     assert_eq!(el.get_attribute("name"), Some("username".to_string()));
 }
 
@@ -322,7 +361,10 @@ fn query_link_by_text() {
 fn query_link_by_href() {
     let page = simple_page();
     let el = page.query_link("/contact").expect("Contact link by href");
-    assert!(el.get_attribute("href").unwrap_or_default().contains("contact"));
+    assert!(el
+        .get_attribute("href")
+        .unwrap_or_default()
+        .contains("contact"));
 }
 
 // ─── Action API ───────────────────────────────────────────────────────────────
@@ -406,7 +448,9 @@ fn extract_links_returns_all_links() {
     let links = page.extract_links();
     assert_eq!(links.len(), 3, "expected 3 links: {links:?}");
     assert!(links.iter().any(|(t, h)| t == "About" && h == "/about"));
-    assert!(links.iter().any(|(t, h)| t == "Contact Us" && h == "/contact"));
+    assert!(links
+        .iter()
+        .any(|(t, h)| t == "Contact Us" && h == "/contact"));
 }
 
 #[test]
@@ -444,7 +488,9 @@ fn extract_forms_captures_input_fields() {
     let page = simple_page();
     let forms = page.extract_forms();
     let form = &forms[0];
-    let names: Vec<_> = form.inputs.iter()
+    let names: Vec<_> = form
+        .inputs
+        .iter()
         .filter_map(|i| i.name.as_deref())
         .collect();
     assert!(names.contains(&"username"), "names: {names:?}");
@@ -456,7 +502,9 @@ fn extract_forms_captures_required_flag() {
     let page = simple_page();
     let forms = page.extract_forms();
     let form = &forms[0];
-    let username = form.inputs.iter()
+    let username = form
+        .inputs
+        .iter()
         .find(|i| i.name.as_deref() == Some("username"))
         .expect("username input");
     assert!(username.required);
@@ -487,7 +535,10 @@ fn extract_metadata_og_title() {
 fn extract_metadata_canonical_url() {
     let page = simple_page();
     let meta = page.extract_metadata();
-    assert_eq!(meta.canonical_url, Some("https://example.com/page".to_string()));
+    assert_eq!(
+        meta.canonical_url,
+        Some("https://example.com/page".to_string())
+    );
 }
 
 #[test]
@@ -502,9 +553,8 @@ fn extract_text_returns_visible_text() {
 
 #[test]
 fn extract_text_excludes_scripts() {
-    let page = Page::from_html(
-        "<html><body><p>visible</p><script>var x = 1;</script></body></html>",
-    );
+    let page =
+        Page::from_html("<html><body><p>visible</p><script>var x = 1;</script></body></html>");
     let text = page.extract_text();
     assert!(text.contains("visible"));
     assert!(!text.contains("var x"), "script should be excluded: {text}");
@@ -537,7 +587,8 @@ fn extract_structured_includes_tables() {
 
 #[test]
 fn integration_form_fill_and_verify() {
-    let mut page = Page::from_html(r#"<!DOCTYPE html>
+    let mut page = Page::from_html(
+        r#"<!DOCTYPE html>
 <html>
 <head><title>Login</title></head>
 <body>
@@ -547,7 +598,8 @@ fn integration_form_fill_and_verify() {
     <button type="submit">Sign In</button>
   </form>
 </body>
-</html>"#);
+</html>"#,
+    );
 
     // Query elements.
     let email_input = page.query_input("email").expect("email input");
@@ -557,14 +609,20 @@ fn integration_form_fill_and_verify() {
 
     // Type via ActionChain.
     let chain = ActionChain::new()
-        .and_then(Action::Type("#email".to_string(), "agent@example.com".to_string()))
-        .and_then(Action::Type("#pass".to_string(),  "s3cr3t".to_string()))
+        .and_then(Action::Type(
+            "#email".to_string(),
+            "agent@example.com".to_string(),
+        ))
+        .and_then(Action::Type("#pass".to_string(), "s3cr3t".to_string()))
         .and_then(Action::Click("button".to_string()));
     page.execute_chain(chain).expect("chain must succeed");
 
     // Verify values were set.
     let email_el = page.query("#email").expect("#email");
-    assert_eq!(email_el.get_attribute("value"), Some("agent@example.com".to_string()));
+    assert_eq!(
+        email_el.get_attribute("value"),
+        Some("agent@example.com".to_string())
+    );
 
     let pass_el = page.query("#pass").expect("#pass");
     assert_eq!(pass_el.get_attribute("value"), Some("s3cr3t".to_string()));
@@ -577,7 +635,8 @@ fn integration_form_fill_and_verify() {
 
 #[test]
 fn integration_table_extraction() {
-    let page = Page::from_html(r#"<!DOCTYPE html>
+    let page = Page::from_html(
+        r#"<!DOCTYPE html>
 <html><body>
 <table>
   <tr><th>Country</th><th>Capital</th><th>Population</th></tr>
@@ -585,7 +644,8 @@ fn integration_table_extraction() {
   <tr><td>UK</td><td>London</td><td>67M</td></tr>
   <tr><td>France</td><td>Paris</td><td>67M</td></tr>
 </table>
-</body></html>"#);
+</body></html>"#,
+    );
 
     let rows = page.extract_table("table");
     assert_eq!(rows.len(), 4);
@@ -596,7 +656,8 @@ fn integration_table_extraction() {
 
 #[test]
 fn integration_screenshot_structure() {
-    let page = Page::from_html(r#"<!DOCTYPE html>
+    let page = Page::from_html(
+        r#"<!DOCTYPE html>
 <html>
 <head><title>News</title></head>
 <body>
@@ -605,11 +666,15 @@ fn integration_screenshot_structure() {
   <p>An important event happened today.</p>
   <script>console.log("hidden");</script>
 </body>
-</html>"#);
+</html>"#,
+    );
 
     let shot = page.screenshot();
     assert!(shot.contains("# Breaking News"), "screenshot: {shot}");
     assert!(shot.contains("## Top Stories"), "screenshot: {shot}");
     assert!(shot.contains("important event"), "screenshot: {shot}");
-    assert!(!shot.contains("console.log"), "script should be excluded: {shot}");
+    assert!(
+        !shot.contains("console.log"),
+        "script should be excluded: {shot}"
+    );
 }

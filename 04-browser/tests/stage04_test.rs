@@ -21,7 +21,9 @@ fn test_js_engine_create_context() {
 #[test]
 fn test_js_engine_create_utility_context() {
     let engine = QuickJsEngine::new();
-    let ctx = engine.create_utility_context().expect("should create utility context");
+    let ctx = engine
+        .create_utility_context()
+        .expect("should create utility context");
     assert_eq!(ctx.world(), WorldType::Utility);
 }
 
@@ -146,7 +148,11 @@ fn test_context_isolation_variable() {
 
     ctx1.eval("var secret = 42;").unwrap();
     let val = ctx2.eval("typeof secret === 'undefined'").unwrap();
-    assert_eq!(val.as_bool(), Some(true), "ctx2 must not see ctx1's variable");
+    assert_eq!(
+        val.as_bool(),
+        Some(true),
+        "ctx2 must not see ctx1's variable"
+    );
 }
 
 #[test]
@@ -157,7 +163,11 @@ fn test_context_isolation_mutation() {
 
     ctx1.eval("Array.prototype.evil = 99;").unwrap();
     let val = ctx2.eval("[].evil === undefined").unwrap();
-    assert_eq!(val.as_bool(), Some(true), "prototype mutations must not cross contexts");
+    assert_eq!(
+        val.as_bool(),
+        Some(true),
+        "prototype mutations must not cross contexts"
+    );
 }
 
 // ─── Console API ─────────────────────────────────────────────────────────────
@@ -236,7 +246,8 @@ fn test_console_take_clears_buffer() {
 fn test_console_multiple_calls() {
     let engine = QuickJsEngine::new();
     let mut ctx = engine.create_context().unwrap();
-    ctx.eval("console.log('a'); console.log('b'); console.log('c');").unwrap();
+    ctx.eval("console.log('a'); console.log('b'); console.log('c');")
+        .unwrap();
     let logs = ctx.take_console_logs();
     assert_eq!(logs.len(), 3);
     assert_eq!(logs[0].message, "a");
@@ -251,7 +262,11 @@ fn test_exception_message() {
     let engine = QuickJsEngine::new();
     let mut ctx = engine.create_context().unwrap();
     let err = ctx.eval("throw new Error('test error')").unwrap_err();
-    assert!(err.message.contains("test error"), "message: {:?}", err.message);
+    assert!(
+        err.message.contains("test error"),
+        "message: {:?}",
+        err.message
+    );
 }
 
 #[test]
@@ -274,7 +289,9 @@ fn test_exception_type_error() {
 fn test_exception_has_stack() {
     let engine = QuickJsEngine::new();
     let mut ctx = engine.create_context().unwrap();
-    let err = ctx.eval("function boom() { throw new Error('fail'); } boom();").unwrap_err();
+    let err = ctx
+        .eval("function boom() { throw new Error('fail'); } boom();")
+        .unwrap_err();
     // Stack trace is optional in QuickJS but message must be present
     assert!(!err.message.is_empty());
 }
@@ -285,6 +302,19 @@ fn test_exception_string_throw() {
     let mut ctx = engine.create_context().unwrap();
     let err = ctx.eval("throw 'custom string error'").unwrap_err();
     assert!(err.message.contains("custom string error"));
+}
+
+#[test]
+fn test_infinite_loop_times_out() {
+    let engine = QuickJsEngine::new();
+    let mut ctx = engine.create_context().unwrap();
+    let start = std::time::Instant::now();
+    let err = ctx.eval("while (true) {}").unwrap_err();
+    assert!(start.elapsed() < std::time::Duration::from_secs(2));
+    assert!(
+        !err.message.is_empty() || err.stack.is_some(),
+        "expected a timeout/interrupt failure, got: {err:?}"
+    );
 }
 
 #[test]
@@ -304,7 +334,10 @@ fn test_set_timeout_returns_id() {
     let engine = QuickJsEngine::new();
     let mut ctx = engine.create_context().unwrap();
     let val = ctx.eval("setTimeout(function(){}, 1000)").unwrap();
-    assert!(matches!(val, JsValue::Number(_)), "setTimeout should return a timer ID");
+    assert!(
+        matches!(val, JsValue::Number(_)),
+        "setTimeout should return a timer ID"
+    );
 }
 
 #[test]
@@ -426,7 +459,10 @@ async fn test_cdp_evaluate_exception_in_session() {
     let tid = server.create_target("about:blank");
     let sid = server.attach(&tid).unwrap();
 
-    let err = server.evaluate_in_session(&sid, "throw new Error('cdp error')").unwrap().unwrap_err();
+    let err = server
+        .evaluate_in_session(&sid, "throw new Error('cdp error')")
+        .unwrap()
+        .unwrap_err();
     assert!(err.message.contains("cdp error"));
 }
 
@@ -437,7 +473,10 @@ async fn test_cdp_session_state_persists() {
     let tid = server.create_target("about:blank");
     let sid = server.attach(&tid).unwrap();
 
-    server.evaluate_in_session(&sid, "var x = 100;").unwrap().unwrap();
+    server
+        .evaluate_in_session(&sid, "var x = 100;")
+        .unwrap()
+        .unwrap();
     let val = server.evaluate_in_session(&sid, "x").unwrap().unwrap();
     assert_eq!(val.as_number(), Some(100.0));
 }
@@ -449,8 +488,14 @@ async fn test_cdp_targets_are_isolated() {
     let t1 = server.create_target("about:blank");
     let t2 = server.create_target("about:blank");
 
-    server.evaluate_in_target(&t1, "var secret = 99;").unwrap().unwrap();
-    let val = server.evaluate_in_target(&t2, "typeof secret === 'undefined'").unwrap().unwrap();
+    server
+        .evaluate_in_target(&t1, "var secret = 99;")
+        .unwrap()
+        .unwrap();
+    let val = server
+        .evaluate_in_target(&t2, "typeof secret === 'undefined'")
+        .unwrap()
+        .unwrap();
     assert_eq!(val.as_bool(), Some(true), "targets must be isolated");
 }
 
@@ -466,7 +511,8 @@ async fn test_cdp_websocket_connects() {
     tokio::time::sleep(tokio::time::Duration::from_millis(20)).await;
 
     let url = format!("ws://127.0.0.1:{port}");
-    let (mut ws, _) = tokio_tungstenite::connect_async(&url).await
+    let (mut ws, _) = tokio_tungstenite::connect_async(&url)
+        .await
         .expect("WebSocket connect should succeed");
 
     ws.close(None).await.ok();
@@ -486,13 +532,18 @@ async fn test_cdp_websocket_get_targets() {
     let (mut ws, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
 
     let req = serde_json::json!({ "id": 1, "method": "Target.getTargets", "params": {} });
-    ws.send(Message::Text(req.to_string().into())).await.unwrap();
+    ws.send(Message::Text(req.to_string().into()))
+        .await
+        .unwrap();
 
     let msg = ws.next().await.unwrap().unwrap();
     let resp: serde_json::Value = serde_json::from_str(msg.to_text().unwrap()).unwrap();
 
     assert_eq!(resp["id"], 1);
-    assert!(resp["result"]["targetInfos"].is_array(), "should have targetInfos array");
+    assert!(
+        resp["result"]["targetInfos"].is_array(),
+        "should have targetInfos array"
+    );
     ws.close(None).await.ok();
 }
 
@@ -517,7 +568,9 @@ async fn test_cdp_websocket_evaluate_via_session() {
         "method": "Target.attachToTarget",
         "params": { "targetId": tid }
     });
-    ws.send(Message::Text(attach_req.to_string().into())).await.unwrap();
+    ws.send(Message::Text(attach_req.to_string().into()))
+        .await
+        .unwrap();
 
     // Read until we get the response to id=1 (events may come first)
     let session_id = loop {
@@ -535,7 +588,9 @@ async fn test_cdp_websocket_evaluate_via_session() {
         "method": "Runtime.evaluate",
         "params": { "expression": "6 * 7", "returnByValue": true }
     });
-    ws.send(Message::Text(eval_req.to_string().into())).await.unwrap();
+    ws.send(Message::Text(eval_req.to_string().into()))
+        .await
+        .unwrap();
 
     let result_val = loop {
         let msg = ws.next().await.unwrap().unwrap();
@@ -617,9 +672,7 @@ fn test_csp_none_blocks_all() {
 
 #[test]
 fn test_csp_origin_allowed() {
-    let csp = ContentSecurityPolicy::from_header(
-        "script-src 'self' https://cdn.example.com",
-    );
+    let csp = ContentSecurityPolicy::from_header("script-src 'self' https://cdn.example.com");
     assert!(csp.allows_origin("https://cdn.example.com"));
     assert!(!csp.allows_origin("https://evil.com"));
 }
@@ -661,12 +714,15 @@ fn test_integration_js_dom_mutation_simulation() {
     let mut ctx = engine.create_context().unwrap();
 
     // Simulate a simple "DOM" as a JS object
-    ctx.eval(r#"
+    ctx.eval(
+        r#"
         var document = {
             title: 'Original',
             body: { innerHTML: '<p>Hello</p>' }
         };
-    "#).unwrap();
+    "#,
+    )
+    .unwrap();
 
     ctx.eval("document.title = 'Modified by JS';").unwrap();
 
@@ -679,7 +735,8 @@ fn test_integration_js_with_console_and_computation() {
     let engine = QuickJsEngine::new();
     let mut ctx = engine.create_context().unwrap();
 
-    ctx.eval(r#"
+    ctx.eval(
+        r#"
         function processItems(items) {
             var total = 0;
             for (var i = 0; i < items.length; i++) {
@@ -689,7 +746,9 @@ fn test_integration_js_with_console_and_computation() {
             return total;
         }
         var result = processItems([10, 20, 30]);
-    "#).unwrap();
+    "#,
+    )
+    .unwrap();
 
     let val = ctx.eval("result").unwrap();
     assert_eq!(val.as_number(), Some(60.0));

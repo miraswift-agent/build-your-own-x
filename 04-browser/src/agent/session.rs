@@ -133,7 +133,8 @@ impl Session {
 
     /// Snapshot for serialization (cookies excluded for security).
     pub fn to_data(&self) -> SessionData {
-        let created_unix = self.created_at
+        let created_unix = self
+            .created_at
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
@@ -243,8 +244,8 @@ impl SessionManager {
     /// Persist all session metadata to a JSON file.
     pub fn save_to_disk(&self, path: &Path) -> Result<(), String> {
         let data: Vec<SessionData> = self.sessions.values().map(|s| s.to_data()).collect();
-        let json = serde_json::to_string_pretty(&data)
-            .map_err(|e| format!("serialize error: {e}"))?;
+        let json =
+            serde_json::to_string_pretty(&data).map_err(|e| format!("serialize error: {e}"))?;
         std::fs::write(path, json).map_err(|e| format!("write error: {e}"))?;
         Ok(())
     }

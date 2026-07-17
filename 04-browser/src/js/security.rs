@@ -1,4 +1,7 @@
-/// Same-origin policy enforcement and CSP parsing.
+/// Same-origin / CSP helper types.
+///
+/// Note: this module currently provides parsing and comparison primitives, not
+/// full browser-grade runtime enforcement across every navigation/eval path.
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Origin {
@@ -36,15 +39,25 @@ impl Origin {
             (p, _) => p,
         };
 
-        Some(Origin { scheme: scheme.to_lowercase(), host: host_part.to_lowercase(), port })
+        Some(Origin {
+            scheme: scheme.to_lowercase(),
+            host: host_part.to_lowercase(),
+            port,
+        })
     }
 
     /// "null" origin (opaque).
     pub fn null() -> Self {
-        Origin { scheme: "null".into(), host: String::new(), port: None }
+        Origin {
+            scheme: "null".into(),
+            host: String::new(),
+            port: None,
+        }
     }
 
-    pub fn is_null(&self) -> bool { self.scheme == "null" }
+    pub fn is_null(&self) -> bool {
+        self.scheme == "null"
+    }
 
     /// Returns true when this origin may access `other` under the same-origin policy.
     pub fn is_same_origin(&self, other: &Origin) -> bool {
@@ -113,10 +126,14 @@ impl ContentSecurityPolicy {
     }
 
     /// Returns true when inline scripts are blocked by this policy.
-    pub fn blocks_inline(&self) -> bool { !self.allow_inline }
+    pub fn blocks_inline(&self) -> bool {
+        !self.allow_inline
+    }
 
     /// Returns true when `eval()` is blocked by this policy.
-    pub fn blocks_eval(&self) -> bool { !self.allow_eval }
+    pub fn blocks_eval(&self) -> bool {
+        !self.allow_eval
+    }
 
     /// Returns true when scripts from `origin` are allowed.
     ///
