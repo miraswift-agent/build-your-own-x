@@ -12,7 +12,6 @@
 //! - Selector lists: `,`
 
 use crate::html::dom::{Document, NodeData, NodeId, DOCUMENT_NODE_ID};
-use std::collections::VecDeque;
 
 // ─── Selector AST ─────────────────────────────────────────────────────────────
 
@@ -283,7 +282,13 @@ impl<'a> Parser<'a> {
             Ok(NthArg::AnPlusB(a, b))
         } else if !digits.is_empty() {
             let n = sign * digits.parse::<i32>().unwrap_or(1);
-            Ok(NthArg::Index(n.max(1) as u32))
+            // CSS: fixed index N matches only when N >= 1. Negative indices
+            // (e.g. :nth-child(-3)) match nothing — do NOT clamp to 1.
+            if n >= 1 {
+                Ok(NthArg::Index(n as u32))
+            } else {
+                Ok(NthArg::AnPlusB(0, n))
+            }
         } else {
             Err(SelectorError("invalid :nth-child argument".into()))
         }
@@ -456,7 +461,11 @@ impl<'a> Parser<'a> {
                 }
             }
             Some(c) if c.is_ascii_alphabetic() || c == b'_' || c == b'-' => {
-                Ok(SimpleSelector::Type(self.parse_ident()?))
+                // HTML tag names are case-insensitive; store lowercase so `DIV`
+                // matches the DOM's lowercased `div`.
+                Ok(SimpleSelector::Type(
+                    self.parse_ident()?.to_ascii_lowercase(),
+                ))
             }
             got => Err(SelectorError(format!(
                 "unexpected '{}' in selector at pos {}",
@@ -684,7 +693,7 @@ fn matches_simple(doc: &Document, node_id: NodeId, sel: &SimpleSelector) -> bool
         SimpleSelector::Universal => node.is_element(),
         SimpleSelector::Type(tag) => node
             .element_data()
-            .map(|e| e.tag_name == *tag)
+            .map(|e| e.tag_name.eq_ignore_ascii_case(tag))
             .unwrap_or(false),
         SimpleSelector::Class(cls) => node
             .element_data()
@@ -829,17 +838,13 @@ pub fn query_selector_all(
 }
 
 pub fn query_selector_with(doc: &Document, context: NodeId, list: &SelectorList) -> Option<NodeId> {
-    let mut q = VecDeque::new();
-    for &c in &doc.nodes[context].children {
-        q.push_back(c);
-    }
-    while let Some(id) = q.pop_front() {
+    // Document order = depth-first preorder (not BFS).
+    let mut stack: Vec<NodeId> = doc.nodes[context].children.iter().rev().copied().collect();
+    while let Some(id) = stack.pop() {
         if matches_selector_list(doc, id, list) {
             return Some(id);
         }
-        for &c in &doc.nodes[id].children {
-            q.push_back(c);
-        }
+        stack.extend(doc.nodes[id].children.iter().rev().copied());
     }
     None
 }
@@ -849,18 +854,15 @@ pub fn query_selector_all_with(
     context: NodeId,
     list: &SelectorList,
 ) -> Vec<NodeId> {
+    // Document order = depth-first preorder. BFS previously returned siblings
+    // before nested matches (e.g. `.x` on `<p><span.x>A</p><span.x>B` → [B,A]).
     let mut result = vec![];
-    let mut q = VecDeque::new();
-    for &c in &doc.nodes[context].children {
-        q.push_back(c);
-    }
-    while let Some(id) = q.pop_front() {
+    let mut stack: Vec<NodeId> = doc.nodes[context].children.iter().rev().copied().collect();
+    while let Some(id) = stack.pop() {
         if matches_selector_list(doc, id, list) {
             result.push(id);
         }
-        for &c in &doc.nodes[id].children {
-            q.push_back(c);
-        }
+        stack.extend(doc.nodes[id].children.iter().rev().copied());
     }
     result
 }

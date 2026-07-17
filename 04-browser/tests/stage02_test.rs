@@ -265,6 +265,46 @@ fn test_select_selector_list() {
     assert_eq!(results.len(), 3);
 }
 
+// ─── Selector correctness regressions (external assessment 2026-07-16) ────────
+
+#[test]
+fn test_select_document_order_not_bfs() {
+    // Nested match must precede later sibling — document (preorder) order,
+    // not BFS which used to return [B, A].
+    let doc = parse(r#"<p><span class="x">A</span></p><span class="x">B</span>"#);
+    let results = query_selector_all(&doc, DOCUMENT_NODE_ID, ".x").unwrap();
+    assert_eq!(results.len(), 2);
+    assert_eq!(doc.text_content(results[0]).trim(), "A");
+    assert_eq!(doc.text_content(results[1]).trim(), "B");
+}
+
+#[test]
+fn test_select_type_case_insensitive() {
+    // HTML lowercases tags; `DIV` must still match.
+    let doc = parse("<div><P>hi</P></div>");
+    let upper = query_selector_all(&doc, DOCUMENT_NODE_ID, "DIV").unwrap();
+    let mixed = query_selector_all(&doc, DOCUMENT_NODE_ID, "P").unwrap();
+    assert_eq!(upper.len(), 1);
+    assert_eq!(mixed.len(), 1);
+    assert_eq!(doc.text_content(mixed[0]).trim(), "hi");
+}
+
+#[test]
+fn test_select_nth_child_negative_matches_nothing() {
+    // :nth-child(-3) must not clamp to 1 and falsely match the first child.
+    let doc = parse("<ul><li>A</li><li>B</li><li>C</li></ul>");
+    let results = query_selector_all(&doc, DOCUMENT_NODE_ID, "li:nth-child(-3)").unwrap();
+    assert!(
+        results.is_empty(),
+        "expected no matches, got {}",
+        results.len()
+    );
+    // Positive still works.
+    let pos = query_selector_all(&doc, DOCUMENT_NODE_ID, "li:nth-child(1)").unwrap();
+    assert_eq!(pos.len(), 1);
+    assert_eq!(doc.text_content(pos[0]).trim(), "A");
+}
+
 // ─── DOM operations ───────────────────────────────────────────────────────────
 
 #[test]
