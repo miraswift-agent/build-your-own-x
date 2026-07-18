@@ -2661,9 +2661,44 @@ static Value arrayDropWhileNative(int argCount, Value *args) {
  * - does not mutate either input
  * - value comparison uses clox's valuesEqual()
  */
-static Value arrayUnionNative(int argCount, Value *args) {
-    if (argCount != 2) {
-        runtimeError("array_union() takes 2 arguments (%d given).", argCount);
+/* Stage 59: array_union(arr1, arr2, keyFn?) -> array.
+ * Multiset union of two arrays, with an optional
+ * keyFn for "union by key" (symmetric extension of
+ * Stage 58's array_intersect keyFn). The shape: 2 or
+ * 3 args (array, array, optional 1-arg closure).
+ * When keyFn is supplied, two elements are considered
+ * equal iff their keyFn results are equal (per
+ * valuesEqual). When keyFn is omitted, comparison is
+ * direct valuesEqual (Stage 56 behavior).
+ *
+ * Multiset-by-key semantics: result count of each
+ * key k = max(count_in_arr1 of elems with keyFn=k,
+ * count_in_arr2 of elems with keyFn=k). Order: all
+ * of arr1 first (arr1 order), then leftover arr2
+ * elements whose key counts exceed arr1's.
+ *
+ * Algorithm reuses Stage 56's walk-then-drain and
+ * Stage 58's optional-closure + remaining_keys cache:
+ * remaining = copy of arr2; optionally remaining_keys
+ * = keyFn(arr2[i]); walk arr1 appending every elem
+ * and consuming one remaining match by key; drain
+ * remaining into result.
+ *
+ * Edge cases:
+ * - array_union([], [], keyFn) -> []
+ * - array_union([1,2,3], [], keyFn) -> [1,2,3]
+ * - array_union([], [1,2,3], keyFn) -> [1,2,3]
+ * - array_union([1,2,3,2,1], [2,3,4,2], keyFn) ->
+ *   Stage 56 2-arg output when keyFn omitted
+ * - union by isLarge: arr1=[1,2,3,4,5] arr2=[7,8,9]
+ *   isLarge = x>2 -> keys true/false; max counts
+ *   yield all of arr1 then no leftover arr2 if arr1
+ *   already covers true-count (arr1 has 3 true,
+ *   arr2 has 3 true) and false only in arr1
+ */
+static Value arrayUnionByNative(int argCount, Value *args) {
+    if (argCount < 2 || argCount > 3) {
+        runtimeError("array_union() takes 2 or 3 arguments (%d given).", argCount);
         return NIL_VAL;  /* error sentinel */
     }
     if (!IS_ARRAY(args[0])) {
@@ -2674,6 +2709,14 @@ static Value arrayUnionNative(int argCount, Value *args) {
         runtimeError("array_union() argument 1 must be an array.");
         return NIL_VAL;
     }
+    ObjClosure *keyFn = NULL;
+    if (argCount == 3) {
+        if (!IS_CLOSURE(args[2])) {
+            runtimeError("array_union() argument 2 must be a function.");
+            return NIL_VAL;
+        }
+        keyFn = AS_CLOSURE(args[2]);
+    }
     ObjArray *arr1 = AS_ARRAY(args[0]);
     ObjArray *arr2 = AS_ARRAY(args[1]);
 
@@ -2681,51 +2724,73 @@ static Value arrayUnionNative(int argCount, Value *args) {
      * decrement as matches from arr1 are found. By
      * the end of the arr1 walk, `remaining` holds
      * the arr2 values that are NOT yet in the result
-     * (either v not in arr1, or v appears more times
-     * in arr2 than in arr1). Storing on the Lox heap
-     * (as an ObjArray) gets us push/pop GC protection
-     * for free. */
+     * (either key not in arr1, or key appears more
+     * times in arr2 than in arr1). */
     ObjArray *remaining = newArray(arr2->count);
     push(OBJ_VAL(remaining));  /* GC: keep alive while filling */
     for (int i = 0; i < arr2->count; i++) {
         arrayPush(remaining, arr2->elements[i]);
     }
+    /* Stage 58 pattern: cache arr2 keys once so the
+     * arr1 walk is O(|arr1|+|arr2|) keyFn calls, not
+     * O(|arr1|*|arr2|). */
+    ObjArray *remaining_keys = NULL;
+    if (keyFn != NULL) {
+        remaining_keys = newArray(arr2->count);
+        push(OBJ_VAL(remaining_keys));  /* GC */
+        for (int i = 0; i < arr2->count; i++) {
+            push(OBJ_VAL(keyFn));
+            push(arr2->elements[i]);
+            Value k = callClosureFromNative(keyFn, 1);
+            arrayPush(remaining_keys, k);
+        }
+    }
     ObjArray *result = newArray(0);
     push(OBJ_VAL(result));  /* GC: keep alive while filling */
     /* Walk arr1. For each v, append to result AND
-     * remove one occurrence of v from remaining (if
-     * present). If v not in remaining, nothing to
-     * remove. By end of this loop, result has each v
-     * exactly count_in_arr1 times, and `remaining`
-     * holds the arr2 values with count > count_in_arr1
-     * (or count = count_in_arr1 if v not in arr1 but
-     * in arr2, leaving the full arr2 entries). */
+     * remove one key-match from remaining (if
+     * present). */
     for (int i = 0; i < arr1->count; i++) {
         Value elem = arr1->elements[i];
         arrayPush(result, elem);
+        Value key;
+        if (keyFn != NULL) {
+            push(OBJ_VAL(keyFn));
+            push(elem);
+            key = callClosureFromNative(keyFn, 1);
+        } else {
+            key = elem;
+        }
         for (int j = 0; j < remaining->count; j++) {
-            if (valuesEqual(elem, remaining->elements[j])) {
-                /* Match. Remove from remaining by shifting. */
+            Value candidate_key = (keyFn != NULL)
+                ? remaining_keys->elements[j]
+                : remaining->elements[j];
+            if (valuesEqual(key, candidate_key)) {
+                /* Match. Remove from remaining (+ keys)
+                 * by shifting. */
                 for (int k = j; k < remaining->count - 1; k++) {
                     remaining->elements[k] = remaining->elements[k + 1];
                 }
                 remaining->count--;
+                if (remaining_keys != NULL) {
+                    for (int k = j; k < remaining_keys->count - 1; k++) {
+                        remaining_keys->elements[k] =
+                            remaining_keys->elements[k + 1];
+                    }
+                    remaining_keys->count--;
+                }
                 break;  /* only remove ONE occurrence per arr1 elem */
             }
         }
     }
-    /* Append whatever's left in remaining. These are
-     * the arr2 values that are NOT yet in result
-     * (count_in_arr2 > count_in_arr1, OR v not in
-     * arr1). By the max(c1, c2) rule, we add them
-     * all. The first-appearance-in-arr2 order is
-     * preserved (because `remaining` is filled in
-     * arr2-order and only decremented, never
-     * reordered). */
+    /* Drain leftover remaining (arr2 extras by key). */
     for (int i = 0; i < remaining->count; i++) {
         arrayPush(result, remaining->elements[i]);
     }
     pop();  /* pop the result array */
+    if (remaining_keys != NULL) {
+        pop();  /* pop remaining_keys */
+    }
     pop();  /* pop the remaining array */
     return OBJ_VAL(result);
 }
@@ -4137,14 +4202,13 @@ void defineNatives(void) {
     tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayDropWhileNative)));
     pop();
 
-    /* Stage 56: array_union. Same "remaining copy"
-     * pattern as Stage 55, but the fill direction is
-     * different (one walks, one drains). The push/
-     * pop count is balanced: 1 push for the name,
-     * 1 pop after tableSet. */
+    /* Stage 56 + Stage 59: array_union, now with
+     * optional keyFn (Stage 59 extension). 2-arg form
+     * is Stage 56 multiset union; 3-arg form is union
+     * by key. push/pop balanced: 1 push name, 1 pop. */
     name = copyString("array_union", (int)strlen("array_union"));
     push(OBJ_VAL(name));
-    tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayUnionNative)));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayUnionByNative)));
     pop();
     /* Stage 57: array_difference. Third set
      * operation, completing the algebraic triad

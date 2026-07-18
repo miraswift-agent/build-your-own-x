@@ -1,0 +1,110 @@
+// Stage 59 example: array-union-by.lox
+// array_union(arr1, arr2, keyFn?) extends
+// Stage 56 with an optional key function. The
+// 2-arg form still does direct multiset union;
+// the 3-arg form unions by a derived key
+// (lodash _.unionBy style).
+//
+// Symmetric mirror of Stage 58's
+// array_intersect(arr1, arr2, keyFn?).
+
+print "=== array_union by key: objects ===";
+// Two lists of records. We want one record per
+// id, preferring arr1's element when both share
+// an id, then draining arr2 ids that arr1 lacks.
+class Item {}
+fun idOf(x) { return x.id; }
+
+var a = Item(); a.id = 1; a.name = "a";
+var b = Item(); b.id = 2; b.name = "b";
+var c = Item(); c.id = 1; c.name = "c";
+var d = Item(); d.id = 3; d.name = "d";
+
+var merged = array_union([a, b], [c, d], idOf);
+print "merged.len:" + string(array_length(merged));
+for (var i = 0; i < array_length(merged); i = i + 1) {
+    print array_get(merged, i).name;
+}
+// Output:
+//   merged.len:3
+//   a
+//   b
+//   d
+// (c's id=1 is consumed by a; d's id=3 is new)
+
+print "=== array_union by key: numbers ===";
+// Union numbers by a derived key: "large"
+// means > 2. Multiset-by-key: max counts.
+fun isLarge(n) { return n > 2; }
+
+// arr1 already covers true-count of arr2:
+// arr1 keys F F T T T (3 true), arr2 T T T (3 true)
+// -> result is all of arr1, no leftover arr2.
+var covered = array_union([1, 2, 3, 4, 5], [7, 8, 9], isLarge);
+print "covered.len:" + string(array_length(covered));
+for (var i = 0; i < array_length(covered); i = i + 1) {
+    print string(array_get(covered, i));
+}
+// Output:
+//   covered.len:5
+//   1
+//   2
+//   3
+//   4
+//   5
+
+// arr1 has fewer true-keys than arr2; leftover
+// arr2 elements drain after the arr1 walk.
+// arr1=[3] keys T(1); arr2=[7,8,9] keys TTT(3)
+// -> keep [3], drain two leftover trues: [3,8,9]
+// (7 was consumed as the match for 3).
+var extras = array_union([3], [7, 8, 9], isLarge);
+print "extras.len:" + string(array_length(extras));
+for (var i = 0; i < array_length(extras); i = i + 1) {
+    print string(array_get(extras, i));
+}
+// Output:
+//   extras.len:3
+//   3
+//   8
+//   9
+
+print "=== array_union 2-arg form still works ===";
+// Backward compatibility with Stage 56 multiset
+// union: count = max(c1, c2).
+var classic = array_union([1, 1, 2], [1, 2, 2]);
+print "classic.len:" + string(array_length(classic));
+for (var i = 0; i < array_length(classic); i = i + 1) {
+    print string(array_get(classic, i));
+}
+// Output:
+//   classic.len:4
+//   1
+//   1
+//   2
+//   2
+
+// --- What this stage teaches ---
+//
+// (a) "Symmetric family extensions are cheap
+//     once the first parameterized form ships"
+//     — Stage 58 paid for optional-closure +
+//     remaining_keys; Stage 59 reuses both on
+//     the union walk/drain with ~zero new
+//     architecture.
+//
+// (b) "Union's drain is the keyFn wrinkle"
+//     — intersect only walks arr1; union walks
+//     arr1 then drains leftover remaining. The
+//     key cache must stay in lockstep with
+//     remaining as matches are shifted out.
+//
+// (c) "Backward compatibility is free if the
+//     2-arg form is a shim" — Stage 56 call
+//     sites still work; Stage 59 adds capability
+//     without changing behavior.
+//
+// (d) "Parameterized set-ops pair is complete
+//     for the two most-used ops" — intersect-by
+//     and union-by. difference-by is the natural
+//     Stage 60 if Tom wants the full triad.

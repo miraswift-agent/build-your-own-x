@@ -6220,7 +6220,7 @@ static void test_array_union_does_not_mutate(void) {
 }
 
 static void test_array_union_wrong_arg_count(void) {
-    /* Defensive: 2 args required, not 1 or 3. */
+    /* Stage 59: 2 or 3 args valid; 1 or 4 error. */
     int exitCode;
     char *out1 = runClox("var t = array_union([1, 2]);\n", &exitCode);
     if (exitCode == 0) {
@@ -6230,13 +6230,130 @@ static void test_array_union_wrong_arg_count(void) {
     }
     free(out1);
 
-    char *out2 = runClox("var t = array_union([1], [2], [3]);\n", &exitCode);
+    char *out2 = runClox("var t = array_union([1], [2], 3, 4);\n", &exitCode);
     if (exitCode == 0) {
-        fail("stdlib/array-union-wrong-arg-count-3: expected non-zero exit for 3 args");
+        fail("stdlib/array-union-wrong-arg-count-4: expected non-zero exit for 4 args");
     } else {
         pass();
     }
     free(out2);
+}
+
+static void test_array_union_by_key_basic(void) {
+    /* Stage 59: array_union(arr1, arr2, keyFn?).
+     * keyFn(x) = x > 2.
+     * arr1 = [1, 2, 3, 4, 5] -> keys F F T T T
+     * arr2 = [7, 8, 9]      -> keys T T T
+     * max counts: T -> 3 (arr1 already has 3),
+     *             F -> 2 (only arr1).
+     * Result is all of arr1, no leftover arr2:
+     * [1, 2, 3, 4, 5]. */
+    int exitCode;
+    char *out = runClox(
+        "fun isLarge(x) { return x > 2; }\n"
+        "var r = array_union([1, 2, 3, 4, 5], [7, 8, 9], isLarge);\n"
+        "print array_length(r);\n"
+        "for (var i = 0; i < array_length(r); i = i + 1) {\n"
+        "    print array_get(r, i);\n"
+        "}\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-union-by-key-basic: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "5\n1\n2\n3\n4\n5\n")) {
+        fail("stdlib/array-union-by-key-basic: expected '5\n1\n2\n3\n4\n5\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_union_by_key_arr2_extras(void) {
+    /* arr1 has fewer true-keys than arr2; leftover
+     * arr2 elements with unmatched key counts drain.
+     * arr1 = [3]       -> T (1)
+     * arr2 = [7, 8, 9] -> T T T (3)
+     * max T = 3: keep [3] then drain two from arr2
+     * (first-remaining after consuming one match):
+     * [3, 8, 9] (7 consumed as the match for 3). */
+    int exitCode;
+    char *out = runClox(
+        "fun isLarge(x) { return x > 2; }\n"
+        "var r = array_union([3], [7, 8, 9], isLarge);\n"
+        "print array_length(r);\n"
+        "for (var i = 0; i < array_length(r); i = i + 1) {\n"
+        "    print array_get(r, i);\n"
+        "}\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-union-by-key-arr2-extras: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "3\n3\n8\n9\n")) {
+        fail("stdlib/array-union-by-key-arr2-extras: expected '3\n3\n8\n9\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_union_by_key_objects(void) {
+    /* Union by object id. arr1 has a,b; arr2 has c
+     * (id=1, same as a) and d (id=3, new).
+     * max(id1)=1, max(id2)=1, max(id3)=1.
+     * Result: a, b from arr1, then d from arr2
+     * (c's id=1 consumed by a). */
+    int exitCode;
+    char *out = runClox(
+        "class Item {}\n"
+        "fun getId(x) { return x.id; }\n"
+        "var a = Item(); a.id = 1; a.name = \"a\";\n"
+        "var b = Item(); b.id = 2; b.name = \"b\";\n"
+        "var c = Item(); c.id = 1; c.name = \"c\";\n"
+        "var d = Item(); d.id = 3; d.name = \"d\";\n"
+        "var r = array_union([a, b], [c, d], getId);\n"
+        "print array_length(r);\n"
+        "print array_get(r, 0).name;\n"
+        "print array_get(r, 1).name;\n"
+        "print array_get(r, 2).name;\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-union-by-key-objects: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "3\na\nb\nd\n")) {
+        fail("stdlib/array-union-by-key-objects: expected '3\na\nb\nd\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_union_by_key_omitted(void) {
+    /* 2-arg form is backward-compatible with Stage 56. */
+    int exitCode;
+    char *out = runClox(
+        "var r = array_union([1, 1, 2], [1, 2, 2]);\n"
+        "print array_length(r);\n"
+        "for (var i = 0; i < array_length(r); i = i + 1) {\n"
+        "    print array_get(r, i);\n"
+        "}\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-union-by-key-omitted: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "4\n1\n1\n2\n2\n")) {
+        fail("stdlib/array-union-by-key-omitted: expected '4\n1\n1\n2\n2\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_union_by_key_wrong_type(void) {
+    /* 3rd arg, if present, must be a function. */
+    int exitCode;
+    char *out = runClox("var t = array_union([1], [2], 99);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-union-by-key-wrong-type: expected non-zero exit for non-function keyFn");
+    } else {
+        pass();
+    }
+    free(out);
 }
 
 static void test_array_union_wrong_type(void) {
@@ -9238,6 +9355,12 @@ int main(void) {
     test_array_union_does_not_mutate();
     test_array_union_wrong_arg_count();
     test_array_union_wrong_type();
+    /* Stage 59: array_union with optional keyFn. */
+    test_array_union_by_key_basic();
+    test_array_union_by_key_arr2_extras();
+    test_array_union_by_key_objects();
+    test_array_union_by_key_omitted();
+    test_array_union_by_key_wrong_type();
     /* Stage 57: array_difference. */
     test_array_difference_basic();
     test_array_difference_empty_inputs();
