@@ -2795,70 +2795,44 @@ static Value arrayUnionByNative(int argCount, Value *args) {
     return OBJ_VAL(result);
 }
 
-/* Stage 57: array_difference(arr1, arr2) -> array.
- * Returns the multiset difference: result count of
- * each value v = max(0, count_in_arr1(v) -
- * count_in_arr2(v)). This is the third "set
- * operations" family native (intersect, union,
- * difference), completing the algebraic triad.
+/* Stage 57 + Stage 60: array_difference(arr1, arr2, keyFn?) -> array.
+ * Multiset difference of two arrays, with an optional
+ * keyFn for "difference by key" (symmetric extension
+ * of Stages 58/59). Signature: 2 or 3 args (array,
+ * array, optional 1-arg closure). When keyFn is
+ * omitted, comparison is direct valuesEqual (Stage 57
+ * multiset subtraction). When keyFn is supplied, two
+ * elements match iff their keyFn results are equal.
  *
- * Algorithm: build a "remaining" copy of arr2,
- * walk arr1, and for each v: if v is in remaining,
- * consume one copy of v (decrement) AND do NOT
- * append to result; if v is not in remaining, append
- * v to result. The result is arr1 with each v's count
- * reduced by min(c1(v), c2(v)) — the v's that are
- * "matched by arr2" are dropped, the v's that are
- * "extra in arr1 beyond arr2's count" are kept.
+ * Multiset-by-key semantics: result count of each
+ * key k = max(0, count_in_arr1 with keyFn=k -
+ * count_in_arr2 with keyFn=k). Order: arr1 order of
+ * the kept (unmatched) elements. No drain of arr2 —
+ * difference is one-directional (arr2-only keys never
+ * appear in the result).
  *
- * The fill direction is the inverse of Stages 55/56.
- * Stage 55 (intersect) walked arr1, kept only
- * matched v's. Stage 56 (union) walked arr1, kept
- * every v, then drained arr2 extras. Stage 57
- * (difference) walks arr1, drops matched v's,
- * keeps unmatched v's. `remaining` is decremented
- * on every match (like Stage 55/56) but the
- * condition for appending is inverted.
+ * Algorithm reuses Stage 57's inverted-fill walk
+ * (drop matches, keep non-matches) and Stage 58's
+ * optional-closure + remaining_keys cache:
+ * remaining = copy of arr2; optionally remaining_keys
+ * = keyFn(arr2[i]); walk arr1, for each elem compute
+ * key, if a remaining match exists consume it and
+ * DROP the elem, else KEEP. Key cache stays in
+ * lockstep with remaining on every shift (Stage 59
+ * lesson).
  *
- * Python's Counter - Counter uses max(0, c1 - c2).
- *
- * No user-code dispatch (no closure). Architecture
- * reuses Stage 12 (heap-allocated ObjArrays),
- * Stage 30 (push/pop discipline), Stage 40
- * (valuesEqual comparison), Stage 55 (the
- * "remaining copy" pattern), Stage 56 (the
- * "decrement remaining" loop). 2 pushes in the
- * function body (remaining, result), 2 pops after
- * the loop.
- *
- * Edge cases (multiset-correctness):
- * - array_difference([], x) -> [] (no arr1 elements to keep)
- * - array_difference(x, []) -> x (no arr2 elements to subtract)
- * - array_difference([1,2,3], [2,4]) -> [1,3] (2 matched and dropped)
- * - array_difference([1,1,2], [1]) -> [1,2] (one 1 dropped, one 1 kept, 2 kept)
- * - array_difference([1], [1,1,1]) -> [] (1 matched and dropped)
- * - array_difference([1,2,3], [4,5,6]) -> [1,2,3] (nothing matched, all kept)
- * - array_difference([1,1,1,1], [1,2]) -> [1,1,1] (one 1 dropped, 2 has no arr1 copies)
- * - array_difference([1,2], [1,1,1,1]) -> [2] (one 1 dropped, 2 kept, 3 arr2 1's ignored)
- *
- * The semantics are NOT the same as a unique-set
- * difference (`{1,2,3} - {2,4} = {1,3}`): a multiset
- * difference on [1,1,2,3] - [1] = [1,2,3] (one
- * 1 is dropped, but the OTHER 1 is kept). The
- * rationale for multiset (matches Stage 55/56): a
- * unique-set difference composes trivially from
- * `array_unique + array_filter`, but a multiset
- * difference has no short composition path.
- * Following Stage 55's "the native lives at the
- * gap" rationale. Tom-callable: if Tom prefers
- * unique-set semantics, the change is ~10 lines
- * (deduplicate arr1, deduplicate arr2, then
- * filter arr1 by membership in arr2 — losing
- * multiplicity information).
+ * Edge cases:
+ * - array_difference([], x, keyFn) -> []
+ * - array_difference(x, [], keyFn) -> x
+ * - array_difference([1,2,3], [2,4]) -> [1,3] (2-arg)
+ * - by isLarge (x>2): arr1=[1,2,3,4,5] arr2=[7,8]
+ *   keys F F T T T vs T T -> drop two trues -> [1,2,5]
+ * - by id: arr1=[a,b,d] ids 1,2,3; arr2=[c] id 1
+ *   -> drop a, keep b,d
  */
-static Value arrayDifferenceNative(int argCount, Value *args) {
-    if (argCount != 2) {
-        runtimeError("array_difference() takes 2 arguments (%d given).", argCount);
+static Value arrayDifferenceByNative(int argCount, Value *args) {
+    if (argCount < 2 || argCount > 3) {
+        runtimeError("array_difference() takes 2 or 3 arguments (%d given).", argCount);
         return NIL_VAL;  /* error sentinel */
     }
     if (!IS_ARRAY(args[0])) {
@@ -2869,40 +2843,72 @@ static Value arrayDifferenceNative(int argCount, Value *args) {
         runtimeError("array_difference() argument 1 must be an array.");
         return NIL_VAL;
     }
+    ObjClosure *keyFn = NULL;
+    if (argCount == 3) {
+        if (!IS_CLOSURE(args[2])) {
+            runtimeError("array_difference() argument 2 must be a function.");
+            return NIL_VAL;
+        }
+        keyFn = AS_CLOSURE(args[2]);
+    }
     ObjArray *arr1 = AS_ARRAY(args[0]);
     ObjArray *arr2 = AS_ARRAY(args[1]);
 
     /* Build a "remaining" copy of arr2 that we
      * decrement as matches from arr1 are found. Same
-     * pattern as Stage 55/56. */
+     * pattern as Stage 55/56/57. */
     ObjArray *remaining = newArray(arr2->count);
     push(OBJ_VAL(remaining));  /* GC: keep alive while filling */
     for (int i = 0; i < arr2->count; i++) {
         arrayPush(remaining, arr2->elements[i]);
     }
+    /* Stage 58 pattern: cache arr2 keys once so the
+     * arr1 walk is O(|arr1|+|arr2|) keyFn calls. */
+    ObjArray *remaining_keys = NULL;
+    if (keyFn != NULL) {
+        remaining_keys = newArray(arr2->count);
+        push(OBJ_VAL(remaining_keys));  /* GC */
+        for (int i = 0; i < arr2->count; i++) {
+            push(OBJ_VAL(keyFn));
+            push(arr2->elements[i]);
+            Value k = callClosureFromNative(keyFn, 1);
+            arrayPush(remaining_keys, k);
+        }
+    }
     ObjArray *result = newArray(0);
     push(OBJ_VAL(result));  /* GC: keep alive while filling */
-    /* Walk arr1. For each v: if v in remaining,
-     * consume one copy of v from remaining AND do NOT
-     * append to result. If v not in remaining, append
-     * v to result. The result is arr1 with each v's
-     * count reduced by min(c1(v), c2(v)) — the v's
-     * that are "matched by arr2" are dropped, the
-     * v's that are "extra in arr1 beyond arr2's count"
-     * are kept. The arr2 entries that are NOT in arr1
-     * are ignored (the multiset difference is
-     * one-directional: a v in arr2 with c2(v) > c1(v)
-     * doesn't appear in the result). */
+    /* Walk arr1. For each v: if key matches remaining,
+     * consume one match and DROP; else KEEP. Inverted
+     * fill vs Stages 55/56/58/59. No drain. */
     for (int i = 0; i < arr1->count; i++) {
         Value elem = arr1->elements[i];
+        Value key;
+        if (keyFn != NULL) {
+            push(OBJ_VAL(keyFn));
+            push(elem);
+            key = callClosureFromNative(keyFn, 1);
+        } else {
+            key = elem;
+        }
         bool matched = false;
         for (int j = 0; j < remaining->count; j++) {
-            if (valuesEqual(elem, remaining->elements[j])) {
-                /* Match. Remove from remaining by shifting. */
+            Value candidate_key = (keyFn != NULL)
+                ? remaining_keys->elements[j]
+                : remaining->elements[j];
+            if (valuesEqual(key, candidate_key)) {
+                /* Match. Remove from remaining (+ keys)
+                 * by shifting — lockstep (Stage 59). */
                 for (int k = j; k < remaining->count - 1; k++) {
                     remaining->elements[k] = remaining->elements[k + 1];
                 }
                 remaining->count--;
+                if (remaining_keys != NULL) {
+                    for (int k = j; k < remaining_keys->count - 1; k++) {
+                        remaining_keys->elements[k] =
+                            remaining_keys->elements[k + 1];
+                    }
+                    remaining_keys->count--;
+                }
                 matched = true;
                 break;  /* only consume ONE occurrence per arr1 elem */
             }
@@ -2912,6 +2918,9 @@ static Value arrayDifferenceNative(int argCount, Value *args) {
         }
     }
     pop();  /* pop the result array */
+    if (remaining_keys != NULL) {
+        pop();  /* pop remaining_keys */
+    }
     pop();  /* pop the remaining array */
     return OBJ_VAL(result);
 }
@@ -4210,17 +4219,15 @@ void defineNatives(void) {
     push(OBJ_VAL(name));
     tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayUnionByNative)));
     pop();
-    /* Stage 57: array_difference. Third set
-     * operation, completing the algebraic triad
-     * (intersect, union, difference). Same
-     * "remaining copy" pattern as Stage 55/56, but
-     * the condition for appending is inverted
-     * (matched arr1 elems are DROPPED, not kept).
-     * The push/pop count is balanced: 1 push for
-     * the name, 1 pop after tableSet. */
+    /* Stage 57 + Stage 60: array_difference, now with
+     * optional keyFn (Stage 60 extension). 2-arg form
+     * is Stage 57 multiset difference; 3-arg form is
+     * difference by key. Completes the parameterized
+     * set-ops triad (intersect/union/difference by
+     * key). push/pop balanced: 1 push name, 1 pop. */
     name = copyString("array_difference", (int)strlen("array_difference"));
     push(OBJ_VAL(name));
-    tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayDifferenceNative)));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayDifferenceByNative)));
     pop();
     /* Stage 58: array_intersect with optional
      * keyFn. The native is registered as

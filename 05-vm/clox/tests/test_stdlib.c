@@ -6612,7 +6612,7 @@ static void test_array_difference_does_not_mutate(void) {
 }
 
 static void test_array_difference_wrong_arg_count(void) {
-    /* 1 arg + 3 args both error. */
+    /* Stage 60: 2 or 3 args valid; 1 or 4 error. */
     int exitCode;
     char *out1 = runClox("var d = array_difference([1, 2]);\n", &exitCode);
     if (exitCode == 0) {
@@ -6622,9 +6622,9 @@ static void test_array_difference_wrong_arg_count(void) {
     }
     free(out1);
 
-    char *out2 = runClox("var d = array_difference([1, 2], [3], [4]);\n", &exitCode);
+    char *out2 = runClox("var d = array_difference([1], [2], 3, 4);\n", &exitCode);
     if (exitCode == 0) {
-        fail("stdlib/array-difference-wrong-arg-count-3args: expected non-zero exit for 3 args");
+        fail("stdlib/array-difference-wrong-arg-count-4args: expected non-zero exit for 4 args");
     } else {
         pass();
     }
@@ -6650,6 +6650,116 @@ static void test_array_difference_wrong_type(void) {
         pass();
     }
     free(out2);
+}
+
+static void test_array_difference_by_key_basic(void) {
+    /* Stage 60: array_difference(arr1, arr2, keyFn?).
+     * keyFn(x) = x > 2.
+     * arr1 = [1, 2, 3, 4, 5] -> keys F F T T T
+     * arr2 = [7, 8]          -> keys T T
+     * Drop two true-key arr1 elems (3 then 4);
+     * keep F F and the leftover true (5):
+     * [1, 2, 5]. */
+    int exitCode;
+    char *out = runClox(
+        "fun isLarge(x) { return x > 2; }\n"
+        "var r = array_difference([1, 2, 3, 4, 5], [7, 8], isLarge);\n"
+        "print array_length(r);\n"
+        "for (var i = 0; i < array_length(r); i = i + 1) {\n"
+        "    print array_get(r, i);\n"
+        "}\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-difference-by-key-basic: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "3\n1\n2\n5\n")) {
+        fail("stdlib/array-difference-by-key-basic: expected '3\n1\n2\n5\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_difference_by_key_multiset(void) {
+    /* Multiset-by-key: three trues in arr1, one in arr2
+     * -> drop one true, keep two.
+     * arr1 = [3, 4, 5] keys T T T; arr2 = [7] key T
+     * -> [4, 5] (3 consumed as the match). */
+    int exitCode;
+    char *out = runClox(
+        "fun isLarge(x) { return x > 2; }\n"
+        "var r = array_difference([3, 4, 5], [7], isLarge);\n"
+        "print array_length(r);\n"
+        "for (var i = 0; i < array_length(r); i = i + 1) {\n"
+        "    print array_get(r, i);\n"
+        "}\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-difference-by-key-multiset: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "2\n4\n5\n")) {
+        fail("stdlib/array-difference-by-key-multiset: expected '2\n4\n5\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_difference_by_key_objects(void) {
+    /* Difference by object id. arr1 has a,b,d (ids
+     * 1,2,3); arr2 has c (id=1). Drop a (id match),
+     * keep b and d. */
+    int exitCode;
+    char *out = runClox(
+        "class Item {}\n"
+        "fun getId(x) { return x.id; }\n"
+        "var a = Item(); a.id = 1; a.name = \"a\";\n"
+        "var b = Item(); b.id = 2; b.name = \"b\";\n"
+        "var c = Item(); c.id = 1; c.name = \"c\";\n"
+        "var d = Item(); d.id = 3; d.name = \"d\";\n"
+        "var r = array_difference([a, b, d], [c], getId);\n"
+        "print array_length(r);\n"
+        "print array_get(r, 0).name;\n"
+        "print array_get(r, 1).name;\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-difference-by-key-objects: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "2\nb\nd\n")) {
+        fail("stdlib/array-difference-by-key-objects: expected '2\nb\nd\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_difference_by_key_omitted(void) {
+    /* 2-arg form is backward-compatible with Stage 57. */
+    int exitCode;
+    char *out = runClox(
+        "var r = array_difference([1, 1, 2], [1]);\n"
+        "print array_length(r);\n"
+        "for (var i = 0; i < array_length(r); i = i + 1) {\n"
+        "    print array_get(r, i);\n"
+        "}\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-difference-by-key-omitted: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "2\n1\n2\n")) {
+        fail("stdlib/array-difference-by-key-omitted: expected '2\n1\n2\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_difference_by_key_wrong_type(void) {
+    /* 3rd arg, if present, must be a function. */
+    int exitCode;
+    char *out = runClox("var t = array_difference([1], [2], 99);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-difference-by-key-wrong-type: expected non-zero exit for non-function keyFn");
+    } else {
+        pass();
+    }
+    free(out);
 }
 
 static void test_array_group_by_three_groups(void) {
@@ -9373,6 +9483,12 @@ int main(void) {
     test_array_difference_does_not_mutate();
     test_array_difference_wrong_arg_count();
     test_array_difference_wrong_type();
+    /* Stage 60: array_difference with optional keyFn. */
+    test_array_difference_by_key_basic();
+    test_array_difference_by_key_multiset();
+    test_array_difference_by_key_objects();
+    test_array_difference_by_key_omitted();
+    test_array_difference_by_key_wrong_type();
     /* Stage 29: string_split with limit. */
     test_string_split_with_limit();
     test_string_split_limit_zero();

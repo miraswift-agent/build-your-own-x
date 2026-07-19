@@ -1,0 +1,76 @@
+// Stage 60 example: array-difference-by.lox
+// array_difference(arr1, arr2, keyFn?) extends
+// Stage 57 with an optional key function. The
+// 2-arg form still does direct multiset difference;
+// the 3-arg form subtracts by a derived key
+// (lodash _.differenceBy style).
+//
+// Completes the parameterized set-ops triad
+// with Stage 58's array_intersect(..., keyFn?)
+// and Stage 59's array_union(..., keyFn?).
+
+print "=== array_difference by key: objects ===";
+// Remove records from arr1 whose id appears in
+// arr2. Prefer arr1's element identity for keepers.
+class Item {}
+fun idOf(x) { return x.id; }
+
+var a = Item(); a.id = 1; a.name = "a";
+var b = Item(); b.id = 2; b.name = "b";
+var c = Item(); c.id = 1; c.name = "c";
+var d = Item(); d.id = 3; d.name = "d";
+
+var kept = array_difference([a, b, d], [c], idOf);
+print "kept.len:" + string(array_length(kept));
+for (var i = 0; i < array_length(kept); i = i + 1) {
+    print array_get(kept, i).name;
+}
+// Output:
+//   kept.len:2
+//   b
+//   d
+// (a's id=1 matched c and was dropped)
+
+print "=== array_difference by key: numbers ===";
+// Subtract numbers by a derived key: "large"
+// means > 2. Multiset-by-key: max(0, c1-c2).
+fun isLarge(n) { return n > 2; }
+
+// arr1 keys F F T T T (3 true), arr2 T T (2 true)
+// -> drop two trues, keep F F + leftover true:
+// [1, 2, 5]
+var basic = array_difference([1, 2, 3, 4, 5], [7, 8], isLarge);
+print "basic.len:" + string(array_length(basic));
+for (var i = 0; i < array_length(basic); i = i + 1) {
+    print string(array_get(basic, i));
+}
+// Output:
+//   basic.len:3
+//   1
+//   2
+//   5
+
+// Multiset: three trues minus one true -> two kept
+// arr1=[3,4,5] TTT; arr2=[7] T -> [4,5]
+var multi = array_difference([3, 4, 5], [7], isLarge);
+print "multi.len:" + string(array_length(multi));
+for (var i = 0; i < array_length(multi); i = i + 1) {
+    print string(array_get(multi, i));
+}
+// Output:
+//   multi.len:2
+//   4
+//   5
+
+print "=== array_difference 2-arg form still works ===";
+// Backward compatibility with Stage 57 multiset
+// difference: count = max(0, c1 - c2).
+var classic = array_difference([1, 1, 2], [1]);
+print "classic.len:" + string(array_length(classic));
+for (var i = 0; i < array_length(classic); i = i + 1) {
+    print string(array_get(classic, i));
+}
+// Output:
+//   classic.len:2
+//   1
+//   2
