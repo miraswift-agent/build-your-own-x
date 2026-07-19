@@ -6936,6 +6936,186 @@ static void test_array_slice_wrong_type(void) {
     free(out3);
 }
 
+/* ===== Stage 62: array_partition(arr, predicate) -> [pass, fail] ===== */
+
+static void test_array_partition_basic(void) {
+    int exitCode;
+    char *out = runClox(
+        "fun gt3(n) { return n > 3; }\n"
+        "var arr = [1, 2, 3, 4, 5, 6];\n"
+        "var p = array_partition(arr, gt3);\n"
+        "var passA = array_get(p, 0);\n"
+        "var failA = array_get(p, 1);\n"
+        "print array_length(p);\n"
+        "print array_length(passA);\n"
+        "print array_length(failA);\n"
+        "print string(array_get(passA, 0));\n"
+        "print string(array_get(passA, 1));\n"
+        "print string(array_get(passA, 2));\n"
+        "print string(array_get(failA, 0));\n"
+        "print string(array_get(failA, 1));\n"
+        "print string(array_get(failA, 2));\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-partition-basic: unexpected non-zero exit: %s", out);
+    } else if (!contains(out, "2\n3\n3\n4\n5\n6\n1\n2\n3\n")) {
+        fail("stdlib/array-partition-basic: unexpected output: '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_partition_empty(void) {
+    int exitCode;
+    char *out = runClox(
+        "fun always(x) { return true; }\n"
+        "var p = array_partition([], always);\n"
+        "print array_length(p);\n"
+        "print array_length(array_get(p, 0));\n"
+        "print array_length(array_get(p, 1));\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-partition-empty: unexpected non-zero exit: %s", out);
+    } else if (!contains(out, "2\n0\n0\n")) {
+        fail("stdlib/array-partition-empty: unexpected output: '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_partition_all_pass(void) {
+    int exitCode;
+    char *out = runClox(
+        "fun always(x) { return true; }\n"
+        "var p = array_partition([7, 8], always);\n"
+        "print array_length(array_get(p, 0));\n"
+        "print array_length(array_get(p, 1));\n"
+        "print string(array_get(array_get(p, 0), 0));\n"
+        "print string(array_get(array_get(p, 0), 1));\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-partition-all-pass: unexpected non-zero exit: %s", out);
+    } else if (!contains(out, "2\n0\n7\n8\n")) {
+        fail("stdlib/array-partition-all-pass: unexpected output: '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_partition_all_fail(void) {
+    int exitCode;
+    char *out = runClox(
+        "fun never(x) { return false; }\n"
+        "var p = array_partition([7, 8], never);\n"
+        "print array_length(array_get(p, 0));\n"
+        "print array_length(array_get(p, 1));\n"
+        "print string(array_get(array_get(p, 1), 0));\n"
+        "print string(array_get(array_get(p, 1), 1));\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-partition-all-fail: unexpected non-zero exit: %s", out);
+    } else if (!contains(out, "0\n2\n7\n8\n")) {
+        fail("stdlib/array-partition-all-fail: unexpected output: '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_partition_truthiness(void) {
+    /* Only false and nil are falsy; 0 and "" are truthy in clox. */
+    int exitCode;
+    char *out = runClox(
+        "fun id(x) { return x; }\n"
+        "var p = array_partition([0, false, \"\", nil, 1], id);\n"
+        "var passA = array_get(p, 0);\n"
+        "var failA = array_get(p, 1);\n"
+        "print array_length(passA);\n"
+        "print array_length(failA);\n"
+        "print array_get(passA, 0);\n"
+        "print array_get(passA, 1);\n"
+        "print array_get(passA, 2);\n"
+        "print array_get(failA, 0);\n"
+        "print array_get(failA, 1);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-partition-truthiness: unexpected non-zero exit: %s", out);
+    } else if (!contains(out, "3\n2\n0\n\n1\nfalse\nnil\n")) {
+        fail("stdlib/array-partition-truthiness: unexpected output: '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_partition_does_not_mutate(void) {
+    int exitCode;
+    char *out = runClox(
+        "fun gt3(n) { return n > 3; }\n"
+        "var arr = [1, 2, 3];\n"
+        "var p = array_partition(arr, gt3);\n"
+        "print array_length(arr);\n"
+        "print string(array_get(arr, 0));\n"
+        "print string(array_get(arr, 1));\n"
+        "print string(array_get(arr, 2));\n"
+        "print array_length(array_get(p, 0));\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-partition-no-mutate: unexpected non-zero exit: %s", out);
+    } else if (!contains(out, "3\n1\n2\n3\n0\n")) {
+        fail("stdlib/array-partition-no-mutate: unexpected output: '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_partition_wrong_arg_count(void) {
+    int exitCode;
+    char *out1 = runClox("var t = array_partition([1]);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-partition-argc-1: expected non-zero exit");
+    } else {
+        pass();
+    }
+    free(out1);
+    char *out2 = runClox(
+        "fun f(x) { return true; }\n"
+        "var t = array_partition([1], f, f);\n",
+        &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-partition-argc-3: expected non-zero exit");
+    } else {
+        pass();
+    }
+    free(out2);
+}
+
+static void test_array_partition_wrong_type(void) {
+    int exitCode;
+    char *out1 = runClox(
+        "fun f(x) { return true; }\n"
+        "var t = array_partition(42, f);\n",
+        &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-partition-type-arr: expected non-zero exit");
+    } else {
+        pass();
+    }
+    free(out1);
+    char *out2 = runClox("var t = array_partition([1], 99);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-partition-type-fn: expected non-zero exit");
+    } else {
+        pass();
+    }
+    free(out2);
+}
+
+
 static void test_array_group_by_three_groups(void) {
     /* Three distinct keys, in the order they first appear.
      * Numbers by signum: keyFn(x) = x > 0 (positive vs.
@@ -9672,6 +9852,15 @@ int main(void) {
     test_array_slice_full_copy();
     test_array_slice_wrong_arg_count();
     test_array_slice_wrong_type();
+    /* Stage 62: array_partition(arr, predicate) -> [pass, fail]. */
+    test_array_partition_basic();
+    test_array_partition_empty();
+    test_array_partition_all_pass();
+    test_array_partition_all_fail();
+    test_array_partition_truthiness();
+    test_array_partition_does_not_mutate();
+    test_array_partition_wrong_arg_count();
+    test_array_partition_wrong_type();
     /* Stage 29: string_split with limit. */
     test_string_split_with_limit();
     test_string_split_limit_zero();

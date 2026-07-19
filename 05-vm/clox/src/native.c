@@ -2443,6 +2443,79 @@ static Value arraySliceNative(int argCount, Value *args) {
     return OBJ_VAL(result);
 }
 
+/* Stage 62: array_partition(arr, predicate) -> array.
+ * Split `arr` into two arrays [pass, fail] where `pass` holds
+ * elements for which the 1-arg predicate is truthy and `fail`
+ * holds the rest, both preserving original order. Returns a
+ * 2-element array: index 0 = pass, index 1 = fail.
+ *
+ * lodash reference: _.partition. Python: no single builtin;
+ * list-comp pair. JS: no single Array method (filter + inverse).
+ *
+ * Why a native (not filter + filter-not):
+ * (1) one pass over the source; (2) one closure-dispatch cost
+ * per element instead of two; (3) the pair is a natural unit
+ * for "keep / reject" splits (e.g. adults/minors).
+ *
+ * The new wrinkle: **two result arrays under one outer array**,
+ * all three GC-protected while the predicate runs. Same
+ * truthiness rule as array_filter (only false and nil are
+ * falsy). Empty source -> [[], []]. Does not mutate source.
+ *
+ * Stage 44 push/pop lesson: push pass, fail, outer; pop in
+ * reverse before return. Registration: 1 push name + 1 pop. */
+static Value arrayPartitionNative(int argCount, Value *args) {
+    if (argCount != 2) {
+        runtimeError("array_partition() takes 2 arguments (%d given).",
+                     argCount);
+        return NIL_VAL;
+    }
+    if (!IS_ARRAY(args[0])) {
+        runtimeError("array_partition() argument 0 must be an array.");
+        return NIL_VAL;
+    }
+    if (!IS_CLOSURE(args[1])) {
+        runtimeError("array_partition() argument 1 must be a function.");
+        return NIL_VAL;
+    }
+    ObjArray *src = AS_ARRAY(args[0]);
+    ObjClosure *predicate = AS_CLOSURE(args[1]);
+    if (predicate->function->arity != 1) {
+        runtimeError("array_partition() predicate must take 1 argument (got %d).",
+                     predicate->function->arity);
+        return NIL_VAL;
+    }
+
+    /* Worst-case capacity: every element can land in either side. */
+    ObjArray *pass = newArray(src->count);
+    push(OBJ_VAL(pass));
+    ObjArray *fail = newArray(src->count);
+    push(OBJ_VAL(fail));
+    ObjArray *outer = newArray(2);
+    push(OBJ_VAL(outer));
+
+    for (int i = 0; i < src->count; i++) {
+        push(OBJ_VAL(predicate));  /* callee */
+        push(src->elements[i]);    /* arg 1 */
+        Value predResult = callClosureFromNative(predicate, 1);
+        bool keep = !(IS_BOOL(predResult) && !AS_BOOL(predResult))
+                 && !IS_NIL(predResult);
+        if (keep) {
+            arrayPush(pass, src->elements[i]);
+        } else {
+            arrayPush(fail, src->elements[i]);
+        }
+    }
+
+    arrayPush(outer, OBJ_VAL(pass));
+    arrayPush(outer, OBJ_VAL(fail));
+
+    pop();  /* outer */
+    pop();  /* fail */
+    pop();  /* pass */
+    return OBJ_VAL(outer);
+}
+
 /* Stage 38: array_flatten(arr) -> array.
  * Takes an array of arrays and returns a new flat array.
  * Stops at 1 level: inner arrays' elements become
@@ -4326,5 +4399,12 @@ void defineNatives(void) {
     name = copyString("array_slice", (int)strlen("array_slice"));
     push(OBJ_VAL(name));
     tableSet(&vm.globals, name, OBJ_VAL(newNative(arraySliceNative)));
+    pop();
+
+    /* Stage 62: array_partition(arr, predicate) -> [pass, fail].
+     * One-pass HO split. push/pop balanced: 1 push name, 1 pop. */
+    name = copyString("array_partition", (int)strlen("array_partition"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayPartitionNative)));
     pop();
 }
