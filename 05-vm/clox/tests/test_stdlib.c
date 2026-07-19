@@ -6762,6 +6762,180 @@ static void test_array_difference_by_key_wrong_type(void) {
     free(out);
 }
 
+/* ===== Stage 61: array_slice(arr, start, end?) -> array ===== */
+
+static void test_array_slice_basic(void) {
+    /* Half-open [start, end): middle of the array. */
+    int exitCode;
+    char *out = runClox(
+        "var arr = [10, 20, 30, 40, 50];\n"
+        "var s = array_slice(arr, 1, 4);\n"
+        "print array_length(s);\n"
+        "print string(array_get(s, 0));\n"
+        "print string(array_get(s, 1));\n"
+        "print string(array_get(s, 2));\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-slice-basic: unexpected non-zero exit: %s", out);
+    } else if (!contains(out, "3\n20\n30\n40\n")) {
+        fail("stdlib/array-slice-basic: expected '3\n20\n30\n40\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_slice_omit_end(void) {
+    /* 2-arg form: slice from start to end of array. */
+    int exitCode;
+    char *out = runClox(
+        "var arr = [10, 20, 30, 40, 50];\n"
+        "var s = array_slice(arr, 2);\n"
+        "print array_length(s);\n"
+        "print string(array_get(s, 0));\n"
+        "print string(array_get(s, 1));\n"
+        "print string(array_get(s, 2));\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-slice-omit-end: unexpected non-zero exit: %s", out);
+    } else if (!contains(out, "3\n30\n40\n50\n")) {
+        fail("stdlib/array-slice-omit-end: expected '3\n30\n40\n50\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_slice_negative_indices(void) {
+    /* JS-style: negative start/end count from the end. */
+    int exitCode;
+    char *out = runClox(
+        "var arr = [10, 20, 30, 40, 50];\n"
+        "var s = array_slice(arr, -3, -1);\n"
+        "print array_length(s);\n"
+        "print string(array_get(s, 0));\n"
+        "print string(array_get(s, 1));\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-slice-negative: unexpected non-zero exit: %s", out);
+    } else if (!contains(out, "2\n30\n40\n")) {
+        fail("stdlib/array-slice-negative: expected '2\n30\n40\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_slice_clamp_and_empty(void) {
+    /* start past end -> []; end past len clamps; end <= start -> []. */
+    int exitCode;
+    char *out = runClox(
+        "var arr = [1, 2, 3];\n"
+        "var a = array_slice(arr, 10);\n"
+        "var b = array_slice(arr, 1, 99);\n"
+        "var c = array_slice(arr, 2, 2);\n"
+        "var d = array_slice(arr, 2, 1);\n"
+        "print array_length(a);\n"
+        "print array_length(b);\n"
+        "print string(array_get(b, 0));\n"
+        "print string(array_get(b, 1));\n"
+        "print array_length(c);\n"
+        "print array_length(d);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-slice-clamp: unexpected non-zero exit: %s", out);
+    } else if (!contains(out, "0\n2\n2\n3\n0\n0\n")) {
+        fail("stdlib/array-slice-clamp: expected '0\n2\n2\n3\n0\n0\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_slice_does_not_mutate(void) {
+    int exitCode;
+    char *out = runClox(
+        "var arr = [1, 2, 3, 4];\n"
+        "var s = array_slice(arr, 1, 3);\n"
+        "print array_length(arr);\n"
+        "print string(array_get(arr, 0));\n"
+        "print string(array_get(arr, 3));\n"
+        "print array_length(s);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-slice-no-mutate: unexpected non-zero exit: %s", out);
+    } else if (!contains(out, "4\n1\n4\n2\n")) {
+        fail("stdlib/array-slice-no-mutate: expected '4\n1\n4\n2\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_slice_full_copy(void) {
+    /* array_slice(arr, 0) is a full shallow copy. */
+    int exitCode;
+    char *out = runClox(
+        "var arr = [7, 8, 9];\n"
+        "var s = array_slice(arr, 0);\n"
+        "print array_length(s);\n"
+        "print string(array_get(s, 0));\n"
+        "print string(array_get(s, 1));\n"
+        "print string(array_get(s, 2));\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-slice-full-copy: unexpected non-zero exit: %s", out);
+    } else if (!contains(out, "3\n7\n8\n9\n")) {
+        fail("stdlib/array-slice-full-copy: expected '3\n7\n8\n9\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_slice_wrong_arg_count(void) {
+    int exitCode;
+    char *out1 = runClox("var t = array_slice([1, 2, 3]);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-slice-wrong-arg-count: expected non-zero exit for 1 arg");
+    } else {
+        pass();
+    }
+    free(out1);
+    char *out2 = runClox("var t = array_slice([1], 0, 1, 2);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-slice-wrong-arg-count: expected non-zero exit for 4 args");
+    } else {
+        pass();
+    }
+    free(out2);
+}
+
+static void test_array_slice_wrong_type(void) {
+    int exitCode;
+    char *out1 = runClox("var t = array_slice(42, 0);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-slice-wrong-type: expected non-zero exit for non-array");
+    } else {
+        pass();
+    }
+    free(out1);
+    char *out2 = runClox("var t = array_slice([1, 2], \"x\");\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-slice-wrong-type: expected non-zero exit for non-number start");
+    } else {
+        pass();
+    }
+    free(out2);
+    char *out3 = runClox("var t = array_slice([1, 2], 0, \"y\");\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-slice-wrong-type: expected non-zero exit for non-number end");
+    } else {
+        pass();
+    }
+    free(out3);
+}
+
 static void test_array_group_by_three_groups(void) {
     /* Three distinct keys, in the order they first appear.
      * Numbers by signum: keyFn(x) = x > 0 (positive vs.
@@ -9489,6 +9663,15 @@ int main(void) {
     test_array_difference_by_key_objects();
     test_array_difference_by_key_omitted();
     test_array_difference_by_key_wrong_type();
+    /* Stage 61: array_slice(arr, start, end?). */
+    test_array_slice_basic();
+    test_array_slice_omit_end();
+    test_array_slice_negative_indices();
+    test_array_slice_clamp_and_empty();
+    test_array_slice_does_not_mutate();
+    test_array_slice_full_copy();
+    test_array_slice_wrong_arg_count();
+    test_array_slice_wrong_type();
     /* Stage 29: string_split with limit. */
     test_string_split_with_limit();
     test_string_split_limit_zero();

@@ -2367,6 +2367,82 @@ static Value arrayDropNative(int argCount, Value *args) {
     return OBJ_VAL(result);
 }
 
+/* Stage 61: array_slice(arr, start, end?) -> array.
+ * Returns a new array containing elements from index
+ * `start` (inclusive) up to but not including `end`
+ * (exclusive). If `end` is omitted, slices to the end
+ * of the array. Neither input is mutated.
+ *
+ * JS reference: Array.prototype.slice (exclusive end,
+ * negative indices count from the end, then clamp).
+ * Python reference: list[start:end] (same exclusive end;
+ * negatives from end). lodash _.slice is similar.
+ *
+ * Why this is not just array_take(array_drop(arr, start),
+ * end-start): (1) optional end; (2) negative indices;
+ * (3) one native call / one allocation instead of two;
+ * (4) end is an absolute index, not a length — the
+ * composition form is easy to get wrong at the edges.
+ *
+ * The new wrinkle: **half-open range + optional end +
+ * JS-style negative indices**, all clamped to [0, len].
+ * First 1-D range native (start/end), distinct from the
+ * take/drop family which only speak in "first N / skip N".
+ *
+ * Edge cases:
+ * - array_slice(arr, 0) -> full copy
+ * - array_slice(arr, n) where n >= len -> []
+ * - array_slice(arr, -k) -> last k (if k <= len)
+ * - array_slice(arr, start, end) with end <= start -> []
+ * - array_slice(arr, start, end) with end > len -> clamp
+ * - empty source -> []
+ *
+ * Stage 44 push/pop lesson: 1 push result, 1 pop. */
+static Value arraySliceNative(int argCount, Value *args) {
+    if (argCount < 2 || argCount > 3) {
+        runtimeError("array_slice() takes 2 or 3 arguments (%d given).",
+                     argCount);
+        return NIL_VAL;
+    }
+    if (!IS_ARRAY(args[0])) {
+        runtimeError("array_slice() argument 0 must be an array.");
+        return NIL_VAL;
+    }
+    if (!IS_NUMBER(args[1])) {
+        runtimeError("array_slice() argument 1 must be a number.");
+        return NIL_VAL;
+    }
+    if (argCount == 3 && !IS_NUMBER(args[2])) {
+        runtimeError("array_slice() argument 2 must be a number.");
+        return NIL_VAL;
+    }
+
+    ObjArray *arr = AS_ARRAY(args[0]);
+    int len = arr->count;
+    int start = (int)AS_NUMBER(args[1]);
+    int end = (argCount == 3) ? (int)AS_NUMBER(args[2]) : len;
+
+    /* JS-style negatives: count from the end. */
+    if (start < 0) start = len + start;
+    if (end < 0) end = len + end;
+
+    /* Clamp to [0, len]. */
+    if (start < 0) start = 0;
+    if (end < 0) end = 0;
+    if (start > len) start = len;
+    if (end > len) end = len;
+    if (end < start) end = start;
+
+    int count = end - start;
+    ObjArray *result = newArray(count);
+    push(OBJ_VAL(result));  /* GC: keep alive while filling */
+    for (int i = start; i < end; i++) {
+        arrayPush(result, arr->elements[i]);
+    }
+    pop();  /* pop the result array */
+    return OBJ_VAL(result);
+}
+
 /* Stage 38: array_flatten(arr) -> array.
  * Takes an array of arrays and returns a new flat array.
  * Stops at 1 level: inner arrays' elements become
@@ -4240,5 +4316,15 @@ void defineNatives(void) {
     name = copyString("array_intersect", (int)strlen("array_intersect"));
     push(OBJ_VAL(name));
     tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayIntersectByNative)));
+    pop();
+
+    /* Stage 61: array_slice(arr, start, end?) -> array.
+     * Half-open 1-D range with optional end and JS-style
+     * negative indices. Complements take/drop (N-count
+     * family) with absolute start/end indices. push/pop
+     * balanced: 1 push name, 1 pop after tableSet. */
+    name = copyString("array_slice", (int)strlen("array_slice"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(arraySliceNative)));
     pop();
 }
