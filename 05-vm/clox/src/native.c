@@ -2516,6 +2516,70 @@ static Value arrayPartitionNative(int argCount, Value *args) {
     return OBJ_VAL(outer);
 }
 
+/* Stage 63: array_flat_map(arr, mapper) -> array.
+ * Map each element through a 1-arg closure, then flatten
+ * one level: if the mapped value is an array, append its
+ * elements; otherwise append the value itself. Does not
+ * recurse into nested arrays inside the mapped arrays.
+ * Does not mutate the source.
+ *
+ * JS reference: Array.prototype.flatMap. lodash: _.flatMap.
+ *
+ * Why a native (not array_flatten(array_map(...))):
+ * (1) one pass; (2) mapper can return mixed scalars and
+ * arrays without a long-lived intermediate nest; (3) standard
+ * HO primitive next to map/filter/partition.
+ *
+ * The new wrinkle: map + 1-level flatten with unknown result
+ * length (grow via arrayPush; capacity starts at src->count).
+ *
+ * Stage 44 push/pop: 1 push result, 1 pop. Registration:
+ * 1 push name + 1 pop. */
+static Value arrayFlatMapNative(int argCount, Value *args) {
+    if (argCount != 2) {
+        runtimeError("array_flat_map() takes 2 arguments (%d given).",
+                     argCount);
+        return NIL_VAL;
+    }
+    if (!IS_ARRAY(args[0])) {
+        runtimeError("array_flat_map() argument 0 must be an array.");
+        return NIL_VAL;
+    }
+    if (!IS_CLOSURE(args[1])) {
+        runtimeError("array_flat_map() argument 1 must be a function.");
+        return NIL_VAL;
+    }
+    ObjArray *src = AS_ARRAY(args[0]);
+    ObjClosure *mapper = AS_CLOSURE(args[1]);
+    if (mapper->function->arity != 1) {
+        runtimeError("array_flat_map() mapper must take 1 argument (got %d).",
+                     mapper->function->arity);
+        return NIL_VAL;
+    }
+
+    ObjArray *result = newArray(src->count);
+    push(OBJ_VAL(result));  /* GC: keep alive while mapping */
+
+    for (int i = 0; i < src->count; i++) {
+        push(OBJ_VAL(mapper));  /* callee */
+        push(src->elements[i]); /* arg 1 */
+        Value mapped = callClosureFromNative(mapper, 1);
+        if (IS_ARRAY(mapped)) {
+            ObjArray *inner = AS_ARRAY(mapped);
+            push(mapped);  /* keep mapped array live while copying */
+            for (int j = 0; j < inner->count; j++) {
+                arrayPush(result, inner->elements[j]);
+            }
+            pop();  /* mapped array */
+        } else {
+            arrayPush(result, mapped);
+        }
+    }
+
+    pop();  /* result */
+    return OBJ_VAL(result);
+}
+
 /* Stage 38: array_flatten(arr) -> array.
  * Takes an array of arrays and returns a new flat array.
  * Stops at 1 level: inner arrays' elements become
@@ -4406,5 +4470,12 @@ void defineNatives(void) {
     name = copyString("array_partition", (int)strlen("array_partition"));
     push(OBJ_VAL(name));
     tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayPartitionNative)));
+    pop();
+
+    /* Stage 63: array_flat_map(arr, mapper) -> array.
+     * Map + 1-level flatten. push/pop balanced: 1 push name, 1 pop. */
+    name = copyString("array_flat_map", (int)strlen("array_flat_map"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayFlatMapNative)));
     pop();
 }

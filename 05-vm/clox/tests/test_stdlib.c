@@ -7116,6 +7116,203 @@ static void test_array_partition_wrong_type(void) {
 }
 
 
+
+/* ===== Stage 63: array_flat_map(arr, mapper) -> array ===== */
+
+static void test_array_flat_map_basic(void) {
+    int exitCode;
+    char *out = runClox(
+        "fun pair(x) { return [x, x]; }\n"
+        "var r = array_flat_map([1, 2, 3], pair);\n"
+        "print array_length(r);\n"
+        "print array_get(r, 0);\n"
+        "print array_get(r, 1);\n"
+        "print array_get(r, 2);\n"
+        "print array_get(r, 3);\n"
+        "print array_get(r, 4);\n"
+        "print array_get(r, 5);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-flat-map-basic: unexpected non-zero exit: %s", out);
+    } else if (strcmp(out, "6\n1\n1\n2\n2\n3\n3\n") != 0) {
+        fail("stdlib/array-flat-map-basic: unexpected output: '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_flat_map_scalar_mapper(void) {
+    /* Mapper returns scalars only — behaves like array_map. */
+    int exitCode;
+    char *out = runClox(
+        "fun double(x) { return x * 2; }\n"
+        "var r = array_flat_map([1, 2, 3], double);\n"
+        "print array_length(r);\n"
+        "print array_get(r, 0);\n"
+        "print array_get(r, 1);\n"
+        "print array_get(r, 2);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-flat-map-scalar: unexpected non-zero exit: %s", out);
+    } else if (strcmp(out, "3\n2\n4\n6\n") != 0) {
+        fail("stdlib/array-flat-map-scalar: unexpected output: '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_flat_map_mixed(void) {
+    /* Some returns are arrays, some scalars. */
+    int exitCode;
+    char *out = runClox(
+        "fun m(x) {\n"
+        "  if (x == 2) { return [20, 21]; }\n"
+        "  return x;\n"
+        "}\n"
+        "var r = array_flat_map([1, 2, 3], m);\n"
+        "print array_length(r);\n"
+        "print array_get(r, 0);\n"
+        "print array_get(r, 1);\n"
+        "print array_get(r, 2);\n"
+        "print array_get(r, 3);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-flat-map-mixed: unexpected non-zero exit: %s", out);
+    } else if (strcmp(out, "4\n1\n20\n21\n3\n") != 0) {
+        fail("stdlib/array-flat-map-mixed: unexpected output: '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_flat_map_empty(void) {
+    int exitCode;
+    char *out = runClox(
+        "fun f(x) { return [x]; }\n"
+        "var r = array_flat_map([], f);\n"
+        "print array_length(r);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-flat-map-empty: unexpected non-zero exit: %s", out);
+    } else if (strcmp(out, "0\n") != 0) {
+        fail("stdlib/array-flat-map-empty: unexpected output: '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_flat_map_empty_inner(void) {
+    /* Mapper may return empty arrays — contribute nothing. */
+    int exitCode;
+    char *out = runClox(
+        "fun maybe(x) {\n"
+        "  if (x == 2) { return []; }\n"
+        "  return [x];\n"
+        "}\n"
+        "var r = array_flat_map([1, 2, 3], maybe);\n"
+        "print array_length(r);\n"
+        "print array_get(r, 0);\n"
+        "print array_get(r, 1);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-flat-map-empty-inner: unexpected non-zero exit: %s", out);
+    } else if (strcmp(out, "2\n1\n3\n") != 0) {
+        fail("stdlib/array-flat-map-empty-inner: unexpected output: '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_flat_map_no_recurse(void) {
+    /* Nested arrays inside mapped arrays are NOT flattened further. */
+    int exitCode;
+    char *out = runClox(
+        "fun nest(x) { return [[x]]; }\n"
+        "var r = array_flat_map([1, 2], nest);\n"
+        "print array_length(r);\n"
+        "print array_length(array_get(r, 0));\n"
+        "print array_get(array_get(r, 0), 0);\n"
+        "print array_get(array_get(r, 1), 0);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-flat-map-no-recurse: unexpected non-zero exit: %s", out);
+    } else if (strcmp(out, "2\n1\n1\n2\n") != 0) {
+        fail("stdlib/array-flat-map-no-recurse: unexpected output: '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_flat_map_does_not_mutate(void) {
+    int exitCode;
+    char *out = runClox(
+        "var arr = [1, 2];\n"
+        "fun pair(x) { return [x, x]; }\n"
+        "var r = array_flat_map(arr, pair);\n"
+        "print array_length(arr);\n"
+        "print array_get(arr, 0);\n"
+        "print array_get(arr, 1);\n"
+        "print array_length(r);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-flat-map-no-mutate: unexpected non-zero exit: %s", out);
+    } else if (strcmp(out, "2\n1\n2\n4\n") != 0) {
+        fail("stdlib/array-flat-map-no-mutate: unexpected output: '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_flat_map_wrong_arg_count(void) {
+    int exitCode;
+    char *out1 = runClox("var t = array_flat_map([1]);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-flat-map-argc-1: expected non-zero exit");
+    } else {
+        pass();
+    }
+    free(out1);
+    char *out2 = runClox(
+        "fun f(x) { return x; }\n"
+        "var t = array_flat_map([1], f, f);\n",
+        &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-flat-map-argc-3: expected non-zero exit");
+    } else {
+        pass();
+    }
+    free(out2);
+}
+
+static void test_array_flat_map_wrong_type(void) {
+    int exitCode;
+    char *out1 = runClox(
+        "fun f(x) { return x; }\n"
+        "var t = array_flat_map(42, f);\n",
+        &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-flat-map-type-arr: expected non-zero exit");
+    } else {
+        pass();
+    }
+    free(out1);
+    char *out2 = runClox("var t = array_flat_map([1], 99);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-flat-map-type-fn: expected non-zero exit");
+    } else {
+        pass();
+    }
+    free(out2);
+}
+
+
 static void test_array_group_by_three_groups(void) {
     /* Three distinct keys, in the order they first appear.
      * Numbers by signum: keyFn(x) = x > 0 (positive vs.
@@ -9861,6 +10058,16 @@ int main(void) {
     test_array_partition_does_not_mutate();
     test_array_partition_wrong_arg_count();
     test_array_partition_wrong_type();
+    /* Stage 63: array_flat_map(arr, mapper) -> array. */
+    test_array_flat_map_basic();
+    test_array_flat_map_scalar_mapper();
+    test_array_flat_map_mixed();
+    test_array_flat_map_empty();
+    test_array_flat_map_empty_inner();
+    test_array_flat_map_no_recurse();
+    test_array_flat_map_does_not_mutate();
+    test_array_flat_map_wrong_arg_count();
+    test_array_flat_map_wrong_type();
     /* Stage 29: string_split with limit. */
     test_string_split_with_limit();
     test_string_split_limit_zero();

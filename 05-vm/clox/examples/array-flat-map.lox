@@ -1,0 +1,50 @@
+// Stage 63: array_flat_map — map then flatten one level.
+// JS flatMap / lodash _.flatMap.
+
+fun pair(x) {
+  return [x, x * 10];
+}
+
+var nums = [1, 2, 3];
+var expanded = array_flat_map(nums, pair);
+// expected: 1, 10, 2, 20, 3, 30
+print array_length(expanded);
+print array_get(expanded, 0);
+print array_get(expanded, 1);
+print array_get(expanded, 2);
+print array_get(expanded, 3);
+print array_get(expanded, 4);
+print array_get(expanded, 5);
+
+// Scalar mapper acts like map
+fun double(x) {
+  return x * 2;
+}
+var doubled = array_flat_map([4, 5], double);
+print array_get(doubled, 0); // 8
+print array_get(doubled, 1); // 10
+
+// Empty inners drop out (explicit membership, not float mod)
+fun maybe_keep(x) {
+  if (x == 2) {
+    return [];
+  }
+  if (x == 4) {
+    return [];
+  }
+  return [x];
+}
+var kept = array_flat_map([1, 2, 3, 4, 5], maybe_keep);
+print array_length(kept); // 3
+print array_get(kept, 0); // 1
+print array_get(kept, 1); // 3
+print array_get(kept, 2); // 5
+
+// No deep flatten
+fun nest(x) {
+  return [[x]];
+}
+var nested = array_flat_map([9], nest);
+print array_length(nested); // 1 (one inner array)
+print array_length(array_get(nested, 0)); // 1
+print array_get(array_get(nested, 0), 0); // 9
