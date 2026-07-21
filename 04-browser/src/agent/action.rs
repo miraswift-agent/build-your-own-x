@@ -8,6 +8,14 @@ use crate::html::dom::DOCUMENT_NODE_ID;
 use super::page::Page;
 
 /// A single agent action.
+///
+/// Honesty contract (partial-browser semantics):
+/// - **Real DOM side effects:** [`Click`], [`Type`], [`Select`] (attribute-level).
+/// - **Partial / no viewport model:** [`Scroll`] — logged only; message tagged `stub`.
+/// - **Partial / no pointer events:** [`Hover`] — requires a matching element, then
+///   logs only; message tagged `stub`.
+/// - **Not wired on this path:** [`Evaluate`] — returns `Err` (use CDP/`eval` CLI).
+/// - **Real wait:** [`Wait`] sleeps the calling thread.
 #[derive(Debug, Clone)]
 pub enum Action {
     /// Click the element matching `selector`.
@@ -15,14 +23,22 @@ pub enum Action {
     /// Type `text` into the element matching `selector`.
     Type(String, String),
     /// Scroll the page by `(x, y)` pixels.
+    ///
+    /// **Stub:** no viewport/layout model — records intent only.
     Scroll(i32, i32),
     /// Pick `value` in the `<select>` matching `selector`.
     Select(String, String),
-    /// Hover over the element matching `selector` (logged only).
+    /// Hover over the element matching `selector`.
+    ///
+    /// **Stub:** verifies the element exists, then logs only (no pointer events,
+    /// no `:hover` CSS).
     Hover(String),
     /// Pause execution for `duration`.
     Wait(Duration),
-    /// Evaluate a JavaScript expression (logged; JS bridge not wired here).
+    /// Evaluate a JavaScript expression.
+    ///
+    /// **Not implemented on `Page::execute`.** Returns `Err` so callers cannot
+    /// mistake a log line for a real JS result. Use the CDP/CLI eval path.
     Evaluate(String),
 }
 
@@ -48,17 +64,21 @@ impl ActionChain {
 
 impl Page {
     /// Execute a single [`Action`] and return a log message describing what happened.
+    ///
+    /// See [`Action`] for which variants are real vs stub vs not-wired.
     pub fn execute(&mut self, action: Action) -> Result<String, String> {
         match action {
             Action::Click(ref selector) => {
                 let node_id = {
-                    let doc = self.doc.lock().unwrap();
+                    let doc = self.lock_doc()?;
                     query_selector(&doc, DOCUMENT_NODE_ID, selector)
                         .map_err(|e| format!("selector error: {e}"))?
                 };
                 match node_id {
                     Some(id) => {
-                        let tag = self.doc.lock().unwrap().nodes[id]
+                        let tag = self
+                            .lock_doc()?
+                            .nodes[id]
                             .tag_name()
                             .unwrap_or("?")
                             .to_string();
@@ -72,13 +92,13 @@ impl Page {
 
             Action::Type(ref selector, ref text) => {
                 let node_id = {
-                    let doc = self.doc.lock().unwrap();
+                    let doc = self.lock_doc()?;
                     query_selector(&doc, DOCUMENT_NODE_ID, selector)
                         .map_err(|e| format!("selector error: {e}"))?
                 };
                 match node_id {
                     Some(id) => {
-                        self.doc.lock().unwrap().set_attribute(id, "value", text);
+                        self.lock_doc_mut()?.set_attribute(id, "value", text);
                         let msg = format!("[type] selector={selector:?} text={text:?}");
                         eprintln!("{msg}");
                         Ok(msg)
@@ -88,20 +108,23 @@ impl Page {
             }
 
             Action::Scroll(x, y) => {
-                let msg = format!("[scroll] dx={x} dy={y}");
+                // No viewport/layout engine — admit the stub in the success string.
+                let msg = format!(
+                    "[scroll:stub] dx={x} dy={y} (no viewport model; intent logged only)"
+                );
                 eprintln!("{msg}");
                 Ok(msg)
             }
 
             Action::Select(ref selector, ref value) => {
                 let node_id = {
-                    let doc = self.doc.lock().unwrap();
+                    let doc = self.lock_doc()?;
                     query_selector(&doc, DOCUMENT_NODE_ID, selector)
                         .map_err(|e| format!("selector error: {e}"))?
                 };
                 match node_id {
                     Some(id) => {
-                        self.doc.lock().unwrap().set_attribute(id, "value", value);
+                        self.lock_doc_mut()?.set_attribute(id, "value", value);
                         let msg = format!("[select] selector={selector:?} value={value:?}");
                         eprintln!("{msg}");
                         Ok(msg)
@@ -111,9 +134,28 @@ impl Page {
             }
 
             Action::Hover(ref selector) => {
-                let msg = format!("[hover] selector={selector:?}");
-                eprintln!("{msg}");
-                Ok(msg)
+                // Require a match (unlike the old always-Ok path) but still no pointer events.
+                let node_id = {
+                    let doc = self.lock_doc()?;
+                    query_selector(&doc, DOCUMENT_NODE_ID, selector)
+                        .map_err(|e| format!("selector error: {e}"))?
+                };
+                match node_id {
+                    Some(id) => {
+                        let tag = self
+                            .lock_doc()?
+                            .nodes[id]
+                            .tag_name()
+                            .unwrap_or("?")
+                            .to_string();
+                        let msg = format!(
+                            "[hover:stub] <{tag}> selector={selector:?} node_id={id} (no pointer events)"
+                        );
+                        eprintln!("{msg}");
+                        Ok(msg)
+                    }
+                    None => Err(format!("no element matches selector {selector:?}")),
+                }
             }
 
             Action::Wait(duration) => {
@@ -122,11 +164,10 @@ impl Page {
                 Ok(msg)
             }
 
-            Action::Evaluate(ref script) => {
-                let msg = format!("[eval] {script:?}");
-                eprintln!("{msg}");
-                Ok(msg)
-            }
+            Action::Evaluate(ref script) => Err(format!(
+                "Action::Evaluate is not wired on Page::execute (script={script:?}); \
+                 use CDP Runtime.evaluate or `agent-browser eval` — refusing silent stub success"
+            )),
         }
     }
 

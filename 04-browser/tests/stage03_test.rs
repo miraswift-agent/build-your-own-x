@@ -283,7 +283,7 @@ async fn integration_fetch_example_com() {
     assert_eq!(response.content_type, ContentType::Html);
     assert!(!response.body.is_empty());
 
-    let body = response.body_as_str();
+    let body = response.body_as_str().expect("utf8 body");
     assert!(body.contains("Example Domain") || body.contains("<html"));
 }
 
@@ -300,7 +300,8 @@ async fn integration_fetch_https_certificate_verification() {
         .expect("HTTPS fetch failed");
     assert_eq!(response.status, 200);
     assert_eq!(response.content_type, ContentType::Html);
-    assert!(response.body_as_str().contains("IANA") || response.body_as_str().contains("html"));
+    let body = response.body_as_str().expect("utf8 body");
+    assert!(body.contains("IANA") || body.contains("html"));
 }
 
 #[tokio::test]
@@ -349,7 +350,7 @@ async fn integration_redirect_following() {
         response.redirect_count > 0,
         "expected at least one redirect"
     );
-    assert_eq!(response.body_as_str(), "redirect-ok");
+    assert_eq!(response.body_as_str().expect("utf8 body"), "redirect-ok");
 
     server.await.expect("server task");
 }
@@ -365,7 +366,7 @@ async fn integration_fetch_and_parse_dom() {
     let response = client.get(&url, &mut jar).await.expect("fetch failed");
     assert_eq!(response.status, 200);
 
-    let html = response.body_as_str();
+    let html = response.body_as_str().expect("utf8 body");
     let doc = parse(html);
 
     // example.com has exactly one h1

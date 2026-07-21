@@ -71,8 +71,34 @@ pub struct HttpResponse {
 }
 
 impl HttpResponse {
-    pub fn body_as_str(&self) -> &str {
-        std::str::from_utf8(&self.body).unwrap_or("")
+    /// Strict UTF-8 decode of the response body.
+    ///
+    /// Prefer this over [`body_as_str_lossy`] when the body will be parsed as
+    /// HTML/JSON/text — a binary or mislabeled body must not silently become "".
+    pub fn body_text(&self) -> Result<&str, String> {
+        std::str::from_utf8(&self.body).map_err(|e| {
+            format!(
+                "response body is not valid UTF-8 at byte {}: {e} ({} body bytes, content_type={})",
+                e.valid_up_to(),
+                self.body.len(),
+                self.content_type.as_str()
+            )
+        })
+    }
+
+    /// Lossy decode: invalid sequences become U+FFFD. Never panics, never hides
+    /// non-UTF8 by returning an empty string (the old `body_as_str` footgun).
+    pub fn body_as_str_lossy(&self) -> std::borrow::Cow<'_, str> {
+        String::from_utf8_lossy(&self.body)
+    }
+
+    /// Backward-compatible alias for [`body_text`].
+    ///
+    /// Historical note: this used to return `""` on invalid UTF-8, which made
+    /// binary responses look like empty pages. Callers that want lossy decode
+    /// should use [`body_as_str_lossy`] explicitly.
+    pub fn body_as_str(&self) -> Result<&str, String> {
+        self.body_text()
     }
 
     pub fn header(&self, name: &str) -> Option<&str> {
@@ -414,5 +440,43 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.contains("exceeded limit"));
+    }
+
+    fn sample_response(body: Vec<u8>, content_type: ContentType) -> HttpResponse {
+        HttpResponse {
+            status: 200,
+            headers: HashMap::new(),
+            body,
+            final_url: Url::parse("https://example.com/").unwrap(),
+            content_type,
+            redirect_count: 0,
+        }
+    }
+
+    #[test]
+    fn body_text_accepts_valid_utf8() {
+        let resp = sample_response(b"hello".to_vec(), ContentType::Html);
+        assert_eq!(resp.body_text().unwrap(), "hello");
+        assert_eq!(resp.body_as_str().unwrap(), "hello");
+    }
+
+    #[test]
+    fn body_text_rejects_invalid_utf8_instead_of_empty_string() {
+        // Invalid UTF-8 continuation byte — old body_as_str returned "".
+        let resp = sample_response(vec![0x68, 0x69, 0xff, 0x21], ContentType::Html);
+        let err = resp.body_text().unwrap_err();
+        assert!(err.contains("not valid UTF-8"), "err={err}");
+        assert!(err.contains("content_type=text/html"), "err={err}");
+        // Lossy path still available and non-empty.
+        let lossy = resp.body_as_str_lossy();
+        assert!(lossy.contains('h'));
+        assert!(lossy.contains('\u{fffd}') || lossy.contains('!'));
+    }
+
+    #[test]
+    fn body_text_reports_binary_content_type() {
+        let resp = sample_response(vec![0x00, 0xff], ContentType::Binary);
+        let err = resp.body_text().unwrap_err();
+        assert!(err.contains("application/octet-stream"), "err={err}");
     }
 }

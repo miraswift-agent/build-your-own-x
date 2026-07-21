@@ -397,25 +397,34 @@ fn action_type_sets_value_attribute() {
 }
 
 #[test]
-fn action_scroll_always_succeeds() {
+fn action_scroll_is_honest_stub() {
     let mut page = simple_page();
     let result = page.execute(Action::Scroll(0, 200));
     assert!(result.is_ok());
-    assert!(result.unwrap().contains("scroll"));
+    let msg = result.unwrap();
+    assert!(msg.contains("scroll"), "msg={msg}");
+    assert!(msg.contains("stub"), "scroll must admit stub: {msg}");
 }
 
 #[test]
-fn action_hover_always_succeeds() {
+fn action_hover_requires_element_and_admits_stub() {
     let mut page = simple_page();
     let result = page.execute(Action::Hover("h1".to_string()));
-    assert!(result.is_ok());
+    assert!(result.is_ok(), "hover existing: {result:?}");
+    let msg = result.unwrap();
+    assert!(msg.contains("stub"), "hover must admit stub: {msg}");
+
+    let missing = page.execute(Action::Hover("#no-such".to_string()));
+    assert!(missing.is_err(), "hover missing must err, got {missing:?}");
 }
 
 #[test]
-fn action_evaluate_always_succeeds() {
+fn action_evaluate_refuses_silent_stub_success() {
     let mut page = simple_page();
     let result = page.execute(Action::Evaluate("document.title".to_string()));
-    assert!(result.is_ok());
+    assert!(result.is_err(), "Evaluate must not pretend to run JS");
+    let err = result.unwrap_err();
+    assert!(err.contains("not wired"), "err={err}");
 }
 
 #[test]

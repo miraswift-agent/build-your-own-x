@@ -554,7 +554,13 @@ async fn run_fetch(args: &[String], prog: &str) {
     }
 
     if do_accessibility || do_parse {
-        let body_str = response.body_as_str();
+        let body_str = match response.body_text() {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("error: {e}");
+                std::process::exit(1);
+            }
+        };
         let doc = parse(body_str);
 
         if show_errors && !doc.errors.is_empty() {

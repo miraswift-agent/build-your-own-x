@@ -40,6 +40,22 @@ impl Page {
         }
     }
 
+    /// Lock the page DOM, mapping poison to an error instead of panicking.
+    pub(crate) fn lock_doc(
+        &self,
+    ) -> Result<std::sync::MutexGuard<'_, Document>, String> {
+        self.doc
+            .lock()
+            .map_err(|_| "page DOM mutex poisoned".to_string())
+    }
+
+    /// Mutable lock of the page DOM, mapping poison to an error.
+    pub(crate) fn lock_doc_mut(
+        &self,
+    ) -> Result<std::sync::MutexGuard<'_, Document>, String> {
+        self.lock_doc()
+    }
+
     /// Create a Page from a raw HTML string (no network, for tests and offline use).
     pub fn from_html(html: &str) -> Self {
         let doc = parse(html);
@@ -72,10 +88,10 @@ impl Page {
         let client = HttpClient::with_defaults();
         self.load_state = LoadState::Loading;
         let response = client.get(&parsed, &mut self.cookies).await?;
-        let html = response.body_as_str().to_string();
+        let html = response.body_text()?.to_string();
         let doc = parse(&html);
         let final_url = response.final_url.as_str().to_string();
-        *self.doc.lock().unwrap() = doc;
+        *self.lock_doc_mut()? = doc;
         // Truncate forward history, then push.
         if !self.history.is_empty() {
             self.history.truncate(self.history_pos + 1);
@@ -89,16 +105,21 @@ impl Page {
 
     /// Serialise the current DOM as an HTML string.
     pub fn content(&self) -> String {
-        let doc = self.doc.lock().unwrap();
-        doc.outer_html(DOCUMENT_NODE_ID)
+        match self.lock_doc() {
+            Ok(doc) => doc.outer_html(DOCUMENT_NODE_ID),
+            Err(_) => String::new(),
+        }
     }
 
     /// Return the text content of the `<title>` element, or empty string.
     pub fn title(&self) -> String {
-        let doc = self.doc.lock().unwrap();
-        doc.find_element("title")
-            .map(|id| doc.text_content(id))
-            .unwrap_or_default()
+        match self.lock_doc() {
+            Ok(doc) => doc
+                .find_element("title")
+                .map(|id| doc.text_content(id))
+                .unwrap_or_default(),
+            Err(_) => String::new(),
+        }
     }
 
     /// The current page URL (set by `goto` / `from_html_with_url`).
@@ -112,9 +133,9 @@ impl Page {
         let parsed = Url::parse(&url)?;
         let client = HttpClient::with_defaults();
         let response = client.get(&parsed, &mut self.cookies).await?;
-        let html = response.body_as_str().to_string();
+        let html = response.body_text()?.to_string();
         let doc = parse(&html);
-        *self.doc.lock().unwrap() = doc;
+        *self.lock_doc_mut()? = doc;
         self.load_state = LoadState::Loaded;
         Ok(())
     }
@@ -147,10 +168,15 @@ impl Page {
         if let Ok(parsed) = Url::parse(url) {
             let client = HttpClient::with_defaults();
             if let Ok(resp) = client.get(&parsed, &mut self.cookies).await {
-                let html = resp.body_as_str().to_string();
-                let doc = parse(&html);
-                *self.doc.lock().unwrap() = doc;
-                self.load_state = LoadState::Loaded;
+                if let Ok(html) = resp.body_text() {
+                    let doc = parse(html);
+                    if let Ok(mut guard) = self.lock_doc_mut() {
+                        *guard = doc;
+                    } else {
+                        return;
+                    }
+                    self.load_state = LoadState::Loaded;
+                }
             }
         }
     }
@@ -160,7 +186,7 @@ impl Page {
         let start = Instant::now();
         loop {
             let found = {
-                let doc = self.doc.lock().unwrap();
+                let doc = self.lock_doc()?;
                 query_selector(&doc, DOCUMENT_NODE_ID, selector)
                     .ok()
                     .flatten()
@@ -181,7 +207,9 @@ impl Page {
     /// Return a human-readable text representation of visible content
     /// (the accessibility tree / text content, not rendered pixels).
     pub fn screenshot(&self) -> String {
-        let doc = self.doc.lock().unwrap();
+        let Ok(doc) = self.lock_doc() else {
+            return String::new();
+        };
         let mut out = String::new();
         collect_visible_text(&doc, DOCUMENT_NODE_ID, &mut out);
         out
