@@ -48,6 +48,7 @@ void initVM(void) {
 
     initTable(&vm.globals);
     initTable(&vm.strings);
+    vm.scriptPath = NULL;
 
     defineNatives();
 }
@@ -633,7 +634,10 @@ static InterpretResult run(void) {
 #undef BINARY_OP
 }
 
-InterpretResult interpret(const char *source) {
+InterpretResult interpret(const char *source, const char *pathOrNull) {
+    /* Stage 64.0: remember path for future import resolution.
+     * NULL means REPL / anonymous — imports will resolve vs cwd. */
+    vm.scriptPath = pathOrNull;
     initLox(source);
     ObjFunction *function = compile(source);
     if (function == NULL) return INTERPRET_COMPILE_ERROR;

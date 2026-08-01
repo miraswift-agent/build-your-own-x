@@ -117,14 +117,14 @@ static void repl(void) {
          * failed, the buffer is reset — a failed REPL input is discarded
          * because partial input is more confusing to recover from than
          * to start fresh. */
-        interpret(source);
+        interpret(source, NULL);  /* REPL: no script path */
         source[0] = '\0';
     }
 }
 
 static int runFile(const char *path) {
     char *source = readFile(path);
-    InterpretResult result = interpret(source);
+    InterpretResult result = interpret(source, path);
     free(source);
 
     if (result == INTERPRET_COMPILE_ERROR) exit(65);

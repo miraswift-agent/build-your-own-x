@@ -53,6 +53,9 @@ typedef struct {
 
     Table globals;
     Table strings;
+    /* Stage 64.0: path of the script currently being interpreted
+     * (argv path or NULL for REPL). Used later for import resolution. */
+    const char *scriptPath;
     ObjUpvalue *openUpvalues;
 
     size_t bytesAllocated;
@@ -72,7 +75,9 @@ void push(Value value);
 Value pop(void);
 Value peek(int distance);
 
-InterpretResult interpret(const char *source);
+/* pathOrNull: filesystem path of this source for module resolution,
+ * or NULL when running from the REPL / anonymous buffer. */
+InterpretResult interpret(const char *source, const char *pathOrNull);
 
 void collectGarbage(void);
 
