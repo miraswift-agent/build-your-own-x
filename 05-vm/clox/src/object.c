@@ -157,6 +157,16 @@ Value arrayRead(ObjArray *array, int index) {
     return array->elements[index];
 }
 
+/* --- Stage 64.1: ObjModule --- */
+
+ObjModule *newModule(ObjString *name) {
+    ObjModule *module = ALLOCATE_OBJ(ObjModule, OBJ_MODULE);
+    module->name = name;
+    module->state = MODULE_LOADING;
+    initTable(&module->exports);
+    return module;
+}
+
 void printObject(Value value) {
     switch (OBJ_TYPE(value)) {
         case OBJ_STRING:
@@ -200,6 +210,9 @@ void printObject(Value value) {
             }
             printf("]");
             break;
+        case OBJ_MODULE:
+            printf("<module %s>", AS_MODULE(value)->name->chars);
+            break;
     }
 }
 
@@ -214,6 +227,7 @@ const char *objectTypeName(Obj *obj) {
         case OBJ_INSTANCE:     return "instance";
         case OBJ_BOUND_METHOD: return "bound method";
         case OBJ_ARRAY:        return "array";
+        case OBJ_MODULE:       return "module";
     }
     return "object";
 }

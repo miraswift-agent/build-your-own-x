@@ -56,6 +56,8 @@ typedef struct {
     /* Stage 64.0: path of the script currently being interpreted
      * (argv path or NULL for REPL). Used later for import resolution. */
     const char *scriptPath;
+    /* Stage 64.1: path string → ObjModule cache (one load per path). */
+    Table modules;
     ObjUpvalue *openUpvalues;
 
     size_t bytesAllocated;

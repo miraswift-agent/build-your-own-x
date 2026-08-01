@@ -48,6 +48,7 @@ void initVM(void) {
 
     initTable(&vm.globals);
     initTable(&vm.strings);
+    initTable(&vm.modules);
     vm.scriptPath = NULL;
 
     defineNatives();
@@ -56,6 +57,7 @@ void initVM(void) {
 void freeVM(void) {
     freeTable(&vm.globals);
     freeTable(&vm.strings);
+    freeTable(&vm.modules);
     freeObjects();
 }
 

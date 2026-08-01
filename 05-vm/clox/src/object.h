@@ -22,7 +22,8 @@ typedef enum {
     OBJ_CLASS,
     OBJ_INSTANCE,
     OBJ_BOUND_METHOD,
-    OBJ_ARRAY  /* Stage 12a: arrays are first-class heap values */
+    OBJ_ARRAY,  /* Stage 12a: arrays are first-class heap values */
+    OBJ_MODULE /* Stage 64.1: imported module (path + exports table) */
 } ObjType;
 
 struct Obj {
@@ -92,6 +93,17 @@ typedef struct {
     int capacity;
 } ObjArray;
 
+/* Stage 64.1 — module load state (see stage-64-modules-design.md). */
+#define MODULE_LOADING 0
+#define MODULE_LOADED  1
+
+typedef struct {
+    Obj obj;
+    ObjString *name;   /* resolved path key (interned) */
+    Table exports;     /* top-level bindings of the module */
+    int state;         /* MODULE_LOADING | MODULE_LOADED */
+} ObjModule;
+
 #define OBJ_TYPE(value)     (AS_OBJ(value)->type)
 #define IS_STRING(value)    isObjType(value, OBJ_STRING)
 #define IS_FUNCTION(value)  isObjType(value, OBJ_FUNCTION)
@@ -101,6 +113,7 @@ typedef struct {
 #define IS_INSTANCE(value)  isObjType(value, OBJ_INSTANCE)
 #define IS_BOUND_METHOD(value) isObjType(value, OBJ_BOUND_METHOD)
 #define IS_ARRAY(value)        isObjType(value, OBJ_ARRAY)
+#define IS_MODULE(value)       isObjType(value, OBJ_MODULE)
 
 #define AS_STRING(value)    ((ObjString*)AS_OBJ(value))
 #define AS_CSTRING(value)   (((ObjString*)AS_OBJ(value))->chars)
@@ -111,6 +124,7 @@ typedef struct {
 #define AS_INSTANCE(value)  ((ObjInstance*)AS_OBJ(value))
 #define AS_BOUND_METHOD(value) ((ObjBoundMethod*)AS_OBJ(value))
 #define AS_ARRAY(value)        ((ObjArray*)AS_OBJ(value))
+#define AS_MODULE(value)       ((ObjModule*)AS_OBJ(value))
 
 static inline bool isObjType(Value value, ObjType type) {
     return IS_OBJ(value) && AS_OBJ(value)->type == type;
@@ -126,6 +140,7 @@ ObjClass *newClass(ObjString *name);
 ObjInstance *newInstance(ObjClass *klass);
 ObjBoundMethod *newBoundMethod(Value receiver, ObjClosure *method);
 ObjArray *newArray(int initialCapacity);
+ObjModule *newModule(ObjString *name);
 void arrayWrite(ObjArray *array, int index, Value value);
 void arrayPush(ObjArray *array, Value value);
 Value arrayRead(ObjArray *array, int index);

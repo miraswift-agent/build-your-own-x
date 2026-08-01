@@ -105,6 +105,12 @@ static void blackenObject(Obj *object) {
             }
             break;
         }
+        case OBJ_MODULE: {
+            ObjModule *module = (ObjModule*)object;
+            markObject((Obj*)module->name);
+            markTable(&module->exports);
+            break;
+        }
     }
 }
 
@@ -125,6 +131,7 @@ static void markRoots(void) {
 
     markTable(&vm.globals);
     markTable(&vm.strings);
+    markTable(&vm.modules);  /* Stage 64.1: cached modules by path */
     markCompilerRoots();
 }
 
@@ -229,6 +236,12 @@ void freeObject(Obj *object) {
             ObjArray *array = (ObjArray*)object;
             FREE_ARRAY(Value, array->elements, array->capacity);
             FREE(ObjArray, object);
+            break;
+        }
+        case OBJ_MODULE: {
+            ObjModule *module = (ObjModule*)object;
+            freeTable(&module->exports);
+            FREE(ObjModule, object);
             break;
         }
     }

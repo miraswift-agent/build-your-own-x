@@ -3362,6 +3362,8 @@ static Value typeofNative(int argCount, Value *args) {
              * typeof([1, 2, 3]) returns "array" (matches the
              * mental model and the JS-ish convention). */
             case OBJ_ARRAY:        name = "array";   break;
+            /* Stage 64.1 */
+            case OBJ_MODULE:       name = "module";  break;
             default:               name = "object";   break;
         }
     } else {
