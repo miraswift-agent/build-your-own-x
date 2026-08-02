@@ -1,0 +1,6 @@
+// Stage 64.4 — half of a cycle; functions only (safe init order).
+import "cycle_b.lox" as b;
+
+fun ping() {
+  return b.pong();
+}

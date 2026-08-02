@@ -61,11 +61,16 @@ typedef struct ObjUpvalue {
     struct ObjUpvalue *next;
 } ObjUpvalue;
 
+/* Forward decl — full ObjModule below; closures remember defining module
+ * so OP_GET_GLOBAL can resolve exports after currentModule is cleared. */
+typedef struct ObjModule ObjModule;
+
 typedef struct {
     Obj obj;
     ObjFunction *function;
     ObjUpvalue **upvalues;
     int upvalueCount;
+    ObjModule *module; /* Stage 64.4: NULL = main/REPL globals */
 } ObjClosure;
 
 typedef struct {
@@ -97,12 +102,12 @@ typedef struct {
 #define MODULE_LOADING 0
 #define MODULE_LOADED  1
 
-typedef struct {
+struct ObjModule {
     Obj obj;
     ObjString *name;   /* resolved path key (interned) */
     Table exports;     /* top-level bindings of the module */
     int state;         /* MODULE_LOADING | MODULE_LOADED */
-} ObjModule;
+};
 
 #define OBJ_TYPE(value)     (AS_OBJ(value)->type)
 #define IS_STRING(value)    isObjType(value, OBJ_STRING)

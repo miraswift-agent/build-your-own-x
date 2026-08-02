@@ -72,6 +72,7 @@ static void blackenObject(Obj *object) {
         case OBJ_CLOSURE: {
             ObjClosure *closure = (ObjClosure*)object;
             markObject((Obj*)closure->function);
+            markObject((Obj*)closure->module); /* Stage 64.4 */
             for (int i = 0; i < closure->upvalueCount; i++) {
                 markObject((Obj*)closure->upvalues[i]);
             }

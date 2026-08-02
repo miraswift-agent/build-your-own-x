@@ -95,6 +95,9 @@ ObjClosure *newClosure(ObjFunction *function) {
     closure->function = function;
     closure->upvalues = upvalues;
     closure->upvalueCount = function->upvalueCount;
+    /* Stage 64.4: capture defining module so nested funs still see exports
+     * after vm.currentModule is restored (cycle/call-from-main case). */
+    closure->module = vm.currentModule;
     return closure;
 }
 

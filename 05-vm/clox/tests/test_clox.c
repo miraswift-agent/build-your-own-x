@@ -639,6 +639,70 @@ static void testImportTopLevelOnly(void) {
     free(out);
 }
 
+/* Stage 64.4 — mutual import with functions only (cycle-safe init order). */
+static void testImportCycleFunctionsOk(void) {
+    system("mkdir -p /tmp/clox_mod_fixture");
+    writeFile("/tmp/clox_mod_fixture/cycle_a.lox",
+              "import \"cycle_b.lox\" as b;\n"
+              "fun ping() { return b.pong(); }\n");
+    writeFile("/tmp/clox_mod_fixture/cycle_b.lox",
+              "import \"cycle_a.lox\" as a;\n"
+              "fun pong() { return 42; }\n");
+    writeFile("/tmp/clox_mod_fixture/cycle_main.lox",
+              "import \"cycle_a.lox\" as a;\n"
+              "print a.ping();\n");
+    int exitCode;
+    char* out = runCloxPath("/tmp/clox_mod_fixture/cycle_main.lox", &exitCode);
+    if (exitCode != 0) {
+        fail("import cycle funs: expected exit 0, got %d (%s)", exitCode, out);
+    } else if (!outputsEqual(out, "42\n")) {
+        fail("import cycle funs: unexpected output '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+/* Stage 64.4 — reading peer export while peer is still LOADING → loud error. */
+static void testImportCycleLoadingGetError(void) {
+    writeFile("/tmp/clox_mod_fixture/load_a.lox",
+              "import \"load_b.lox\" as b;\n"
+              "var ready = true;\n");
+    writeFile("/tmp/clox_mod_fixture/load_b.lox",
+              "import \"load_a.lox\" as a;\n"
+              "print a.ready;\n"
+              "var done = true;\n");
+    writeFile("/tmp/clox_mod_fixture/load_main.lox",
+              "import \"load_a.lox\" as a;\n"
+              "print a.ready;\n");
+    int exitCode;
+    char* out = runCloxPath("/tmp/clox_mod_fixture/load_main.lox", &exitCode);
+    if (exitCode == 0) {
+        fail("import cycle loading: expected runtime error, got ok (%s)", out);
+    } else if (strstr(out, "still loading") == NULL) {
+        fail("import cycle loading: missing 'still loading', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+/* Stage 64.4 — missing module path. */
+static void testImportMissingFile(void) {
+    writeFile("/tmp/clox_mod_fixture/missing_main.lox",
+              "import \"no_such_module.lox\" as m;\n");
+    int exitCode;
+    char* out = runCloxPath("/tmp/clox_mod_fixture/missing_main.lox", &exitCode);
+    if (exitCode == 0) {
+        fail("import missing: expected error, got ok");
+    } else if (strstr(out, "Could not load module") == NULL) {
+        fail("import missing: wrong error text '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
 int main(void) {
     testArithmetic();
     testComparison();
@@ -674,6 +738,11 @@ int main(void) {
     testImportBasic();
     testImportCacheIdentity();
     testImportTopLevelOnly();
+
+    /* Stage 64.4: cycles + missing file. */
+    testImportCycleFunctionsOk();
+    testImportCycleLoadingGetError();
+    testImportMissingFile();
 
     printf("%d passed, %d failed\n", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;

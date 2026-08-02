@@ -1,0 +1,4 @@
+// Stage 64.4 — drive a↔b cycle after both finish loading.
+import "cycle_a.lox" as a;
+
+print a.ping();

@@ -444,10 +444,14 @@ static InterpretResult run(void) {
             case OP_GET_GLOBAL: {
                 ObjString *name = READ_STRING();
                 Value value;
-                /* Stage 64.2: module body globals live in exports; natives
-                 * and main-script bindings stay on vm.globals. Fall through. */
-                if (vm.currentModule != NULL &&
-                    tableGet(&vm.currentModule->exports, name, &value)) {
+                /* Stage 64.2/64.4: resolve against the *defining* module of the
+                 * running closure (not only vm.currentModule). After import
+                 * returns, currentModule is restored, but funs still need their
+                 * home exports (imports, top-level vars). Natives stay on
+                 * vm.globals via fall-through. */
+                ObjModule *home = frame->closure->module;
+                if (home == NULL) home = vm.currentModule;
+                if (home != NULL && tableGet(&home->exports, name, &value)) {
                     push(value);
                     break;
                 }
@@ -470,10 +474,12 @@ static InterpretResult run(void) {
             }
             case OP_SET_GLOBAL: {
                 ObjString *name = READ_STRING();
-                if (vm.currentModule != NULL) {
+                ObjModule *home = frame->closure->module;
+                if (home == NULL) home = vm.currentModule;
+                if (home != NULL) {
                     Value existing;
-                    if (tableGet(&vm.currentModule->exports, name, &existing)) {
-                        tableSet(&vm.currentModule->exports, name, peek(0));
+                    if (tableGet(&home->exports, name, &existing)) {
+                        tableSet(&home->exports, name, peek(0));
                         break;
                     }
                 }

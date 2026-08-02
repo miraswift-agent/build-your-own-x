@@ -1,0 +1,6 @@
+// Stage 64.4 — other half of the cycle.
+import "cycle_a.lox" as a;
+
+fun pong() {
+  return 42;
+}
