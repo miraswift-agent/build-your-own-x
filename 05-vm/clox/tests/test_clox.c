@@ -703,6 +703,49 @@ static void testImportMissingFile(void) {
     free(out);
 }
 
+/* Stage 64.5 — entry script is a module; peer can import it without re-run. */
+static void testMainAsModuleCycle(void) {
+    system("mkdir -p /tmp/clox_mod_fixture");
+    writeFile("/tmp/clox_mod_fixture/mam_main.lox",
+              "import \"mam_back.lox\" as b;\n"
+              "var mark = 7;\n"
+              "print b.see();\n");
+    writeFile("/tmp/clox_mod_fixture/mam_back.lox",
+              "import \"mam_main.lox\" as m;\n"
+              "fun see() { return m.mark; }\n");
+    int exitCode;
+    char* out = runCloxPath("/tmp/clox_mod_fixture/mam_main.lox", &exitCode);
+    if (exitCode != 0) {
+        fail("main-as-module: expected exit 0, got %d (%s)", exitCode, out);
+    } else if (!outputsEqual(out, "7\n")) {
+        fail("main-as-module: unexpected output '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+/* Stage 64.5 — entry top-level still callable after load via export. */
+static void testMainAsModuleExport(void) {
+    writeFile("/tmp/clox_mod_fixture/mam_lib.lox",
+              "fun hi() { return 99; }\n");
+    writeFile("/tmp/clox_mod_fixture/mam_entry.lox",
+              "import \"mam_lib.lox\" as lib;\n"
+              "fun wrap() { return lib.hi(); }\n"
+              "print wrap();\n"
+              "print typeof(wrap);\n");
+    int exitCode;
+    char* out = runCloxPath("/tmp/clox_mod_fixture/mam_entry.lox", &exitCode);
+    if (exitCode != 0) {
+        fail("main export: expected exit 0, got %d (%s)", exitCode, out);
+    } else if (!outputsEqual(out, "99\nfunction\n")) {
+        fail("main export: unexpected output '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
 int main(void) {
     testArithmetic();
     testComparison();
@@ -743,6 +786,10 @@ int main(void) {
     testImportCycleFunctionsOk();
     testImportCycleLoadingGetError();
     testImportMissingFile();
+
+    /* Stage 64.5: main script is a module. */
+    testMainAsModuleCycle();
+    testMainAsModuleExport();
 
     printf("%d passed, %d failed\n", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;

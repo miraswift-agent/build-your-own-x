@@ -1,0 +1,5 @@
+// Stage 64.5 — entry is a module; peer may import this path.
+import "mam_back.lox" as b;
+
+var mark = 7;
+print b.see();

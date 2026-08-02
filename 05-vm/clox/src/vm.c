@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 #include "chunk.h"
 #include "common.h"
@@ -231,6 +232,26 @@ static ObjString *resolveImportPath(ObjString *rel) {
     }
     out[pos] = '\0';
     return copyString(out, (int)pos);
+}
+
+/* Stage 64.5: absolute+normalized path key for the entry script so it
+ * shares vm.modules with imports of the same file. */
+static ObjString *resolveEntryPath(const char *path) {
+    char buf[4096];
+    if (path[0] == '/') {
+        snprintf(buf, sizeof(buf), "%s", path);
+    } else {
+        char cwd[4096];
+        if (getcwd(cwd, sizeof(cwd)) == NULL) {
+            snprintf(buf, sizeof(buf), "%s", path);
+        } else if (strlen(cwd) + 1 + strlen(path) + 1 > sizeof(buf)) {
+            snprintf(buf, sizeof(buf), "%s", path);
+        } else {
+            snprintf(buf, sizeof(buf), "%s/%s", cwd, path);
+        }
+    }
+    ObjString *raw = copyString(buf, (int)strlen(buf));
+    return resolveImportPath(raw);
 }
 
 bool callClosure(ObjClosure *closure, int argCount) {
@@ -861,12 +882,28 @@ static InterpretResult run(void) {
 }
 
 InterpretResult interpret(const char *source, const char *pathOrNull) {
-    /* Stage 64.0: remember path for future import resolution.
-     * NULL means REPL / anonymous — imports will resolve vs cwd. */
+    /* Stage 64.0/64.5: path for import resolution. NULL = REPL — stay on
+     * vm.globals (no main module). Non-NULL entry scripts are modules so
+     * importing the entry path hits the same ObjModule (no double-run). */
     vm.scriptPath = pathOrNull;
+    vm.currentModule = NULL;
+
+    ObjModule *mainModule = NULL;
+    ObjString *entryPath = NULL;
+    if (pathOrNull != NULL && pathOrNull[0] != '\0') {
+        entryPath = resolveEntryPath(pathOrNull);
+        vm.scriptPath = entryPath->chars;
+        mainModule = newModule(entryPath);
+        tableSet(&vm.modules, entryPath, OBJ_VAL(mainModule));
+        vm.currentModule = mainModule;
+    }
+
     initLox(source);
     ObjFunction *function = compile(source);
-    if (function == NULL) return INTERPRET_COMPILE_ERROR;
+    if (function == NULL) {
+        vm.currentModule = NULL;
+        return INTERPRET_COMPILE_ERROR;
+    }
 
     Value functionValue;
     functionValue.type = VAL_OBJ;
@@ -874,6 +911,7 @@ InterpretResult interpret(const char *source, const char *pathOrNull) {
     push(functionValue);
 
     if (setjmp(lox.errorJump) == 0) {
+        /* newClosure captures vm.currentModule as home scope. */
         ObjClosure *closure = newClosure(function);
         pop();
 
@@ -883,8 +921,14 @@ InterpretResult interpret(const char *source, const char *pathOrNull) {
         push(closureValue);
 
         callValue(peek(0), 0);
-        return run();
+        InterpretResult result = run();
+        if (mainModule != NULL && result == INTERPRET_OK) {
+            mainModule->state = MODULE_LOADED;
+        }
+        vm.currentModule = NULL;
+        return result;
     } else {
+        vm.currentModule = NULL;
         resetStack();
         return INTERPRET_RUNTIME_ERROR;
     }

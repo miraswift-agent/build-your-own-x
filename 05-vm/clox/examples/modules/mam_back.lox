@@ -1,0 +1,6 @@
+// Imports the entry script by path — same ObjModule, not a second run.
+import "mam_main.lox" as m;
+
+fun see() {
+  return m.mark;
+}
