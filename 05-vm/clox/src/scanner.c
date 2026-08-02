@@ -109,7 +109,12 @@ static TokenType identifierType(Scanner *scanner) {
                 }
             }
             break;
-        case 'i': return checkKeyword(scanner, 1, 1, "f", TOKEN_IF);
+        case 'i':
+            if (scanner->current - scanner->start > 1 &&
+                scanner->start[1] == 'm') {
+                return checkKeyword(scanner, 2, 4, "port", TOKEN_IMPORT);
+            }
+            return checkKeyword(scanner, 1, 1, "f", TOKEN_IF);
         case 'n': return checkKeyword(scanner, 1, 2, "il", TOKEN_NIL);
         case 'o': return checkKeyword(scanner, 1, 1, "r", TOKEN_OR);
         case 'p': return checkKeyword(scanner, 1, 4, "rint", TOKEN_PRINT);

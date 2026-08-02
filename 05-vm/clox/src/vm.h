@@ -58,6 +58,8 @@ typedef struct {
     const char *scriptPath;
     /* Stage 64.1: path string → ObjModule cache (one load per path). */
     Table modules;
+    /* Stage 64.2: module whose body is currently executing (NULL = main). */
+    ObjModule *currentModule;
     ObjUpvalue *openUpvalues;
 
     size_t bytesAllocated;

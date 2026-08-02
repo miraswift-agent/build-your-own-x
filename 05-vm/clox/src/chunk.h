@@ -49,7 +49,8 @@ typedef enum {
     OP_METHOD,
     OP_ARRAY,  /* Stage 12b-i: build ObjArray from top N stack values; operand = element count */
     OP_INDEX_GET,  /* Stage 12b-ii: read a[i]; stack: ..., array, index -> ..., element */
-    OP_INDEX_SET  /* Stage 12b-iii: write a[i] = v; stack: ..., array, index, value -> (no result) */
+    OP_INDEX_SET,  /* Stage 12b-iii: write a[i] = v; stack: ..., array, index, value -> (no result) */
+    OP_IMPORT  /* Stage 64.2: load module from path constant; push ObjModule */
 } OpCode;
 
 typedef struct {

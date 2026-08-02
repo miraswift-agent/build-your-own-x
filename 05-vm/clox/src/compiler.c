@@ -971,6 +971,7 @@ static void synchronize(void) {
             case TOKEN_CLASS:
             case TOKEN_FUN:
             case TOKEN_VAR:
+            case TOKEN_IMPORT:
             case TOKEN_FOR:
             case TOKEN_IF:
             case TOKEN_WHILE:
@@ -985,6 +986,69 @@ static void synchronize(void) {
     }
 }
 
+/* Stage 64.2: import "path.lox" as name;
+ * Top-level only. Contextual 'as' (identifier, not keyword). */
+static void importDeclaration(void) {
+    if (current->type != TYPE_SCRIPT || current->scopeDepth > 0) {
+        error("Can only import at top level.");
+    }
+
+    consume(TOKEN_STRING, "Expect string path after 'import'.");
+    /* Same escape processing as string(); result is a constant index. */
+    uint8_t pathConstant = 0;
+    {
+        const char *src = parser.previous.start + 1;
+        int srcLen = parser.previous.length - 2;
+        char buf[2048];
+        if (srcLen >= (int)sizeof(buf)) {
+            error("Import path too long.");
+        } else {
+            int outLen = 0;
+            bool ok = true;
+            for (int i = 0; i < srcLen && ok; i++) {
+                char c = src[i];
+                if (c == '\\') {
+                    if (i + 1 >= srcLen) {
+                        error("Unterminated escape sequence.");
+                        ok = false;
+                        break;
+                    }
+                    char esc = src[i + 1];
+                    switch (esc) {
+                        case 'n':  buf[outLen++] = '\n'; break;
+                        case 't':  buf[outLen++] = '\t'; break;
+                        case 'r':  buf[outLen++] = '\r'; break;
+                        case '\\': buf[outLen++] = '\\'; break;
+                        case '"':  buf[outLen++] = '"';  break;
+                        default:
+                            error("Invalid escape in import path.");
+                            ok = false;
+                            break;
+                    }
+                    i++;
+                } else {
+                    buf[outLen++] = c;
+                }
+            }
+            if (ok) {
+                pathConstant = makeConstant(OBJ_VAL(copyString(buf, outLen)));
+            }
+        }
+    }
+
+    /* Contextual 'as' — must be the identifier as. */
+    consume(TOKEN_IDENTIFIER, "Expect 'as' after import path.");
+    if (parser.previous.length != 2 ||
+        memcmp(parser.previous.start, "as", 2) != 0) {
+        error("Expect 'as' after import path.");
+    }
+
+    uint8_t name = parseVariable("Expect module name after 'as'.");
+    emitBytes(OP_IMPORT, pathConstant);
+    defineVariable(name);
+    consume(TOKEN_SEMICOLON, "Expect ';' after import.");
+}
+
 static void declaration(void) {
     if (match(TOKEN_CLASS)) {
         classDeclaration();
@@ -992,6 +1056,8 @@ static void declaration(void) {
         funDeclaration();
     } else if (match(TOKEN_VAR)) {
         varDeclaration();
+    } else if (match(TOKEN_IMPORT)) {
+        importDeclaration();
     } else {
         statement();
     }

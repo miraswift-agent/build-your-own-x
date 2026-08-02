@@ -542,6 +542,103 @@ static void testGCStress(void) {
     free(out);
 }
 
+/* Stage 64.2 — multi-file import fixtures. */
+static char* runCloxPath(const char* path, int* exitCode) {
+    char cmd[512];
+    snprintf(cmd, sizeof(cmd), "./bin/clox %s 2>&1", path);
+    FILE* pipe = popen(cmd, "r");
+    if (pipe == NULL) {
+        fprintf(stderr, "Failed to run clox.\n");
+        exit(1);
+    }
+    size_t capacity = 256;
+    size_t length = 0;
+    char* output = (char*)malloc(capacity);
+    if (output == NULL) exit(1);
+    for (;;) {
+        size_t remaining = capacity - length - 1;
+        if (remaining < 64) {
+            capacity *= 2;
+            output = (char*)realloc(output, capacity);
+            if (output == NULL) exit(1);
+            remaining = capacity - length - 1;
+        }
+        size_t n = fread(output + length, 1, remaining, pipe);
+        length += n;
+        if (n == 0) break;
+    }
+    output[length] = '\0';
+    int status = pclose(pipe);
+    *exitCode = WEXITSTATUS(status);
+    return output;
+}
+
+static void writeFile(const char* path, const char* contents) {
+    FILE* f = fopen(path, "w");
+    if (f == NULL) {
+        fprintf(stderr, "Failed to write %s\n", path);
+        exit(1);
+    }
+    fputs(contents, f);
+    fclose(f);
+}
+
+static void testImportBasic(void) {
+    system("mkdir -p /tmp/clox_mod_fixture");
+    writeFile("/tmp/clox_mod_fixture/mathutil.lox",
+              "fun add(a, b) { return a + b; }\n"
+              "var PI = 3.14;\n");
+    writeFile("/tmp/clox_mod_fixture/main.lox",
+              "import \"mathutil.lox\" as math;\n"
+              "print math.add(1, 2);\n"
+              "print math.PI;\n"
+              "print typeof(math);\n");
+    int exitCode;
+    char* out = runCloxPath("/tmp/clox_mod_fixture/main.lox", &exitCode);
+    if (exitCode != 0) {
+        fail("import basic: expected exit 0, got %d (%s)", exitCode, out);
+    } else if (!outputsEqual(out, "3\n3.14\nmodule\n")) {
+        fail("import basic: unexpected output '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void testImportCacheIdentity(void) {
+    writeFile("/tmp/clox_mod_fixture/cache_main.lox",
+              "import \"mathutil.lox\" as a;\n"
+              "import \"mathutil.lox\" as b;\n"
+              "print a == b;\n");
+    int exitCode;
+    char* out = runCloxPath("/tmp/clox_mod_fixture/cache_main.lox", &exitCode);
+    if (exitCode != 0) {
+        fail("import cache: expected exit 0, got %d (%s)", exitCode, out);
+    } else if (!outputsEqual(out, "true\n")) {
+        fail("import cache: expected 'true\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void testImportTopLevelOnly(void) {
+    writeFile("/tmp/clox_mod_fixture/nested_bad.lox",
+              "fun f() {\n"
+              "  import \"mathutil.lox\" as m;\n"
+              "}\n");
+    int exitCode;
+    char* out = runCloxPath("/tmp/clox_mod_fixture/nested_bad.lox", &exitCode);
+    if (exitCode != 65) {
+        fail("import top-level: expected exit 65, got %d (%s)", exitCode, out);
+    } else if (strstr(out, "Can only import at top level") == NULL) {
+        fail("import top-level: missing error text, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
 int main(void) {
     testArithmetic();
     testComparison();
@@ -572,6 +669,11 @@ int main(void) {
     testEscapeUnknown();
     testEscapeIncomplete();
     testEscapeNoLongerNeedsRealNewline();
+
+    /* Stage 64.2: modules import syntax + OP_IMPORT. */
+    testImportBasic();
+    testImportCacheIdentity();
+    testImportTopLevelOnly();
 
     printf("%d passed, %d failed\n", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;

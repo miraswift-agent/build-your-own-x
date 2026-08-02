@@ -50,6 +50,7 @@ void initVM(void) {
     initTable(&vm.strings);
     initTable(&vm.modules);
     vm.scriptPath = NULL;
+    vm.currentModule = NULL;
 
     defineNatives();
 }
@@ -125,6 +126,112 @@ static int vmNativeTargetDepth = -1;
 static ObjUpvalue *captureUpvalue(Value *local);
 static void closeUpvalues(Value *last);
 static void defineMethod(ObjString *name);
+
+/* --- Stage 64.2 path helpers ----------------------------------------- */
+
+static char *readSourceFile(const char *path) {
+    FILE *file = fopen(path, "rb");
+    if (file == NULL) return NULL;
+
+    if (fseek(file, 0L, SEEK_END) != 0) {
+        fclose(file);
+        return NULL;
+    }
+    long fileSize = ftell(file);
+    if (fileSize < 0) {
+        fclose(file);
+        return NULL;
+    }
+    rewind(file);
+
+    char *buffer = (char*)malloc((size_t)fileSize + 1);
+    if (buffer == NULL) {
+        fclose(file);
+        return NULL;
+    }
+
+    size_t bytesRead = fread(buffer, sizeof(char), (size_t)fileSize, file);
+    fclose(file);
+    if (bytesRead < (size_t)fileSize) {
+        free(buffer);
+        return NULL;
+    }
+    buffer[bytesRead] = '\0';
+    return buffer;
+}
+
+/* Join importer directory + relative path; collapse "." / "..". */
+static ObjString *resolveImportPath(ObjString *rel) {
+    const char *r = rel->chars;
+    char joined[4096];
+
+    if (r[0] == '/') {
+        snprintf(joined, sizeof(joined), "%s", r);
+    } else {
+        const char *base = vm.scriptPath;
+        if (base == NULL || base[0] == '\0') {
+            snprintf(joined, sizeof(joined), "%s", r);
+        } else {
+            const char *slash = strrchr(base, '/');
+            if (slash == NULL) {
+                snprintf(joined, sizeof(joined), "%s", r);
+            } else {
+                size_t dirLen = (size_t)(slash - base);
+                if (dirLen + 1 + strlen(r) + 1 >= sizeof(joined)) {
+                    snprintf(joined, sizeof(joined), "%s", r);
+                } else {
+                    memcpy(joined, base, dirLen);
+                    joined[dirLen] = '/';
+                    memcpy(joined + dirLen + 1, r, strlen(r) + 1);
+                }
+            }
+        }
+    }
+
+    /* Split on '/' and rebuild without . / .. */
+    char tmp[4096];
+    snprintf(tmp, sizeof(tmp), "%s", joined);
+    bool absolute = (tmp[0] == '/');
+    char *parts[256];
+    int partCount = 0;
+    char *p = tmp;
+    while (*p == '/') p++;
+    while (*p != '\0' && partCount < 256) {
+        char *start = p;
+        while (*p != '\0' && *p != '/') p++;
+        if (*p == '/') {
+            *p = '\0';
+            p++;
+        }
+        if (start[0] == '\0' || strcmp(start, ".") == 0) {
+            /* skip */
+        } else if (strcmp(start, "..") == 0) {
+            if (partCount > 0) partCount--;
+        } else {
+            parts[partCount++] = start;
+        }
+        while (*p == '/') p++;
+    }
+
+    char out[4096];
+    size_t pos = 0;
+    if (absolute) out[pos++] = '/';
+    for (int i = 0; i < partCount; i++) {
+        if (i > 0) {
+            if (pos + 1 >= sizeof(out)) break;
+            out[pos++] = '/';
+        }
+        size_t n = strlen(parts[i]);
+        if (pos + n >= sizeof(out)) break;
+        memcpy(out + pos, parts[i], n);
+        pos += n;
+    }
+    if (pos == 0) {
+        out[pos++] = '.';
+    }
+    out[pos] = '\0';
+    return copyString(out, (int)pos);
+}
 
 bool callClosure(ObjClosure *closure, int argCount) {
     if (argCount != closure->function->arity) {
@@ -337,6 +444,13 @@ static InterpretResult run(void) {
             case OP_GET_GLOBAL: {
                 ObjString *name = READ_STRING();
                 Value value;
+                /* Stage 64.2: module body globals live in exports; natives
+                 * and main-script bindings stay on vm.globals. Fall through. */
+                if (vm.currentModule != NULL &&
+                    tableGet(&vm.currentModule->exports, name, &value)) {
+                    push(value);
+                    break;
+                }
                 if (!tableGet(&vm.globals, name, &value)) {
                     runtimeError("Undefined variable '%s'.", name->chars);
                     return INTERPRET_RUNTIME_ERROR;
@@ -346,12 +460,23 @@ static InterpretResult run(void) {
             }
             case OP_DEFINE_GLOBAL: {
                 ObjString *name = READ_STRING();
-                tableSet(&vm.globals, name, peek(0));
+                if (vm.currentModule != NULL) {
+                    tableSet(&vm.currentModule->exports, name, peek(0));
+                } else {
+                    tableSet(&vm.globals, name, peek(0));
+                }
                 pop();
                 break;
             }
             case OP_SET_GLOBAL: {
                 ObjString *name = READ_STRING();
+                if (vm.currentModule != NULL) {
+                    Value existing;
+                    if (tableGet(&vm.currentModule->exports, name, &existing)) {
+                        tableSet(&vm.currentModule->exports, name, peek(0));
+                        break;
+                    }
+                }
                 if (tableSet(&vm.globals, name, peek(0))) {
                     tableDelete(&vm.globals, name);
                     runtimeError("Undefined variable '%s'.", name->chars);
@@ -370,6 +495,25 @@ static InterpretResult run(void) {
                 break;
             }
             case OP_GET_PROPERTY: {
+                /* Stage 64.2: modules expose exports via '.' */
+                if (IS_MODULE(peek(0))) {
+                    ObjModule *module = AS_MODULE(peek(0));
+                    ObjString *name = READ_STRING();
+                    Value value;
+                    if (tableGet(&module->exports, name, &value)) {
+                        pop();
+                        push(value);
+                        break;
+                    }
+                    if (module->state == MODULE_LOADING) {
+                        runtimeError(
+                            "Undefined property '%s' (module '%s' still loading).",
+                            name->chars, module->name->chars);
+                    } else {
+                        runtimeError("Undefined property '%s'.", name->chars);
+                    }
+                    return INTERPRET_RUNTIME_ERROR;
+                }
                 if (!IS_INSTANCE(peek(0))) {
                     runtimeError("Only instances have properties.");
                     return INTERPRET_RUNTIME_ERROR;
@@ -390,6 +534,14 @@ static InterpretResult run(void) {
                 break;
             }
             case OP_SET_PROPERTY: {
+                if (IS_MODULE(peek(1))) {
+                    ObjModule *module = AS_MODULE(peek(1));
+                    tableSet(&module->exports, READ_STRING(), peek(0));
+                    Value value = pop();
+                    pop();
+                    push(value);
+                    break;
+                }
                 if (!IS_INSTANCE(peek(1))) {
                     runtimeError("Only instances have fields.");
                     return INTERPRET_RUNTIME_ERROR;
@@ -626,6 +778,72 @@ static InterpretResult run(void) {
             case OP_METHOD:
                 defineMethod(READ_STRING());
                 break;
+            case OP_IMPORT: {
+                /* Stage 64.2: load/run module, push ObjModule. */
+                ObjString *relPath = READ_STRING();
+                ObjString *resolved = resolveImportPath(relPath);
+                Value cached;
+                if (tableGet(&vm.modules, resolved, &cached)) {
+                    push(cached);
+                    break;
+                }
+
+                ObjModule *module = newModule(resolved);
+                push(OBJ_VAL(module)); /* GC root while we work */
+                tableSet(&vm.modules, resolved, OBJ_VAL(module));
+
+                char *source = readSourceFile(resolved->chars);
+                if (source == NULL) {
+                    runtimeError("Could not load module \"%s\".",
+                                 resolved->chars);
+                    return INTERPRET_RUNTIME_ERROR;
+                }
+
+                const char *prevPath = vm.scriptPath;
+                ObjModule *prevModule = vm.currentModule;
+                vm.scriptPath = resolved->chars;
+                vm.currentModule = module;
+
+                ObjFunction *function = compile(source);
+                free(source);
+                if (function == NULL) {
+                    vm.scriptPath = prevPath;
+                    vm.currentModule = prevModule;
+                    runtimeError("Compile error in module \"%s\".",
+                                 resolved->chars);
+                    return INTERPRET_RUNTIME_ERROR;
+                }
+
+                push(OBJ_VAL(function));
+                ObjClosure *closure = newClosure(function);
+                pop(); /* function */
+                push(OBJ_VAL(closure));
+
+                if (!callClosure(closure, 0)) {
+                    vm.scriptPath = prevPath;
+                    vm.currentModule = prevModule;
+                    return INTERPRET_RUNTIME_ERROR;
+                }
+
+                int savedTarget = vmNativeTargetDepth;
+                vmNativeTargetDepth = vm.frameCount - 1;
+                InterpretResult modResult = run();
+                vmNativeTargetDepth = savedTarget;
+
+                vm.scriptPath = prevPath;
+                vm.currentModule = prevModule;
+
+                if (modResult != INTERPRET_OK) {
+                    return modResult;
+                }
+
+                /* Module body OP_RETURN left nil where the closure was.
+                 * Stack: [..., module, nil]. Drop nil; leave module. */
+                pop();
+                module->state = MODULE_LOADED;
+                frame = &vm.frames[vm.frameCount - 1];
+                break;
+            }
         }
     }
 

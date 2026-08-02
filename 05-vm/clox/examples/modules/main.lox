@@ -1,0 +1,6 @@
+// Stage 64.2 — import a sibling .lox file as a namespace object.
+import "mathutil.lox" as math;
+
+print math.add(40, 2);
+print math.PI;
+print typeof(math);

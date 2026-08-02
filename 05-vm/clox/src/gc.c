@@ -132,6 +132,7 @@ static void markRoots(void) {
     markTable(&vm.globals);
     markTable(&vm.strings);
     markTable(&vm.modules);  /* Stage 64.1: cached modules by path */
+    markObject((Obj*)vm.currentModule);  /* Stage 64.2 */
     markCompilerRoots();
 }
 
