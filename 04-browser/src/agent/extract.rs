@@ -40,7 +40,9 @@ impl Page {
     /// Extract rows from all tables matching `selector`.
     /// Each row is a `Vec<String>` of cell text values.
     pub fn extract_table(&self, selector: &str) -> Vec<Vec<String>> {
-        let doc = self.doc.lock().unwrap();
+        let Ok(doc) = self.lock_doc() else {
+            return Vec::new();
+        };
         let table_ids = query_selector_all(&doc, DOCUMENT_NODE_ID, selector).unwrap_or_default();
         let mut out = Vec::new();
         for table_id in table_ids {
@@ -51,13 +53,17 @@ impl Page {
 
     /// Return `(text, href)` pairs for every `<a>` element in the page.
     pub fn extract_links(&self) -> Vec<(String, String)> {
-        let doc = self.doc.lock().unwrap();
+        let Ok(doc) = self.lock_doc() else {
+            return Vec::new();
+        };
         collect_links(&doc, DOCUMENT_NODE_ID)
     }
 
     /// Return one [`FormInfo`] per `<form>` element in the page.
     pub fn extract_forms(&self) -> Vec<FormInfo> {
-        let doc = self.doc.lock().unwrap();
+        let Ok(doc) = self.lock_doc() else {
+            return Vec::new();
+        };
         doc.find_all_elements("form")
             .into_iter()
             .map(|form_id| {
@@ -81,13 +87,24 @@ impl Page {
     /// Return page-level metadata: title, `<meta>` description, Open Graph tags,
     /// and canonical URL.
     pub fn extract_metadata(&self) -> PageMetadata {
-        let doc = self.doc.lock().unwrap();
+        let Ok(doc) = self.lock_doc() else {
+            return PageMetadata {
+                title: String::new(),
+                description: None,
+                og_title: None,
+                og_description: None,
+                og_image: None,
+                canonical_url: None,
+            };
+        };
         extract_metadata_from_doc(&doc)
     }
 
     /// Return all visible text content as a single string.
     pub fn extract_text(&self) -> String {
-        let doc = self.doc.lock().unwrap();
+        let Ok(doc) = self.lock_doc() else {
+            return String::new();
+        };
         let mut out = String::new();
         collect_text(&doc, DOCUMENT_NODE_ID, &mut out);
         out.trim().to_string()
@@ -97,7 +114,15 @@ impl Page {
     /// `"tables"`) extracted tables. The `schema` parameter is advisory and
     /// currently selects which top-level keys to populate.
     pub fn extract_structured(&self, schema: &str) -> Value {
-        let doc = self.doc.lock().unwrap();
+        let Ok(doc) = self.lock_doc() else {
+            return json!({
+                "title": "",
+                "description": null,
+                "url": self.current_url,
+                "links": [],
+                "error": "page DOM mutex poisoned",
+            });
+        };
         let meta = extract_metadata_from_doc(&doc);
         let links: Vec<Value> = collect_links(&doc, DOCUMENT_NODE_ID)
             .into_iter()

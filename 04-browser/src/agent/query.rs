@@ -12,7 +12,8 @@ impl Page {
     /// Find the first element matching a CSS selector.
     pub fn query(&self, selector: &str) -> Option<Element> {
         let found = {
-            let doc = self.doc.lock().unwrap();
+            // Poisoned mutex → no match (same surface as empty doc; no panic).
+            let doc = self.lock_doc().ok()?;
             query_selector(&doc, DOCUMENT_NODE_ID, selector)
                 .ok()
                 .flatten()
@@ -23,7 +24,9 @@ impl Page {
     /// Find all elements matching a CSS selector.
     pub fn query_all(&self, selector: &str) -> Vec<Element> {
         let ids = {
-            let doc = self.doc.lock().unwrap();
+            let Ok(doc) = self.lock_doc() else {
+                return Vec::new();
+            };
             query_selector_all(&doc, DOCUMENT_NODE_ID, selector).unwrap_or_default()
         };
         ids.into_iter().map(|id| self.make_element(id)).collect()
@@ -33,7 +36,9 @@ impl Page {
     pub fn query_role(&self, role: &str) -> Vec<Element> {
         let role_lower = role.to_lowercase();
         let ids = {
-            let doc = self.doc.lock().unwrap();
+            let Ok(doc) = self.lock_doc() else {
+                return Vec::new();
+            };
             let mut result = Vec::new();
             let mut queue: VecDeque<NodeId> = VecDeque::new();
             queue.push_back(DOCUMENT_NODE_ID);
@@ -61,7 +66,9 @@ impl Page {
     pub fn query_text(&self, text: &str) -> Vec<Element> {
         let text_lower = text.to_lowercase();
         let ids = {
-            let doc = self.doc.lock().unwrap();
+            let Ok(doc) = self.lock_doc() else {
+                return Vec::new();
+            };
             let mut result = Vec::new();
             let mut queue: VecDeque<NodeId> = VecDeque::new();
             queue.push_back(DOCUMENT_NODE_ID);
@@ -87,7 +94,7 @@ impl Page {
     pub fn query_input(&self, name: &str) -> Option<Element> {
         let name_lower = name.to_lowercase();
         let found = {
-            let doc = self.doc.lock().unwrap();
+            let doc = self.lock_doc().ok()?;
             let mut result: Option<NodeId> = None;
             let mut queue: VecDeque<NodeId> = VecDeque::new();
             queue.push_back(DOCUMENT_NODE_ID);
@@ -126,7 +133,7 @@ impl Page {
     pub fn query_link(&self, text: &str) -> Option<Element> {
         let text_lower = text.to_lowercase();
         let found = {
-            let doc = self.doc.lock().unwrap();
+            let doc = self.lock_doc().ok()?;
             let mut result: Option<NodeId> = None;
             let mut queue: VecDeque<NodeId> = VecDeque::new();
             queue.push_back(DOCUMENT_NODE_ID);
