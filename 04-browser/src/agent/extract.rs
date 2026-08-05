@@ -129,11 +129,15 @@ impl Page {
             .map(|(text, href)| json!({ "text": text, "href": href }))
             .collect();
 
+        let parse_errors = doc.errors.clone();
         let mut obj = json!({
             "title": meta.title,
             "description": meta.description,
             "url": self.current_url,
             "links": links,
+            // Recovery honesty: success building a DOM ≠ clean HTML.
+            "parse_error_count": parse_errors.len(),
+            "parse_errors": parse_errors,
         });
 
         if schema == "tables" || schema.is_empty() || schema == "full" {

@@ -70,6 +70,52 @@ fn page_url_set_by_from_html_with_url() {
     assert_eq!(page.url(), Some("https://example.com"));
 }
 
+/// Agent surface: `parse_errors` / `had_parse_errors` stay consistent.
+/// (Tree-builder is strict — even tidy-looking HTML can record recovery.
+/// That is why the API exists; we do not require a zero-error oracle here.)
+#[test]
+fn page_parse_errors_api_consistent() {
+    let page = simple_page();
+    let errs = page.parse_errors();
+    assert_eq!(page.had_parse_errors(), !errs.is_empty());
+    assert_eq!(errs, page.parse_errors());
+}
+
+/// Malformed HTML still builds a page — agents must be able to see recovery.
+/// Failure mode: silent success that hides tokenizer/tree errors on Document.
+#[test]
+fn page_parse_errors_surface_recovery_for_malformed_html() {
+    let page = Page::from_html("<div class=foo bar><p>hi</div><span");
+    assert!(
+        page.had_parse_errors(),
+        "expected recovery diagnostics, got none; title={:?} content-len={}",
+        page.title(),
+        page.content().len()
+    );
+    let errs = page.parse_errors();
+    assert!(!errs.is_empty());
+    // Still a usable partial DOM (recovery, not hard fail).
+    assert!(
+        page.query("p").is_some() || page.extract_text().contains("hi"),
+        "recovery should still yield content; errs={errs:?}"
+    );
+}
+
+/// Structured extract must include parse diagnostics (not only title/links).
+#[test]
+fn extract_structured_includes_parse_error_fields() {
+    let dirty = Page::from_html("<div class=foo bar><p>hi</div><span");
+    let v = dirty.extract_structured("full");
+    assert!(v.get("parse_error_count").is_some(), "missing count: {v}");
+    assert!(v.get("parse_errors").is_some(), "missing errors: {v}");
+    let n = v["parse_error_count"].as_u64().unwrap_or(0);
+    assert!(n > 0, "structured extract must not hide recovery: {v}");
+    assert_eq!(
+        n as usize,
+        v["parse_errors"].as_array().map(|a| a.len()).unwrap_or(0)
+    );
+}
+
 #[test]
 fn page_content_contains_html() {
     let page = simple_page();

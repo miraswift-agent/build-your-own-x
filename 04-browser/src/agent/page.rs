@@ -127,6 +127,25 @@ impl Page {
         self.current_url.as_deref()
     }
 
+    /// HTML tokenizer / tree-builder recovery diagnostics for the current DOM.
+    ///
+    /// The parser always recovers into *some* document (spec-style). That means
+    /// `from_html` / `goto` success is not the same as "input was clean." Agents
+    /// that need honesty about recovery should read this list — empty means no
+    /// recorded parse errors; non-empty means the tree was built under error
+    /// recovery. Poisoned DOM mutex → empty list (same fail-soft as other readers).
+    pub fn parse_errors(&self) -> Vec<String> {
+        match self.lock_doc() {
+            Ok(doc) => doc.errors.clone(),
+            Err(_) => Vec::new(),
+        }
+    }
+
+    /// `true` when the current DOM recorded at least one parse/tree error.
+    pub fn had_parse_errors(&self) -> bool {
+        !self.parse_errors().is_empty()
+    }
+
     /// Re-fetch the current URL and replace the DOM.
     pub async fn reload(&mut self) -> Result<(), String> {
         let url = self.current_url.clone().ok_or("no current URL to reload")?;
