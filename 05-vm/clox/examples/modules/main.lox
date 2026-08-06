@@ -1,6 +1,10 @@
-// Stage 64.2 — import a sibling .lox file as a namespace object.
-import "mathutil.lox" as math;
+// Stage 64 complete demo — whole-module + selective + rename
+// Run: ../../bin/clox examples/modules/main.lox  (from clox/)
 
-print math.add(40, 2);
-print math.PI;
+import "mathutil.lox" as math;
+import { add as sum, PI } from "mathutil.lox";
+
+print math.add(1, 2);
+print sum(10, 5);
+print PI;
 print typeof(math);

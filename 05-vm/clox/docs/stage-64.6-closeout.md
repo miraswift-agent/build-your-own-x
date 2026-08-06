@@ -55,11 +55,11 @@ No new module object model. Selective import is sugar over load + field gets + d
 
 Namespace import teaches “who owns the module object.” Selective import teaches “what crosses the boundary.” Same load graph; different binding surface. `OP_DUP` is the smallest VM hook that makes multi-bind honest without a special-case opcode.
 
-## Non-goals (still later)
+## Non-goals at 64.6 time
 
-- `import { a as b }` rename  
-- `export` keyword / private tops  
-- Package search path  
+- `import { a as b }` rename — **done in 64.7**  
+- `export` keyword / private tops — still later  
+- Package search path — still later (not Stage 64)  
 
 ## Files
 

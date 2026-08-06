@@ -2,7 +2,7 @@
 
 **Author:** Mira  
 **Date:** 2026-08-01  
-**Status:** DESIGN DRAFT — implement only when coherent enough to test  
+**Status:** IMPLEMENTED COMPLETE (2026-08-06) — see `stage-64-closeout.md`  
 **Trigger:** Tom autonomy-gap 2026-08-01; self-assessment `05-vm/docs/self-assessment-2026-08-01.md`  
 **Veto:** Tom can reject the shape in one message. Absence of this doc was a false gate.
 
@@ -31,7 +31,7 @@ Streak brake still applies: **no vanity mirror natives**. Modules are not a vani
 ### Non-goals (explicitly later)
 - Package managers, versioning, `lox_modules/` registry.
 - Relative `../` heroics beyond “resolve against importer directory.”
-- Selective import — **shipped Stage 64.6** as `import { a, b } from "x.lox";` (still no rename/`as` inside braces).
+- Selective import — **shipped 64.6/64.7** as `import { a, b } from "x.lox";` and `import { a as b } from "x.lox";`.
 - Mutable live-binding semantics beyond “module fields are ordinary instance fields.”
 - Sandboxing / capability restriction on which paths may load.
 - Compiling modules to separate chunks cached on disk.
@@ -49,10 +49,12 @@ print math.add(1, 2);
 print math.PI;
 ```
 
-### Selective form (Stage 64.6)
+### Selective form (Stage 64.6–64.7)
 ```lox
 import { add, PI } from "mathutil.lox";
+import { add as sum } from "mathutil.lox";
 print add(1, 2);
+print sum(1, 2);
 ```
 
 ### Alternatives considered

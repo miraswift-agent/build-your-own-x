@@ -1025,15 +1025,17 @@ static uint8_t importPathConstantFromPrevious(void) {
 
 /* Stage 64.2: import "path.lox" as name;
  * Stage 64.6: import { a, b } from "path.lox";
+ * Stage 64.7: import { a as b, c } from "path.lox";
  * Top-level only. Contextual 'as' / 'from' (identifiers, not keywords). */
 static void importDeclaration(void) {
     if (current->type != TYPE_SCRIPT || current->scopeDepth > 0) {
         error("Can only import at top level.");
     }
 
-    /* Selective form: import { name, ... } from "path"; */
+    /* Selective form: import { exportName [as bindName], ... } from "path"; */
     if (match(TOKEN_LEFT_BRACE)) {
-        Token names[32];
+        Token exportNames[32];
+        Token bindNames[32];
         int nameCount = 0;
 
         if (check(TOKEN_RIGHT_BRACE)) {
@@ -1045,7 +1047,17 @@ static void importDeclaration(void) {
                     break;
                 }
                 consume(TOKEN_IDENTIFIER, "Expect import name.");
-                names[nameCount++] = parser.previous;
+                exportNames[nameCount] = parser.previous;
+                bindNames[nameCount] = parser.previous;
+                /* Optional rename: export as bind */
+                if (check(TOKEN_IDENTIFIER) &&
+                    parser.current.length == 2 &&
+                    memcmp(parser.current.start, "as", 2) == 0) {
+                    advance(); /* consume 'as' */
+                    consume(TOKEN_IDENTIFIER, "Expect local name after 'as'.");
+                    bindNames[nameCount] = parser.previous;
+                }
+                nameCount++;
             } while (match(TOKEN_COMMA));
         }
         consume(TOKEN_RIGHT_BRACE, "Expect '}' after import names.");
@@ -1060,18 +1072,17 @@ static void importDeclaration(void) {
         consume(TOKEN_STRING, "Expect string path after 'from'.");
         uint8_t pathConstant = importPathConstantFromPrevious();
 
-        /* Load once; for each name: dup module, get export, define global. */
+        /* Load once; for each name: dup module, get export, define under bind. */
         emitBytes(OP_IMPORT, pathConstant);
         for (int i = 0; i < nameCount; i++) {
             emitByte(OP_DUP);
-            uint8_t prop = identifierConstant(&names[i]);
+            uint8_t prop = identifierConstant(&exportNames[i]);
             emitBytes(OP_GET_PROPERTY, prop);
-            /* declareVariable / defineVariable read parser.previous. */
-            parser.previous = names[i];
+            parser.previous = bindNames[i];
             declareVariable();
             uint8_t global = 0;
             if (current->scopeDepth == 0) {
-                global = identifierConstant(&names[i]);
+                global = identifierConstant(&bindNames[i]);
             }
             defineVariable(global);
         }

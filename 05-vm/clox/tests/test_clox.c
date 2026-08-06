@@ -856,6 +856,45 @@ static void testSelectiveImportSharesCache(void) {
     free(out);
 }
 
+/* Stage 64.7 — rename in braces: import { export as bind }. */
+static void testSelectiveImportRename(void) {
+    system("mkdir -p /tmp/clox_mod_fixture");
+    writeFile("/tmp/clox_mod_fixture/mathutil.lox",
+              "fun add(a, b) { return a + b; }\n"
+              "var PI = 3.14;\n");
+    writeFile("/tmp/clox_mod_fixture/sel_rename.lox",
+              "import { add as sum, PI } from \"mathutil.lox\";\n"
+              "print sum(4, 6);\n"
+              "print PI;\n");
+    int exitCode;
+    char* out = runCloxPath("/tmp/clox_mod_fixture/sel_rename.lox", &exitCode);
+    if (exitCode != 0) {
+        fail("selective rename: expected exit 0, got %d (%s)", exitCode, out);
+    } else if (!outputsEqual(out, "10\n3.14\n")) {
+        fail("selective rename: unexpected output '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+/* Stage 64.7 — export name is looked up; bind name is local (export not bound). */
+static void testSelectiveImportRenameDoesNotBindExport(void) {
+    writeFile("/tmp/clox_mod_fixture/sel_rename_only.lox",
+              "import { add as sum } from \"mathutil.lox\";\n"
+              "print add;\n");
+    int exitCode;
+    char* out = runCloxPath("/tmp/clox_mod_fixture/sel_rename_only.lox", &exitCode);
+    if (exitCode == 0) {
+        fail("selective rename unbound export: expected error, got ok (%s)", out);
+    } else if (strstr(out, "Undefined") == NULL) {
+        fail("selective rename unbound export: wrong error '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
 int main(void) {
     testArithmetic();
     testComparison();
@@ -908,6 +947,10 @@ int main(void) {
     testSelectiveImportEmptyList();
     testSelectiveImportTopLevelOnly();
     testSelectiveImportSharesCache();
+
+    /* Stage 64.7: rename-in-braces (finish selective surface). */
+    testSelectiveImportRename();
+    testSelectiveImportRenameDoesNotBindExport();
 
     printf("%d passed, %d failed\n", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
