@@ -986,55 +986,103 @@ static void synchronize(void) {
     }
 }
 
+/* Parse a STRING token (already consumed into parser.previous) into a path
+ * constant. Same escapes as string(). Returns 0 on error. */
+static uint8_t importPathConstantFromPrevious(void) {
+    const char *src = parser.previous.start + 1;
+    int srcLen = parser.previous.length - 2;
+    char buf[2048];
+    if (srcLen >= (int)sizeof(buf)) {
+        error("Import path too long.");
+        return 0;
+    }
+    int outLen = 0;
+    for (int i = 0; i < srcLen; i++) {
+        char c = src[i];
+        if (c == '\\') {
+            if (i + 1 >= srcLen) {
+                error("Unterminated escape sequence.");
+                return 0;
+            }
+            char esc = src[i + 1];
+            switch (esc) {
+                case 'n':  buf[outLen++] = '\n'; break;
+                case 't':  buf[outLen++] = '\t'; break;
+                case 'r':  buf[outLen++] = '\r'; break;
+                case '\\': buf[outLen++] = '\\'; break;
+                case '"':  buf[outLen++] = '"';  break;
+                default:
+                    error("Invalid escape in import path.");
+                    return 0;
+            }
+            i++;
+        } else {
+            buf[outLen++] = c;
+        }
+    }
+    return makeConstant(OBJ_VAL(copyString(buf, outLen)));
+}
+
 /* Stage 64.2: import "path.lox" as name;
- * Top-level only. Contextual 'as' (identifier, not keyword). */
+ * Stage 64.6: import { a, b } from "path.lox";
+ * Top-level only. Contextual 'as' / 'from' (identifiers, not keywords). */
 static void importDeclaration(void) {
     if (current->type != TYPE_SCRIPT || current->scopeDepth > 0) {
         error("Can only import at top level.");
     }
 
-    consume(TOKEN_STRING, "Expect string path after 'import'.");
-    /* Same escape processing as string(); result is a constant index. */
-    uint8_t pathConstant = 0;
-    {
-        const char *src = parser.previous.start + 1;
-        int srcLen = parser.previous.length - 2;
-        char buf[2048];
-        if (srcLen >= (int)sizeof(buf)) {
-            error("Import path too long.");
+    /* Selective form: import { name, ... } from "path"; */
+    if (match(TOKEN_LEFT_BRACE)) {
+        Token names[32];
+        int nameCount = 0;
+
+        if (check(TOKEN_RIGHT_BRACE)) {
+            error("Expect at least one name in selective import.");
         } else {
-            int outLen = 0;
-            bool ok = true;
-            for (int i = 0; i < srcLen && ok; i++) {
-                char c = src[i];
-                if (c == '\\') {
-                    if (i + 1 >= srcLen) {
-                        error("Unterminated escape sequence.");
-                        ok = false;
-                        break;
-                    }
-                    char esc = src[i + 1];
-                    switch (esc) {
-                        case 'n':  buf[outLen++] = '\n'; break;
-                        case 't':  buf[outLen++] = '\t'; break;
-                        case 'r':  buf[outLen++] = '\r'; break;
-                        case '\\': buf[outLen++] = '\\'; break;
-                        case '"':  buf[outLen++] = '"';  break;
-                        default:
-                            error("Invalid escape in import path.");
-                            ok = false;
-                            break;
-                    }
-                    i++;
-                } else {
-                    buf[outLen++] = c;
+            do {
+                if (nameCount >= 32) {
+                    error("Too many names in selective import.");
+                    break;
                 }
-            }
-            if (ok) {
-                pathConstant = makeConstant(OBJ_VAL(copyString(buf, outLen)));
-            }
+                consume(TOKEN_IDENTIFIER, "Expect import name.");
+                names[nameCount++] = parser.previous;
+            } while (match(TOKEN_COMMA));
         }
+        consume(TOKEN_RIGHT_BRACE, "Expect '}' after import names.");
+
+        /* Contextual 'from'. */
+        consume(TOKEN_IDENTIFIER, "Expect 'from' after import list.");
+        if (parser.previous.length != 4 ||
+            memcmp(parser.previous.start, "from", 4) != 0) {
+            error("Expect 'from' after import list.");
+        }
+
+        consume(TOKEN_STRING, "Expect string path after 'from'.");
+        uint8_t pathConstant = importPathConstantFromPrevious();
+
+        /* Load once; for each name: dup module, get export, define global. */
+        emitBytes(OP_IMPORT, pathConstant);
+        for (int i = 0; i < nameCount; i++) {
+            emitByte(OP_DUP);
+            uint8_t prop = identifierConstant(&names[i]);
+            emitBytes(OP_GET_PROPERTY, prop);
+            /* declareVariable / defineVariable read parser.previous. */
+            parser.previous = names[i];
+            declareVariable();
+            uint8_t global = 0;
+            if (current->scopeDepth == 0) {
+                global = identifierConstant(&names[i]);
+            }
+            defineVariable(global);
+        }
+        emitByte(OP_POP); /* drop the module object */
+
+        consume(TOKEN_SEMICOLON, "Expect ';' after import.");
+        return;
     }
+
+    consume(TOKEN_STRING, "Expect string path after 'import'.");
+    uint8_t pathConstant = importPathConstantFromPrevious();
 
     /* Contextual 'as' — must be the identifier as. */
     consume(TOKEN_IDENTIFIER, "Expect 'as' after import path.");

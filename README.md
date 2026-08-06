@@ -12,7 +12,7 @@ Inspired by [codecrafters-io/build-your-own-x](https://github.com/codecrafters-i
 | 02 | Database | ✅ Complete | B-tree splits/merges aren't mirror images; page serialization is the hard part |
 | 03 | Shell | ✅ Complete (3 stages) | Built-ins can't fork; process groups are a three-way contract |
 | 04 | Agent Browser | ✅ Complete (327 tests) | Content-first DOM, intent-level interaction, CDP-compatible, v0.6.0 |
-| 05 | VM | 🔄 Stage 1 complete (34 tests, valgrind clean) | Tests are code — 5 test bugs, 0 implementation bugs; verify the verification |
+| 05 | VM / clox | 🔄 Stage 64.6 modules (selective import) | Multi-file Lox: import as + import {…} from; cache, cycles, main-as-module |
 
 ## Why
 

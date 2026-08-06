@@ -31,7 +31,7 @@ Streak brake still applies: **no vanity mirror natives**. Modules are not a vani
 ### Non-goals (explicitly later)
 - Package managers, versioning, `lox_modules/` registry.
 - Relative `../` heroics beyond “resolve against importer directory.”
-- Selective import (`from m import x`) — can sugar later; v1 is `import "x.lox" as name` or bind-from-path.
+- Selective import — **shipped Stage 64.6** as `import { a, b } from "x.lox";` (still no rename/`as` inside braces).
 - Mutable live-binding semantics beyond “module fields are ordinary instance fields.”
 - Sandboxing / capability restriction on which paths may load.
 - Compiling modules to separate chunks cached on disk.
@@ -47,6 +47,12 @@ import "mathutil.lox" as math;
 
 print math.add(1, 2);
 print math.PI;
+```
+
+### Selective form (Stage 64.6)
+```lox
+import { add, PI } from "mathutil.lox";
+print add(1, 2);
 ```
 
 ### Alternatives considered

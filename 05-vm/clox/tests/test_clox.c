@@ -746,6 +746,116 @@ static void testMainAsModuleExport(void) {
     free(out);
 }
 
+/* Stage 64.6 — selective import binds exports into importer globals. */
+static void testSelectiveImportBasic(void) {
+    system("mkdir -p /tmp/clox_mod_fixture");
+    writeFile("/tmp/clox_mod_fixture/mathutil.lox",
+              "fun add(a, b) { return a + b; }\n"
+              "var PI = 3.14;\n"
+              "var secret = 99;\n");
+    writeFile("/tmp/clox_mod_fixture/sel_main.lox",
+              "import { add, PI } from \"mathutil.lox\";\n"
+              "print add(2, 3);\n"
+              "print PI;\n");
+    int exitCode;
+    char* out = runCloxPath("/tmp/clox_mod_fixture/sel_main.lox", &exitCode);
+    if (exitCode != 0) {
+        fail("selective import: expected exit 0, got %d (%s)", exitCode, out);
+    } else if (!outputsEqual(out, "5\n3.14\n")) {
+        fail("selective import: unexpected output '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+/* Stage 64.6 — unbound names stay unbound (no silent whole-module dump). */
+static void testSelectiveImportDoesNotBindOthers(void) {
+    writeFile("/tmp/clox_mod_fixture/sel_secret.lox",
+              "import { add } from \"mathutil.lox\";\n"
+              "print secret;\n");
+    int exitCode;
+    char* out = runCloxPath("/tmp/clox_mod_fixture/sel_secret.lox", &exitCode);
+    if (exitCode == 0) {
+        fail("selective unbound: expected runtime error, got ok (%s)", out);
+    } else if (strstr(out, "Undefined variable") == NULL &&
+               strstr(out, "undefined") == NULL &&
+               strstr(out, "Undefined") == NULL) {
+        fail("selective unbound: wrong error '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+/* Stage 64.6 — missing export name is a runtime property error. */
+static void testSelectiveImportMissingExport(void) {
+    writeFile("/tmp/clox_mod_fixture/sel_missing.lox",
+              "import { nope } from \"mathutil.lox\";\n");
+    int exitCode;
+    char* out = runCloxPath("/tmp/clox_mod_fixture/sel_missing.lox", &exitCode);
+    if (exitCode == 0) {
+        fail("selective missing: expected error, got ok");
+    } else if (strstr(out, "Undefined property") == NULL) {
+        fail("selective missing: wrong error '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+/* Stage 64.6 — empty brace list is a compile error. */
+static void testSelectiveImportEmptyList(void) {
+    writeFile("/tmp/clox_mod_fixture/sel_empty.lox",
+              "import {} from \"mathutil.lox\";\n");
+    int exitCode;
+    char* out = runCloxPath("/tmp/clox_mod_fixture/sel_empty.lox", &exitCode);
+    if (exitCode != 65) {
+        fail("selective empty: expected exit 65, got %d (%s)", exitCode, out);
+    } else if (strstr(out, "at least one name") == NULL) {
+        fail("selective empty: missing error text, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+/* Stage 64.6 — still top-level only. */
+static void testSelectiveImportTopLevelOnly(void) {
+    writeFile("/tmp/clox_mod_fixture/sel_nested.lox",
+              "fun f() {\n"
+              "  import { add } from \"mathutil.lox\";\n"
+              "}\n");
+    int exitCode;
+    char* out = runCloxPath("/tmp/clox_mod_fixture/sel_nested.lox", &exitCode);
+    if (exitCode != 65) {
+        fail("selective top-level: expected exit 65, got %d (%s)", exitCode, out);
+    } else if (strstr(out, "Can only import at top level") == NULL) {
+        fail("selective top-level: missing error text, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+/* Stage 64.6 — cache: selective + whole-module import same path share identity. */
+static void testSelectiveImportSharesCache(void) {
+    writeFile("/tmp/clox_mod_fixture/sel_cache.lox",
+              "import { add } from \"mathutil.lox\";\n"
+              "import \"mathutil.lox\" as m;\n"
+              "print add == m.add;\n");
+    int exitCode;
+    char* out = runCloxPath("/tmp/clox_mod_fixture/sel_cache.lox", &exitCode);
+    if (exitCode != 0) {
+        fail("selective cache: expected exit 0, got %d (%s)", exitCode, out);
+    } else if (!outputsEqual(out, "true\n")) {
+        fail("selective cache: unexpected output '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
 int main(void) {
     testArithmetic();
     testComparison();
@@ -790,6 +900,14 @@ int main(void) {
     /* Stage 64.5: main script is a module. */
     testMainAsModuleCycle();
     testMainAsModuleExport();
+
+    /* Stage 64.6: selective import { a, b } from "path". */
+    testSelectiveImportBasic();
+    testSelectiveImportDoesNotBindOthers();
+    testSelectiveImportMissingExport();
+    testSelectiveImportEmptyList();
+    testSelectiveImportTopLevelOnly();
+    testSelectiveImportSharesCache();
 
     printf("%d passed, %d failed\n", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;

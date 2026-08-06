@@ -1,0 +1,8 @@
+// Stage 64.6 — selective import
+// Run from examples/ with: ../bin/clox selective-import.lox
+// (or any cwd; paths resolve relative to this file)
+
+import { add, PI } from "sel_math.lox";
+
+print add(10, 5);
+print PI;

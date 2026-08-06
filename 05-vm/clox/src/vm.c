@@ -452,6 +452,7 @@ static InterpretResult run(void) {
             case OP_TRUE:     push(BOOL_VAL(true)); break;
             case OP_FALSE:    push(BOOL_VAL(false)); break;
             case OP_POP:      pop(); break;
+            case OP_DUP:      push(peek(0)); break; /* Stage 64.6 */
             case OP_GET_LOCAL: {
                 uint8_t slot = READ_BYTE();
                 push(frame->slots[slot]);
