@@ -98,6 +98,13 @@ static void blackenObject(Obj *object) {
             markObject((Obj*)bound->method);
             break;
         }
+        case OBJ_ARRAY: {
+            ObjArray *array = (ObjArray*)object;
+            for (int i = 0; i < array->count; i++) {
+                markValue(array->elements[i]);
+            }
+            break;
+        }
     }
 }
 
@@ -218,6 +225,12 @@ void freeObject(Obj *object) {
         case OBJ_UPVALUE:
             FREE(ObjUpvalue, object);
             break;
+        case OBJ_ARRAY: {
+            ObjArray *array = (ObjArray*)object;
+            FREE_ARRAY(Value, array->elements, array->capacity);
+            FREE(ObjArray, object);
+            break;
+        }
     }
 }
 

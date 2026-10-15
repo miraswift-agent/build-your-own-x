@@ -485,6 +485,229 @@ static Value ioReadLineNative(int argCount, Value *args) {
     return OBJ_VAL(copyString(line, (int)len));
 }
 
+/* --- Stage 12a: array value type via natives. The value type
+ *   (ObjArray) is in object.h; the GC mark/sweep is in gc.c. The
+ *   natives below are the only way a Lox program can create or
+ *   manipulate an array in this stage. Stage 12b will add the
+ *   [1, 2, 3] literal and a[i] index access at the language level. */
+
+/* --- Stage 13: string_split / string_join --- */
+
+static Value stringSplitNative(int argCount, Value *args) {
+    /* string_split(s, delim) -> ObjArray of substrings. Algorithm:
+     * track a "prev" pointer to the start of the next piece. At each
+     * position, check if the delimiter starts here; if yes, push the
+     * piece s[prev..i] and advance past the delim. When the scan
+     * completes, push the tail s[prev..s->length] (which may be empty
+     * if the string ended at a delim). For empty input s, return [].
+     * Edge cases:
+     *   string_split("",  ",") -> []        (empty input)
+     *   string_split("a", ",") -> ["a"]     (no delim found)
+     *   string_split("a,", ",") -> ["a", ""]  (trailing empty)
+     *   string_split(",", ",") -> ["", ""]  (empty before, empty after)
+     *   string_split("a", "")  -> ["a"]     (empty delim = whole string) */
+    if (argCount != 2) {
+        runtimeError("string_split() takes 2 arguments (%d given).", argCount);
+        return NIL_VAL;
+    }
+    if (!IS_STRING(args[0]) || !IS_STRING(args[1])) {
+        runtimeError("string_split() arguments must be strings.");
+        return NIL_VAL;
+    }
+    ObjString *s     = AS_STRING(args[0]);
+    ObjString *delim = AS_STRING(args[1]);
+
+    /* Upper bound: in the worst case (alternating chars and delim), we
+     * get s->length / delim->length + 1 elements. For delim->length ==
+     * 0 we want a single element (the whole string), per spec above. */
+    int worstCase = (delim->length > 0)
+                        ? (s->length / delim->length + 1)
+                        : 1;
+    ObjArray *array = newArray(worstCase);
+    push(OBJ_VAL(array));  /* GC: keep alive while filling */
+
+    if (s->length == 0) {
+        /* Empty input: empty array. */
+        pop();
+        return OBJ_VAL(array);
+    }
+
+    if (delim->length == 0) {
+        /* Empty delim: the whole string is one element. */
+        ObjString *whole = copyString(s->chars, s->length);
+        arrayPush(array, OBJ_VAL(whole));
+        pop();
+        return OBJ_VAL(array);
+    }
+
+    int prev = 0;
+    int i = 0;
+    while (i <= s->length - delim->length) {
+        bool match = true;
+        for (int j = 0; j < delim->length; j++) {
+            if (s->chars[i + j] != delim->chars[j]) {
+                match = false;
+                break;
+            }
+        }
+        if (match) {
+            /* Push the piece s[prev..i]. */
+            int pieceLen = i - prev;
+            ObjString *part = copyString(s->chars + prev, pieceLen);
+            arrayPush(array, OBJ_VAL(part));
+            i += delim->length;
+            prev = i;
+        } else {
+            i++;
+        }
+    }
+    /* Push the tail s[prev..s->length]. This is empty if the string
+     * ended at a delim boundary (trailing empty). */
+    {
+        int tailLen = s->length - prev;
+        ObjString *tail = copyString(s->chars + prev, tailLen);
+        arrayPush(array, OBJ_VAL(tail));
+    }
+
+    pop();
+    return OBJ_VAL(array);
+}
+
+static Value stringJoinNative(int argCount, Value *args) {
+    /* string_join(arr, delim) -> string. Walks the array, copies each
+     * element to a buffer, in between copies the delim. Total length is
+     * sum of element lengths + (n-1) * delim.length. */
+    if (argCount != 2) {
+        runtimeError("string_join() takes 2 arguments (%d given).", argCount);
+        return NIL_VAL;
+    }
+    if (!IS_ARRAY(args[0]) || !IS_STRING(args[1])) {
+        runtimeError("string_join() arguments must be (array, string).");
+        return NIL_VAL;
+    }
+    ObjArray *arr   = AS_ARRAY(args[0]);
+    ObjString *delim = AS_STRING(args[1]);
+
+    /* Compute total length. Each element must be a string. */
+    int total = 0;
+    if (arr->count > 0) {
+        total += (arr->count - 1) * delim->length;
+        for (int i = 0; i < arr->count; i++) {
+            Value element = arrayRead(arr, i);
+            if (!IS_STRING(element)) {
+                runtimeError("string_join() array element %d is not a string.", i);
+                return NIL_VAL;
+            }
+            total += AS_STRING(element)->length;
+        }
+    }
+
+    char *buf = ALLOCATE(char, total + 1);
+    /* No GC push needed here: buf is a raw char* (not a heap object),
+     * and the input ObjStrings are already reachable via arr, which
+     * is held by the caller's stack frame. copyString() may allocate
+     * a new ObjString for the result, but that becomes the return
+     * value, not a stack-temporary. */
+    int pos = 0;
+    for (int i = 0; i < arr->count; i++) {
+        if (i > 0) {
+            memcpy(buf + pos, delim->chars, delim->length);
+            pos += delim->length;
+        }
+        ObjString *element = AS_STRING(arrayRead(arr, i));
+        memcpy(buf + pos, element->chars, element->length);
+        pos += element->length;
+    }
+    buf[total] = '\0';
+
+    ObjString *result = copyString(buf, total);
+    FREE_ARRAY(char, buf, total + 1);
+    return OBJ_VAL(result);
+}
+
+static Value arrayCreateNative(int argCount, Value *args) {
+    /* array(arg1, arg2, ...) -> ObjArray of the given args. */
+    ObjArray *array = newArray(argCount);
+    push(OBJ_VAL(array));  /* GC: keep alive while filling */
+    for (int i = 0; i < argCount; i++) {
+        arrayPush(array, args[i]);
+    }
+    pop();
+    return OBJ_VAL(array);
+}
+
+static Value arrayLengthNative(int argCount, Value *args) {
+    if (argCount != 1) {
+        runtimeError("array_length() takes 1 argument (%d given).", argCount);
+        return NIL_VAL;
+    }
+    if (!IS_ARRAY(args[0])) {
+        runtimeError("array_length() argument must be an array.");
+        return NIL_VAL;
+    }
+    return NUMBER_VAL((double)AS_ARRAY(args[0])->count);
+}
+
+static Value arrayGetNative(int argCount, Value *args) {
+    if (argCount != 2) {
+        runtimeError("array_get() takes 2 arguments (%d given).", argCount);
+        return NIL_VAL;
+    }
+    if (!IS_ARRAY(args[0])) {
+        runtimeError("array_get() first argument must be an array.");
+        return NIL_VAL;
+    }
+    if (!IS_NUMBER(args[1])) {
+        runtimeError("array_get() second argument must be a number.");
+        return NIL_VAL;
+    }
+    ObjArray *array = AS_ARRAY(args[0]);
+    int index = (int)AS_NUMBER(args[1]);
+    if (index < 0 || index >= array->count) {
+        runtimeError("array_get() index %d out of bounds (length %d).",
+                     index, array->count);
+        return NIL_VAL;
+    }
+    return arrayRead(array, index);
+}
+
+static Value arraySetNative(int argCount, Value *args) {
+    if (argCount != 3) {
+        runtimeError("array_set() takes 3 arguments (%d given).", argCount);
+        return NIL_VAL;
+    }
+    if (!IS_ARRAY(args[0])) {
+        runtimeError("array_set() first argument must be an array.");
+        return NIL_VAL;
+    }
+    if (!IS_NUMBER(args[1])) {
+        runtimeError("array_set() second argument must be a number.");
+        return NIL_VAL;
+    }
+    ObjArray *array = AS_ARRAY(args[0]);
+    int index = (int)AS_NUMBER(args[1]);
+    if (index < 0 || index >= array->count) {
+        runtimeError("array_set() index %d out of bounds (length %d).",
+                     index, array->count);
+        return NIL_VAL;
+    }
+    arrayWrite(array, index, args[2]);
+    return NIL_VAL;
+}
+
+static Value arrayPushNative(int argCount, Value *args) {
+    if (argCount != 2) {
+        runtimeError("array_push() takes 2 arguments (%d given).", argCount);
+        return NIL_VAL;
+    }
+    if (!IS_ARRAY(args[0])) {
+        runtimeError("array_push() first argument must be an array.");
+        return NIL_VAL;
+    }
+    arrayPush(AS_ARRAY(args[0]), args[1]);
+    return NIL_VAL;
+}
+
 static Value typeofNative(int argCount, Value *args) {
     if (argCount != 1) {
         runtimeError("typeof() takes 1 argument (%d given).", argCount);
@@ -593,6 +816,18 @@ void defineNatives(void) {
     tableSet(&vm.globals, name, OBJ_VAL(newNative(stringTrimNative)));
     pop();
 
+    /* Stage 13: string_split / string_join — compose the new array
+     * value type with the existing string natives. */
+    name = copyString("string_split", (int)strlen("string_split"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(stringSplitNative)));
+    pop();
+
+    name = copyString("string_join", (int)strlen("string_join"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(stringJoinNative)));
+    pop();
+
     /* Stage 10: more number operations. */
     name = copyString("number_floor", (int)strlen("number_floor"));
     push(OBJ_VAL(name));
@@ -638,6 +873,32 @@ void defineNatives(void) {
     name = copyString("io_read_line", (int)strlen("io_read_line"));
     push(OBJ_VAL(name));
     tableSet(&vm.globals, name, OBJ_VAL(newNative(ioReadLineNative)));
+    pop();
+
+    /* Stage 12a: array value type via natives. */
+    name = copyString("array", (int)strlen("array"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayCreateNative)));
+    pop();
+
+    name = copyString("array_length", (int)strlen("array_length"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayLengthNative)));
+    pop();
+
+    name = copyString("array_get", (int)strlen("array_get"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayGetNative)));
+    pop();
+
+    name = copyString("array_set", (int)strlen("array_set"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(arraySetNative)));
+    pop();
+
+    name = copyString("array_push", (int)strlen("array_push"));
+    push(OBJ_VAL(name));
+    tableSet(&vm.globals, name, OBJ_VAL(newNative(arrayPushNative)));
     pop();
 
     /* Stage 7: type predicate. */

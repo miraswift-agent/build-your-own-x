@@ -596,6 +596,665 @@ static void test_io_read_line(void) {
     }
 }
 
+/* --- Stage 12a tests: array value type via natives --- */
+
+static void test_array_create_and_length(void) {
+    /* array(arg1, arg2, ...) -> ObjArray
+     * array_length(arr) -> number */
+    int exitCode;
+    char* out = runClox(
+        "var a = array(1, 2, 3);\n"
+        "print array_length(a);\n"
+        "var b = array();\n"     /* empty array */
+        "print array_length(b);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-create-length: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "3\n") || !contains(out, "0\n")) {
+        fail("stdlib/array-create-length: expected '3' and '0' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_get_set(void) {
+    /* array_get(arr, i) -> element; runtime error if out of bounds
+     * array_set(arr, i, val) -> modifies arr; runtime error if OOB */
+    int exitCode;
+    char* out = runClox(
+        "var a = array(10, 20, 30);\n"
+        "print array_get(a, 0);\n"      /* 10 */
+        "print array_get(a, 1);\n"      /* 20 */
+        "print array_get(a, 2);\n"      /* 30 */
+        "array_set(a, 1, 99);\n"
+        "print array_get(a, 1);\n",     /* 99 */
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-get-set: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "10\n") || !contains(out, "20\n") ||
+               !contains(out, "30\n") || !contains(out, "99\n")) {
+        fail("stdlib/array-get-set: expected 10,20,30,99 in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_push(void) {
+    /* array_push(arr, val) -> modifies arr; arr now has one more element */
+    int exitCode;
+    char* out = runClox(
+        "var a = array(1, 2);\n"
+        "print array_length(a);\n"     /* 2 */
+        "array_push(a, 3);\n"
+        "print array_length(a);\n"     /* 3 */
+        "print array_get(a, 2);\n",    /* 3 */
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-push: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "2\n") || !contains(out, "3\n")) {
+        fail("stdlib/array-push: expected '2' and '3' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_get_out_of_bounds(void) {
+    /* Runtime error: array_get(a, 5) on a 3-element array. */
+    int exitCode;
+    char* out = runClox(
+        "var a = array(1, 2, 3);\n"
+        "print array_get(a, 5);\n",
+        &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-oob-get: expected nonzero exit, got 0");
+    } else if (!contains(out, "out of bounds") && !contains(out, "Index")) {
+        fail("stdlib/array-oob-get: expected 'out of bounds' or 'Index' in error, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_set_out_of_bounds(void) {
+    /* Runtime error: array_set(a, 5, 99) on a 3-element array. */
+    int exitCode;
+    char* out = runClox(
+        "var a = array(1, 2, 3);\n"
+        "array_set(a, 5, 99);\n",
+        &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-oob-set: expected nonzero exit, got 0");
+    } else if (!contains(out, "out of bounds") && !contains(out, "Index")) {
+        fail("stdlib/array-oob-set: expected 'out of bounds' or 'Index' in error, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_wrong_args(void) {
+    /* Type error: array_length() called with a number. */
+    int exitCode;
+    char* out = runClox("print array_length(42);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-wrong-args: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+/* --- Stage 12b-i tests: array literals [1, 2, 3] --- */
+
+static void test_array_literal_3(void) {
+    /* [1, 2, 3] builds a 3-element array. */
+    int exitCode;
+    char* out = runClox(
+        "var a = [1, 2, 3];\n"
+        "print array_length(a);\n"     /* 3 */
+        "print array_get(a, 0);\n"     /* 1 */
+        "print array_get(a, 1);\n"     /* 2 */
+        "print array_get(a, 2);\n",    /* 3 */
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-literal-3: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "3\n") || !contains(out, "1\n") ||
+               !contains(out, "2\n")) {
+        fail("stdlib/array-literal-3: expected 3, 1, 2, 3 in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_literal_empty(void) {
+    /* [] builds a 0-element array. */
+    int exitCode;
+    char* out = runClox(
+        "var a = [];\n"
+        "print array_length(a);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-literal-empty: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "0\n")) {
+        fail("stdlib/array-literal-empty: expected '0' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_literal_mixed(void) {
+    /* Mixed-type literal: numbers and strings in one array. */
+    int exitCode;
+    char* out = runClox(
+        "var a = [1, \"foo\", true];\n"
+        "print array_length(a);\n"     /* 3 */
+        "print array_get(a, 0);\n"     /* 1 */
+        "print array_get(a, 1);\n"     /* foo (no quotes) */
+        "print array_get(a, 2);\n",    /* true */
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-literal-mixed: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "3\n") || !contains(out, "1\n") ||
+               !contains(out, "foo\n") || !contains(out, "true\n")) {
+        fail("stdlib/array-literal-mixed: expected 3, 1, foo, true in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_literal_nested(void) {
+    /* Nested literal: [[1, 2], [3, 4]] is a 2-element array of arrays. */
+    int exitCode;
+    char* out = runClox(
+        "var a = [[1, 2], [3, 4]];\n"
+        "print array_length(a);\n"             /* 2 */
+        "print array_length(array_get(a, 0));\n" /* 2 */
+        "print array_length(array_get(a, 1));\n" /* 2 */
+        "print array_get(array_get(a, 0), 1);\n",/* 2 */
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-literal-nested: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "2\n")) {
+        fail("stdlib/array-literal-nested: expected multiple '2's in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_print_array_literal(void) {
+    /* print [1, 2, 3] should output [1, 2, 3]. */
+    int exitCode;
+    char* out = runClox("print [1, 2, 3];\n", &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/print-array-literal: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "[1, 2, 3]")) {
+        fail("stdlib/print-array-literal: expected '[1, 2, 3]' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+/* --- Stage 12b-ii tests: a[i] index read --- */
+
+static void test_array_index_read(void) {
+    /* a[i] reads the i-th element. */
+    int exitCode;
+    char* out = runClox(
+        "var a = [10, 20, 30];\n"
+        "print a[0];\n"   /* 10 */
+        "print a[1];\n"   /* 20 */
+        "print a[2];\n",  /* 30 */
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-index-read: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "10\n") || !contains(out, "20\n") ||
+               !contains(out, "30\n")) {
+        fail("stdlib/array-index-read: expected 10, 20, 30 in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_index_nested(void) {
+    /* a[i][j] reads a 2D array. */
+    int exitCode;
+    char* out = runClox(
+        "var grid = [[1, 2, 3], [4, 5, 6]];\n"
+        "print grid[0][0];\n"  /* 1 */
+        "print grid[0][2];\n"  /* 3 */
+        "print grid[1][1];\n"  /* 5 */
+        "print grid[1][2];\n", /* 6 */
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-index-nested: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "1\n") || !contains(out, "3\n") ||
+               !contains(out, "5\n") || !contains(out, "6\n")) {
+        fail("stdlib/array-index-nested: expected 1, 3, 5, 6 in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_index_expression(void) {
+    /* Index can be an expression: a[i+1], a[i*2]. */
+    int exitCode;
+    char* out = runClox(
+        "var a = [10, 20, 30, 40, 50];\n"
+        "var i = 2;\n"
+        "print a[i];\n"       /* 30 */
+        "print a[i + 1];\n"   /* 40 */
+        "print a[i * 2];\n",  /* 50 */
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-index-expression: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "30\n") || !contains(out, "40\n") ||
+               !contains(out, "50\n")) {
+        fail("stdlib/array-index-expression: expected 30, 40, 50 in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_index_out_of_bounds(void) {
+    /* a[5] on a 3-element array is a runtime error. */
+    int exitCode;
+    char* out = runClox(
+        "var a = [1, 2, 3];\n"
+        "print a[5];\n",
+        &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-index-oob: expected nonzero exit, got 0");
+    } else if (!contains(out, "out of bounds") && !contains(out, "Index")) {
+        fail("stdlib/array-index-oob: expected 'out of bounds' in error, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_index_negative(void) {
+    /* a[-1] is a runtime error (we don't support negative indexing). */
+    int exitCode;
+    char* out = runClox(
+        "var a = [1, 2, 3];\n"
+        "print a[-1];\n",
+        &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-index-negative: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_index_wrong_type(void) {
+    /* a["foo"] is a runtime error: index must be a number. */
+    int exitCode;
+    char* out = runClox(
+        "var a = [1, 2, 3];\n"
+        "print a[\"foo\"];\n",
+        &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-index-wrong-type: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_index_on_non_array(void) {
+    /* 42[0] is a runtime error: subscript requires an array. */
+    int exitCode;
+    char* out = runClox("print 42[0];\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-index-on-non-array: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+/* --- Stage 12b-iii tests: a[i] = v index write --- */
+
+static void test_array_index_write(void) {
+    /* a[i] = v assigns the v-th element. */
+    int exitCode;
+    char* out = runClox(
+        "var a = [1, 2, 3];\n"
+        "a[0] = 99;\n"
+        "a[2] = 77;\n"
+        "print a[0];\n"  /* 99 */
+        "print a[1];\n"  /* 2 */
+        "print a[2];\n", /* 77 */
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-index-write: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "99\n") || !contains(out, "2\n") || !contains(out, "77\n")) {
+        fail("stdlib/array-index-write: expected 99, 2, 77 in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_index_write_expression(void) {
+    /* Right side of = is a full expression. */
+    int exitCode;
+    char* out = runClox(
+        "var a = [1, 2, 3, 4, 5];\n"
+        "var i = 1;\n"
+        "a[i] = 100;\n"
+        "a[i + 1] = 200;\n"
+        "a[2 * 2] = 300;\n"
+        "print a[0];\n"  /* 1 */
+        "print a[1];\n"  /* 100 */
+        "print a[2];\n"  /* 200 */
+        "print a[3];\n"  /* 4 */
+        "print a[4];\n", /* 300 */
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-index-write-expr: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "1\n") || !contains(out, "100\n") ||
+               !contains(out, "200\n") || !contains(out, "4\n") ||
+               !contains(out, "300\n")) {
+        fail("stdlib/array-index-write-expr: expected 1, 100, 200, 4, 300 in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_index_write_then_read(void) {
+    /* Chained write then read: a[0] = a[1]. */
+    int exitCode;
+    char* out = runClox(
+        "var a = [1, 2, 3];\n"
+        "a[0] = a[1];\n"
+        "print a[0];\n"  /* 2 */
+        "print a[1];\n"  /* 2 */
+        "print a[2];\n", /* 3 */
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-index-write-then-read: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "2\n") || !contains(out, "3\n")) {
+        fail("stdlib/array-index-write-then-read: expected 2, 2, 3 in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_index_write_oob(void) {
+    /* a[5] = v on a 3-element array is a runtime error. */
+    int exitCode;
+    char* out = runClox(
+        "var a = [1, 2, 3];\n"
+        "a[5] = 99;\n",
+        &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-index-write-oob: expected nonzero exit, got 0");
+    } else if (!contains(out, "out of bounds")) {
+        fail("stdlib/array-index-write-oob: expected 'out of bounds' in error, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_index_write_on_non_array(void) {
+    /* 42[0] = v is a runtime error: subscript requires an array. */
+    int exitCode;
+    char* out = runClox("42[0] = 99;\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-index-write-on-non-array: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+/* --- Stage 13 tests: string_split / string_join --- */
+
+static void test_string_split_basic(void) {
+    /* string_split("a,b,c", ",") -> ["a", "b", "c"] */
+    int exitCode;
+    char* out = runClox(
+        "var parts = string_split(\"a,b,c\", \",\");\n"
+        "print(parts[0]); print(parts[1]); print(parts[2]);\n"
+        "print(array_length(parts));\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/string-split-basic: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "a\n") || !contains(out, "b\n") || !contains(out, "c\n") ||
+               !contains(out, "3\n")) {
+        fail("stdlib/string-split-basic: expected a, b, c, 3 in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_split_empty_delim(void) {
+    /* string_split("hello", "") -> ["hello"] (single element). */
+    int exitCode;
+    char* out = runClox(
+        "var parts = string_split(\"hello\", \"\");\n"
+        "print(array_length(parts));\n"
+        "print(parts[0]);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/string-split-empty-delim: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "1\n") || !contains(out, "hello\n")) {
+        fail("stdlib/string-split-empty-delim: expected 1, hello in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_split_empty_string(void) {
+    /* string_split("", ",") -> [] (empty array). */
+    int exitCode;
+    char* out = runClox(
+        "var parts = string_split(\"\", \",\");\n"
+        "print(array_length(parts));\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/string-split-empty-string: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "0\n")) {
+        fail("stdlib/string-split-empty-string: expected 0 in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_split_no_match(void) {
+    /* string_split("hello", ",") -> ["hello"] (no occurrences of delim). */
+    int exitCode;
+    char* out = runClox(
+        "var parts = string_split(\"hello\", \",\");\n"
+        "print(array_length(parts));\n"
+        "print(parts[0]);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/string-split-no-match: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "1\n") || !contains(out, "hello\n")) {
+        fail("stdlib/string-split-no-match: expected 1, hello in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_split_multi_char(void) {
+    /* string_split("a::b::c", "::") -> ["a", "b", "c"] (multi-char delim). */
+    int exitCode;
+    char* out = runClox(
+        "var parts = string_split(\"a::b::c\", \"::\");\n"
+        "print(array_length(parts));\n"
+        "print(parts[0]); print(parts[1]); print(parts[2]);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/string-split-multi-char: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "3\n") || !contains(out, "a\n") ||
+               !contains(out, "b\n") || !contains(out, "c\n")) {
+        fail("stdlib/string-split-multi-char: expected 3, a, b, c in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_join_basic(void) {
+    /* string_join(["a", "b", "c"], ",") -> "a,b,c" */
+    int exitCode;
+    char* out = runClox(
+        "var s = string_join([\"a\", \"b\", \"c\"], \",\");\n"
+        "print(s);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/string-join-basic: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "a,b,c\n")) {
+        fail("stdlib/string-join-basic: expected 'a,b,c' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_join_empty_array(void) {
+    /* string_join([], ",") -> "" */
+    int exitCode;
+    char* out = runClox(
+        "var s = string_join([], \",\");\n"
+        "print(string_length(s));\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/string-join-empty-array: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "0\n")) {
+        fail("stdlib/string-join-empty-array: expected 0 in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_join_single_element(void) {
+    /* string_join(["only"], ",") -> "only" (no delim used). */
+    int exitCode;
+    char* out = runClox(
+        "var s = string_join([\"only\"], \",\");\n"
+        "print(s);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/string-join-single: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "only\n")) {
+        fail("stdlib/string-join-single: expected 'only' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_split_join_round_trip(void) {
+    /* string_join(string_split(s, ","), ",") == s. */
+    int exitCode;
+    char* out = runClox(
+        "var original = \"one,two,three,four\";\n"
+        "var parts = string_split(original, \",\");\n"
+        "var rejoined = string_join(parts, \",\");\n"
+        "print(rejoined);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/string-split-join-roundtrip: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "one,two,three,four\n")) {
+        fail("stdlib/string-split-join-roundtrip: expected 'one,two,three,four' in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_split_gc_stress(void) {
+    /* GC stress: 200 iterations of split+join+push. Each iteration
+     * creates an array of substrings and a joined string. The pieces
+     * are pushed into a growing array (which forces collection) and
+     * the iteration variable is reassigned. All allocs must balance
+     * with frees; valgrind verifies. */
+    int exitCode;
+    char* out = runClox(
+        "var s = \"alpha,beta,gamma,delta,epsilon,zeta,eta,theta\";\n"
+        "var sink = [];\n"
+        "var i = 0;\n"
+        "while (i < 200) {\n"
+        "    var parts = string_split(s, \",\");\n"
+        "    var joined = string_join(parts, \",\");\n"
+        "    array_push(sink, joined);\n"
+        "    i = i + 1;\n"
+        "}\n"
+        "print(array_length(sink));\n"
+        "print(sink[0]);\n"
+        "print(sink[199]);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/string-split-gc-stress: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "200\n") ||
+               !contains(out, "alpha,beta,gamma,delta,epsilon,zeta,eta,theta\n")) {
+        fail("stdlib/string-split-gc-stress: expected 200 and the round-trip string in output, got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_split_wrong_type(void) {
+    /* string_split(42, ",") is a runtime error. */
+    int exitCode;
+    char* out = runClox("string_split(42, \",\");\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/string-split-wrong-type: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_join_wrong_type(void) {
+    /* string_join(42, ",") is a runtime error: first arg must be array. */
+    int exitCode;
+    char* out = runClox("string_join(42, \",\");\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/string-join-wrong-type: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_string_join_non_string_element(void) {
+    /* string_join(["a", 42, "c"], ",") is a runtime error. */
+    int exitCode;
+    char* out = runClox("string_join([\"a\", 42, \"c\"], \",\");\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/string-join-non-string-element: expected nonzero exit, got 0");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
 int main(void) {
     test_clock_exists();
     test_number_abs();
@@ -628,6 +1287,47 @@ int main(void) {
     test_io_wrong_type();
     test_io_exit();
     test_io_read_line();
+    /* Stage 12a: array value type via natives. */
+    test_array_create_and_length();
+    test_array_get_set();
+    test_array_push();
+    test_array_get_out_of_bounds();
+    test_array_set_out_of_bounds();
+    test_array_wrong_args();
+    /* Stage 12b-i: array literals. */
+    test_array_literal_3();
+    test_array_literal_empty();
+    test_array_literal_mixed();
+    test_array_literal_nested();
+    test_print_array_literal();
+    /* Stage 12b-ii: a[i] index read. */
+    test_array_index_read();
+    test_array_index_nested();
+    test_array_index_expression();
+    test_array_index_out_of_bounds();
+    test_array_index_negative();
+    test_array_index_wrong_type();
+    test_array_index_on_non_array();
+    /* Stage 12b-iii: a[i] = v index write. */
+    test_array_index_write();
+    test_array_index_write_expression();
+    test_array_index_write_then_read();
+    test_array_index_write_oob();
+    test_array_index_write_on_non_array();
+    /* Stage 13: string_split / string_join. */
+    test_string_split_basic();
+    test_string_split_empty_delim();
+    test_string_split_empty_string();
+    test_string_split_no_match();
+    test_string_split_multi_char();
+    test_string_join_basic();
+    test_string_join_empty_array();
+    test_string_join_single_element();
+    test_string_split_join_round_trip();
+    test_string_split_gc_stress();
+    test_string_split_wrong_type();
+    test_string_join_wrong_type();
+    test_string_join_non_string_element();
 
     printf("%d passed, %d failed\n", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
