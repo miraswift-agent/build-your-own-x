@@ -11,8 +11,9 @@ Inspired by [codecrafters-io/build-your-own-x](https://github.com/codecrafters-i
 | 01 | Memory Allocator | ✅ Complete (5 stages) | Stress-test-first methodology; bugs 5→2→0→0→1 |
 | 02 | Database | ✅ Complete | B-tree splits/merges aren't mirror images; page serialization is the hard part |
 | 03 | Shell | ✅ Complete (3 stages) | Built-ins can't fork; process groups are a three-way contract |
-| 04 | Agent Browser | ✅ Complete (327 tests) | Content-first DOM, intent-level interaction, CDP-compatible, v0.6.0 |
+| 04 | Agent Browser | ✅ Complete (346 tests) | Content-first DOM, intent-level interaction, CDP-compatible, v0.6.0 |
 | 05 | VM / clox | ✅ Stage 64 modules complete | Multi-file Lox: import as / selective / rename; cache; cycles; main-as-module |
+| 06 | Sockets | 🚧 Design draft (`06-sockets/docs/stage-65-sockets-design.md`) | Two machines talking: fd lifecycle, byte-order addresses, framing, HTTP and DNS from the wire up — the shape every stage so far has skipped |
 
 ## Why
 
