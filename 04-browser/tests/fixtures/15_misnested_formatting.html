@@ -1,0 +1,14 @@
+<!-- Misnested formatting elements — the adoption agency algorithm's own example
+     (HTML Living Standard §13.2.8.3, "Adoption agency algorithm").
+
+     The markup is deliberately ill-formed: the </b> closes an element that is
+     still open *inside* an <i>. Browsers recover by re-opening the <i> after
+     the <b> closes, so the text after </b> stays inside <i>:
+
+       <p>1<b>2<i>3</b>4</i>5</p>
+         becomes
+       <p>1<b>2<i>3</i></b><i>4</i>5</p>
+
+     Fixture for browser-harden slice 2 (parser correctness, not the network). -->
+<p>1<b>2<i>3</b>4</i>5</p>
+<p><b>bold <i>both</b> italic</i> plain</p>

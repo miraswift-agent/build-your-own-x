@@ -454,6 +454,55 @@ fn parse_example_com_snapshot_markup() {
 }
 
 #[test]
+fn parse_misnested_formatting_adoption_agency() {
+    // The adoption agency algorithm's own example, from the HTML Living
+    // Standard §13.2.8.3. The markup is ill-formed on purpose: </b> closes an
+    // element while an <i> is still open inside it. Browsers recover by
+    // re-opening the <i> after the <b> closes, so the text that follows
+    // </b> stays inside <i> instead of falling out of it.
+    //
+    //   <p>1<b>2<i>3</b>4</i>5</p>  =>  <p>1<b>2<i>3</i></b><i>4</i>5</p>
+    //
+    // A parser that just pops the stack to the matching tag loses the <i>:
+    // it produces <p>1<b>2<i>3</i></b>45</p> and silently drops the italic
+    // formatting from the rest of the paragraph.
+    use agent_browser::html::parse;
+
+    let html = include_str!("fixtures/15_misnested_formatting.html");
+    let doc = parse(html);
+
+    let paras = doc.get_elements_by_tag_name("p");
+    assert_eq!(paras.len(), 2, "fixture should yield exactly two paragraphs");
+
+    // First paragraph: the spec's canonical example.
+    assert_eq!(
+        doc.inner_html(paras[0]),
+        "1<b>2<i>3</i></b><i>4</i>5",
+        "misnested <i> must be re-opened after </b> (adoption agency, §13.2.8.3)"
+    );
+
+    // Second paragraph: the misnesting is one level deeper and the misnested
+    // element carries the text after the stray end tag.
+    //
+    // The two expected trees below are not transcribed from the spec prose —
+    // they were cross-checked against html5lib 1.1 (a spec-compliant HTML5
+    // parsing implementation) on the same markup, which produces:
+    //   <p>1<b>2<i>3</i></b><i>4</i>5</p>
+    //   <p><b>bold <i>both</i></b><i> italic</i> plain</p>
+    assert_eq!(
+        doc.inner_html(paras[1]),
+        "<b>bold <i>both</i></b><i> italic</i> plain",
+        "misnested formatting elements must be reconstructed, not discarded"
+    );
+
+    // The reconstructed <i> keeps the count the browser would produce:
+    // two <i> elements in the first paragraph (the original inside <b>, the
+    // reconstructed one after it).
+    let is = doc.get_elements_by_tag_name("i");
+    assert_eq!(is.len(), 4, "two <i> per paragraph: original + reconstructed");
+}
+
+#[test]
 fn integration_cookie_jar_persistence() {
     // Verify cookie jar persists cookies across multiple store operations
     // (unit-level, no network needed — round-trip covered by other integration tests)

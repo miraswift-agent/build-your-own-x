@@ -8,8 +8,9 @@
 //! * Implied open elements (`<html>`, `<head>`, `<body>`)
 //! * Implied end tags: `<p>` closed by block-level start tags;
 //!   `<li>` closed by another `<li>`; `<dt>`/`<dd>` closed by each other
-//! * Adoption agency algorithm (simplified): handles misnested formatting
-//!   elements like `<b>`, `<i>`, `<a>`, `<em>`, `<strong>`
+//! * Adoption agency algorithm (partial): misnested formatting elements like
+//!   `<b>`, `<i>`, `<a>`, `<em>`, `<strong>` are re-opened after the stray end
+//!   tag closes, per §13.2.8.3
 //! * Raw text / RCData elements (`<script>`, `<style>`, `<textarea>`, `<title>`)
 //! * End-tag foster parenting: unknown end tags are discarded
 
@@ -241,19 +242,64 @@ impl TreeBuilder {
         }
     }
 
-    /// Reconstruct the active formatting elements (simplified adoption agency).
+    /// Formatting elements (HTML Living Standard §13.2.8) — the set the
+    /// adoption agency algorithm reconstructs when they are misnested.
+    const FORMATTING_ELEMENTS: &[&str] = &[
+        "a", "b", "big", "code", "em", "font", "i", "nobr", "s", "small", "strike", "strong", "tt",
+        "u",
+    ];
+
+    /// Apply the adoption agency algorithm (§13.2.8.3) to a formatting
+    /// element end tag.
     ///
-    /// The full adoption agency algorithm (spec §13.2.8.3) handles deeply
-    /// misnested formatting elements. Our simplified version covers the common
-    /// case: when we see an end tag for a formatting element that is not the
-    /// current node, we walk the stack to find it and pop everything up to it.
+    /// The target element is often *not* the current node: in `<b><i>x</b>` the
+    /// `</b>` closes `<b>` while `<i>` is still open inside it. The spec's
+    /// recovery is to re-open the misnested formatting elements (with their
+    /// original attributes) once the target has closed, so the content that
+    /// follows the stray end tag stays *inside* them:
+    ///
+    /// ```text
+    /// <p>1<b>2<i>3</b>4</i>5</p>  =>  <p>1<b>2<i>3</i></b><i>4</i>5</p>
+    /// ```
+    ///
+    /// Simply popping the stack to the target loses the formatting entirely
+    /// (`<p>1<b>2<i>3</i></b>45</p>`), which is what this used to do.
+    ///
+    /// Scope: this implements the re-opening step for misnested formatting
+    /// elements. The full algorithm's list-of-active-formatting-elements
+    /// bookkeeping, and its `<a>` special case, are still not implemented.
     fn adoption_agency(&mut self, tag: &str) {
-        // If it's on the stack, pop to it
-        if self.in_open_stack(tag) {
-            self.generate_implied_end_tags(Some(tag));
-            self.pop_until(tag);
+        let Some(target_idx) = self
+            .open
+            .iter()
+            .rposition(|&id| self.doc.node(id).tag_name() == Some(tag))
+        else {
+            // Not in scope — the caller has already logged the parse error.
+            return;
+        };
+
+        // The formatting elements misnested above the target, in stack order.
+        let misnested: Vec<(String, Vec<Attribute>)> = self.open[target_idx + 1..]
+            .iter()
+            .filter_map(|&id| {
+                let node = self.doc.node(id);
+                let name = node.tag_name()?;
+                if !Self::FORMATTING_ELEMENTS.contains(&name) {
+                    return None;
+                }
+                let attrs = node.element_data()?.attrs.clone();
+                Some((name.to_string(), attrs))
+            })
+            .collect();
+
+        self.generate_implied_end_tags(Some(tag));
+        self.pop_until(tag);
+
+        // Reconstruct the misnested formatting elements so the content that
+        // follows the stray end tag stays inside them.
+        for (name, attrs) in misnested {
+            self.insert_and_push(&name, attrs);
         }
-        // Otherwise ignore (parse error already logged by caller)
     }
 
     // ------------------------------------------------------------------
