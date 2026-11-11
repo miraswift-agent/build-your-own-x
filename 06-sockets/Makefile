@@ -1,25 +1,45 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -Werror -std=c11 -g -O0
-SRC = src/sockets.c
-TEST = tests/test_stage_65_1.c
-BUILD_DIR = build
 
-.PHONY: all test clean valgrind
+SRCDIR = src
+TESTDIR = tests
+BUILDDIR = build
 
-all: $(BUILD_DIR)/test_stage_65_1
+SOURCES = $(wildcard $(SRCDIR)/*.c)
+TEST_SOURCES = $(wildcard $(TESTDIR)/*.c)
+# Each tests/test_*.c becomes its own binary in build/. A new stage drops in a
+# new test file and inherits the runner.
+TEST_BINARIES = $(patsubst $(TESTDIR)/test_%.c,$(BUILDDIR)/%,$(TEST_SOURCES))
 
-$(BUILD_DIR):
-	mkdir -p $(BUILD_DIR)
+.PHONY: all test valgrind clean
 
-$(BUILD_DIR)/test_stage_65_1: $(SRC) $(TEST) $(BUILD_DIR)
-	$(CC) $(CFLAGS) $(SRC) $(TEST) -o $@
+all: $(TEST_BINARIES)
 
-test: $(BUILD_DIR)/test_stage_65_1
-	./$(BUILD_DIR)/test_stage_65_1
+# Each tests/test_*.c becomes its own binary, linked against the component.
+# A new stage drops in a new test file and inherits the runner.
+$(BUILDDIR)/%: $(SOURCES) $(TESTDIR)/test_%.c | $(BUILDDIR)
+	$(CC) $(CFLAGS) $(SOURCES) $(TESTDIR)/test_$*.c -o $@
 
-valgrind: $(BUILD_DIR)/test_stage_65_1
-	valgrind --leak-check=full --show-leak-kinds=all --track-origins=yes \
-		./$(BUILD_DIR)/test_stage_65_1
+$(BUILDDIR):
+	mkdir -p $(BUILDDIR)
+
+test: $(TEST_BINARIES)
+	@status=0; \
+	for t in $(TEST_BINARIES); do \
+		echo "==> $$t"; \
+		./$$t || status=$$?; \
+	done; \
+	echo; \
+	echo "==> All test binaries done (exit status: $$status)"; \
+	exit $$status
+
+valgrind: $(TEST_BINARIES)
+	@status=0; \
+	for t in $(TEST_BINARIES); do \
+		echo "==> valgrind $$t"; \
+		valgrind --leak-check=full --show-leak-kinds=all --error-exitcode=1 ./$$t || status=$$?; \
+	done; \
+	exit $$status
 
 clean:
-	rm -rf $(BUILD_DIR)
+	rm -rf $(BUILDDIR)
