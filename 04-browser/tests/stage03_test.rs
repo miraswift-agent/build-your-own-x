@@ -284,7 +284,11 @@ async fn integration_fetch_example_com() {
     assert!(!response.body.is_empty());
 
     let body = response.body_as_str().expect("utf8 body");
-    assert!(body.contains("Example Domain") || body.contains("<html"));
+    // Deliberately NO assertion about example.com's current markup. This test's
+    // subject is our client (TLS, status, content-type, UTF-8 body) — not their
+    // HTML. Asserting a third party's DOM is what rotted this suite; see
+    // docs/browser-harden-hermetic-fixtures-closeout.md.
+    assert!(!body.trim().is_empty(), "example.com returned an empty body");
 }
 
 #[tokio::test]
@@ -301,7 +305,8 @@ async fn integration_fetch_https_certificate_verification() {
     assert_eq!(response.status, 200);
     assert_eq!(response.content_type, ContentType::Html);
     let body = response.body_as_str().expect("utf8 body");
-    assert!(body.contains("IANA") || body.contains("html"));
+    // Same rule as the example.com test: assert our behavior, not their markup.
+    assert!(!body.trim().is_empty(), "iana.org returned an empty body");
 }
 
 #[tokio::test]
@@ -357,26 +362,95 @@ async fn integration_redirect_following() {
 
 #[tokio::test]
 async fn integration_fetch_and_parse_dom() {
+    // Local server serving a snapshot of a real-world page — no third-party
+    // markup dependency. This test used to fetch example.com LIVE and assert
+    // it had an <h1>. On 2026-11-11 example.com dropped its <h1> (the page
+    // name moved into <title>) and the test rotted. The parser was never
+    // wrong. See docs/browser-harden-hermetic-fixtures-closeout.md.
     use agent_browser::html::parse;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    let html = include_str!("fixtures/14_example_com_snapshot.html");
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("local_addr");
+    let port = addr.port();
+
+    let server = tokio::spawn(async move {
+        let (mut sock, _) = listener.accept().await.expect("accept");
+        let mut buf = [0u8; 1024];
+        let _ = sock.read(&mut buf).await;
+        let resp = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            html.len()
+        );
+        sock.write_all(resp.as_bytes()).await.expect("write 200");
+        sock.write_all(html.as_bytes()).await.expect("write body");
+    });
 
     let client = HttpClient::with_defaults();
     let mut jar = CookieJar::new();
-    let url = Url::parse("https://example.com").unwrap();
+    let url = Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
 
     let response = client.get(&url, &mut jar).await.expect("fetch failed");
     assert_eq!(response.status, 200);
 
-    let html = response.body_as_str().expect("utf8 body");
-    let doc = parse(html);
+    let body = response.body_as_str().expect("utf8 body");
+    let doc = parse(body);
 
-    // example.com has exactly one h1
     use agent_browser::dom::query_selector_all;
     use agent_browser::html::dom::DOCUMENT_NODE_ID;
-    let h1s = query_selector_all(&doc, DOCUMENT_NODE_ID, "h1").unwrap();
-    assert!(!h1s.is_empty(), "expected at least one h1 on example.com");
 
-    let h1_text = doc.text_content(h1s[0]).trim().to_string();
-    assert!(h1_text.contains("Example Domain"), "h1 text was: {h1_text}");
+    // The <p> the snapshot actually has — the element example.com serves today.
+    let ps = query_selector_all(&doc, DOCUMENT_NODE_ID, "p").unwrap();
+    assert_eq!(ps.len(), 1, "expected exactly one <p> in the snapshot");
+    assert!(
+        doc.text_content(ps[0]).contains("documentation examples"),
+        "p text was: {}",
+        doc.text_content(ps[0])
+    );
+
+    // Child combinator still resolves on the snapshot.
+    let body_ps = query_selector_all(&doc, DOCUMENT_NODE_ID, "body > p").unwrap();
+    assert_eq!(body_ps.len(), 1);
+
+    // The page name lives in <title> now, not in an <h1>.
+    let titles = doc.get_elements_by_tag_name("title");
+    assert_eq!(titles.len(), 1);
+    assert_eq!(doc.text_content(titles[0]).trim(), "Example Domain");
+
+    server.await.expect("server task");
+}
+
+#[test]
+fn parse_example_com_snapshot_markup() {
+    // Pins the parser against the real-world shape of that page: minified, with
+    // UNQUOTED attribute values (lang=en, charset=utf-8, src=/s.js), a <style>
+    // and a <script> in <head>. No network — the snapshot is the input.
+    use agent_browser::html::parse;
+
+    let html = include_str!("fixtures/14_example_com_snapshot.html");
+    let doc = parse(html);
+
+    assert_eq!(doc.get_elements_by_tag_name("html").len(), 1);
+    assert_eq!(doc.get_elements_by_tag_name("head").len(), 1);
+    assert_eq!(doc.get_elements_by_tag_name("body").len(), 1);
+    assert_eq!(doc.get_elements_by_tag_name("title").len(), 1);
+    assert_eq!(doc.get_elements_by_tag_name("p").len(), 1);
+    assert_eq!(doc.get_elements_by_tag_name("script").len(), 1);
+    assert_eq!(doc.get_elements_by_tag_name("style").len(), 1);
+    assert_eq!(doc.get_elements_by_tag_name("meta").len(), 2);
+    assert_eq!(doc.get_elements_by_tag_name("link").len(), 1);
+    // No <h1> in today's markup — the parser must not invent one.
+    assert_eq!(doc.get_elements_by_tag_name("h1").len(), 0);
+
+    // The unquoted attribute value survived the parse.
+    let scripts = doc.get_elements_by_tag_name("script");
+    assert_eq!(doc.get_attribute(scripts[0], "src"), Some("/s.js"));
+
+    let metas = doc.get_elements_by_tag_name("meta");
+    assert_eq!(doc.get_attribute(metas[0], "charset"), Some("utf-8"));
 }
 
 #[test]
