@@ -40,6 +40,17 @@ typedef struct {
  * Returns 0 on success, -1 with errno set on failure. */
 int sock_ipv4_loopback_bytes(uint16_t port, sock_ipv4_bytes *out);
 
+/* Parse a dotted-quad IPv4 address ("127.0.0.1") into four octets.
+ *
+ * The client has to turn what a human writes into what the kernel wants,
+ * and this component does that by hand: the octets are counted here, not
+ * handed to a library helper. (Stage 65.2's guard greps src/ for the
+ * names of the helpers it banned -- including in comments -- so the prose
+ * about this rule cannot name them either.)
+ * Returns 0 on success, -1 with errno set to EINVAL for a malformed
+ * address. */
+int sock_ipv4_from_dotted(const char *text, uint8_t ip[4]);
+
 /* Write our bytes into a sockaddr_in the kernel will accept.
  * The one exception is the family field, which POSIX stores in host byte
  * order -- it is a number, not a byte string. */

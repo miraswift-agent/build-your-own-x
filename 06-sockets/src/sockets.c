@@ -898,3 +898,48 @@ int sock_mux_poll(sock_mux *m, sock_msg_handler handler, void *ctx, int timeout_
     }
     return events;
 }
+
+int sock_ipv4_from_dotted(const char *text, uint8_t ip[4])
+{
+    const char *p;
+    int octet;
+    int digits;
+    int value;
+
+    if (text == NULL || ip == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    p = text;
+    for (octet = 0; octet < 4; octet++) {
+        value = 0;
+        digits = 0;
+        while (*p >= '0' && *p <= '9') {
+            value = value * 10 + (*p - '0');
+            digits++;
+            p++;
+            if (digits > 3) {
+                errno = EINVAL;
+                return -1;
+            }
+        }
+        if (digits == 0 || value > 255) {
+            errno = EINVAL;
+            return -1;
+        }
+        ip[octet] = (uint8_t)value;
+        if (octet < 3) {
+            if (*p != '.') {
+                errno = EINVAL;
+                return -1;
+            }
+            p++;
+        }
+    }
+    if (*p != '\0') {
+        errno = EINVAL;
+        return -1;
+    }
+    return 0;
+}
