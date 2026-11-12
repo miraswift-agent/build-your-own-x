@@ -90,7 +90,13 @@ int http_parser_feed(http_parser *p, const void *data, size_t len);
  * request is not complete yet (and leaves the buffer alone), or
  * HTTP_PARSE_ERROR with errno set for a request that will never be
  * valid -- a broken request line, a header with no colon, a
- * Content-Length that is not a number. */
+ * Content-Length that is not a number.
+ *
+ * A body is framed by a length OR by a coding. When the request says
+ * "Transfer-Encoding: chunked", the body is the chunks, and the bytes
+ * after the terminal chunk are the start of the NEXT message. A coding
+ * overrides a length (RFC 9112 6.1): the coding that is on the wire
+ * frames the body. */
 http_parse_status http_parser_next(http_parser *p, http_request *out);
 
 /* Look up a header by name, case-insensitively. NULL if absent. */

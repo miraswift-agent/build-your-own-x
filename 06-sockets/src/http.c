@@ -217,6 +217,37 @@ static int parse_content_length(http_request *r)
     return 0;
 }
 
+/* Is the body framed by chunked transfer-encoding?
+ *
+ * The coding header is a LIST, and the LAST coding frames the body:
+ * "gzip, chunked" means the body is chunked. Names are
+ * case-insensitive, and the value may carry spaces around the token. */
+static int request_is_chunked(const http_request *r)
+{
+    const char *v = http_header_get(r, "Transfer-Encoding");
+    const char *last;
+    size_t n;
+    char name[32];
+
+    if (!v || *v == '\0') {
+        return 0;
+    }
+    last = strrchr(v, ',');
+    if (last) {
+        v = last + 1;
+    }
+    while (*v == ' ' || *v == '\t') {
+        v++;
+    }
+    n = 0;
+    while (v[n] != '\0' && v[n] != ' ' && v[n] != '\t' && n + 1 < sizeof(name)) {
+        name[n] = v[n];
+        n++;
+    }
+    name[n] = '\0';
+    return ieq(name, "chunked");
+}
+
 http_parse_status http_parser_next(http_parser *p, http_request *out)
 {
     long hend;
@@ -276,6 +307,73 @@ http_parse_status http_parser_next(http_parser *p, http_request *out)
     }
 
     body_start = (size_t)hend + 4;
+
+    if (request_is_chunked(out)) {
+        /* The body draws its own boundaries: it is a sequence of chunks,
+         * and the terminal chunk is followed by the bytes that belong to
+         * the NEXT message.
+         *
+         * A coding overrides a length (RFC 9112 6.1): when a request
+         * carries both, the coding that is on the wire frames the body.
+         * The safe reading trusts the coding -- a length in a request
+         * that also says "chunked" is exactly the shape that lets one
+         * end of a connection and the other disagree about where the
+         * body ends.
+         *
+         * The decoder is fed from the buffer every time, so a request
+         * that arrives in pieces is simply not ready until it is whole. */
+        http_chunk_decoder d;
+        const char *pending = NULL;
+        size_t pending_len;
+        size_t total = 0;
+
+        http_chunk_decoder_init(&d);
+        if (p->len > body_start) {
+            if (http_chunk_decoder_feed(&d, p->buf + body_start,
+                                        p->len - body_start) != 0) {
+                errno = EPROTO;
+                return HTTP_PARSE_ERROR;
+            }
+        }
+        for (;;) {
+            char chunk[HTTP_MAX_BODY];
+            size_t clen = 0;
+            http_chunk_status st;
+
+            st = http_chunk_decoder_next(&d, chunk, sizeof(chunk), &clen);
+            if (st == HTTP_CHUNK_NEED_MORE) {
+                /* The body has not all arrived. This is not an error:
+                 * the request is simply not ready yet, and the buffer is
+                 * left untouched. */
+                return HTTP_PARSE_NEED_MORE;
+            }
+            if (st == HTTP_CHUNK_ERROR) {
+                errno = EPROTO;
+                return HTTP_PARSE_ERROR;
+            }
+            if (st == HTTP_CHUNK_DONE) {
+                break;
+            }
+            if (total + clen > HTTP_MAX_BODY) {
+                errno = EMSGSIZE;
+                return HTTP_PARSE_ERROR;   /* bigger than we will hold */
+            }
+            memcpy(out->body + total, chunk, clen);
+            total += clen;
+        }
+        out->body_len = total;
+
+        /* What follows the terminal chunk is the start of the next
+         * message, not part of this one. */
+        pending_len = http_chunk_decoder_pending(&d, &pending);
+        rest = pending_len;
+        if (rest > 0) {
+            memmove(p->buf, pending, rest);
+        }
+        p->len = rest;
+        return HTTP_PARSE_OK;
+    }
+
     want = (out->content_length > 0) ? (size_t)out->content_length : 0;
     if (p->len - body_start < want) {
         /* The body has not all arrived. This is not an error: the request
