@@ -64,6 +64,10 @@ struct AfeEntry {
     name: String,
     /// True for a marker entry.
     marker: bool,
+    /// The element this entry refers to (`None` for markers). The Noah's
+    /// Ark clause compares tag name, attributes and TEXT, which needs the
+    /// element itself, not just its name.
+    id: Option<NodeId>,
 }
 
 /// Builds a `Document` from HTML source.
@@ -133,9 +137,60 @@ impl TreeBuilder {
             self.afe.push(AfeEntry {
                 name: tag.to_string(),
                 marker: false,
+                id: Some(id),
             });
+            // §13.2.6: after pushing, if the list now holds three elements
+            // with the same tag name, namespace, attributes and text, the
+            // earliest of them is removed.
+            self.noahs_ark(tag, id);
         }
         id
+    }
+
+    /// The Noah's Ark clause (§13.2.6): if the list of active formatting
+    /// elements contains three elements with the same tag name, namespace,
+    /// attributes and text, remove the earliest one.
+    ///
+    /// The clause keeps the list from growing without bound when a
+    /// document repeats the same formatting element. It compares TEXT as
+    /// well as name and attributes, and the text of an element changes as
+    /// the parser fills it, so the clause only fires for elements that
+    /// are still empty: `<b><b><b><b>` collapses the first `<b>`, while
+    /// `<b>1<b>2<b>3<b>4` does not, because by the time the fourth `<b>`
+    /// is inserted the first three hold different text.
+    fn noahs_ark(&mut self, tag: &str, id: NodeId) {
+        let mut identical: Vec<usize> = Vec::new();
+        for i in 0..self.afe.len() {
+            let entry = &self.afe[i];
+            if entry.marker || entry.name != tag {
+                continue;
+            }
+            let Some(other) = entry.id else { continue; };
+            if self.same_formatting(other, id) {
+                identical.push(i);
+            }
+        }
+        if identical.len() >= 3 {
+            // Remove the EARLIEST of the identical entries.
+            let earliest = identical[0];
+            self.afe.remove(earliest);
+        }
+    }
+
+    /// Same tag name, attributes and text — the comparison the Noah's Ark
+    /// clause makes (§13.2.6). Namespaces are not modelled in this
+    /// component, so the comparison is name (checked by the caller),
+    /// attributes and text.
+    fn same_formatting(&self, a: NodeId, b: NodeId) -> bool {
+        let attrs_equal = match (
+            self.doc.node(a).element_data().map(|e| &e.attrs),
+            self.doc.node(b).element_data().map(|e| &e.attrs),
+        ) {
+            (Some(x), Some(y)) => x == y,
+            (None, None) => true,
+            _ => false,
+        };
+        attrs_equal && self.doc.text_content(a) == self.doc.text_content(b)
     }
 
     fn insert_text(&mut self, text: &str) {
@@ -305,6 +360,7 @@ impl TreeBuilder {
             self.afe.push(AfeEntry {
                 name: "#marker".to_string(),
                 marker: true,
+                id: None,
             });
         }
     }
@@ -1242,4 +1298,67 @@ pub fn parse(html: &str) -> Document {
     // for broken HTML (all open elements get their text content kept).
 
     builder.doc
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::html::tokenizer::tokenize;
+
+    /// Parse `html` and return the non-marker entries of the list of
+    /// active formatting elements.
+    fn afe_list(html: &str) -> Vec<String> {
+        let (tokens, _errs) = tokenize(html);
+        let mut builder = TreeBuilder::new();
+        for token in tokens {
+            builder.process(token);
+        }
+        builder
+            .afe
+            .iter()
+            .filter(|e| !e.marker)
+            .map(|e| e.name.clone())
+            .collect()
+    }
+
+    #[test]
+    fn noahs_ark_collapses_the_earliest_of_three_identical_elements() {
+        // Four identical, still-empty <b>s: the list keeps three, and the
+        // EARLIEST is the one that goes.
+        let list = afe_list("<b><b><b><b>");
+        assert_eq!(list, vec!["b", "b"]);
+    }
+
+    #[test]
+    fn noahs_ark_does_not_fire_when_the_text_differs() {
+        // The first three <b>s hold different text by the time the fourth
+        // is inserted, so they are not "the same" and nothing is removed.
+        let list = afe_list("<b>1<b>2<b>3<b>4");
+        assert_eq!(list, vec!["b", "b", "b", "b"]);
+    }
+
+    #[test]
+    fn noahs_ark_compares_attributes() {
+        // The second <b> has an attribute, so it is never a candidate for
+        // the clause. The first, third and fourth are identical, so the
+        // clause fires once and removes the EARLIEST of them -- leaving
+        // three entries, not two. An implementation that ignored
+        // attributes would collapse all four and leave two.
+        let list = afe_list("<b><b class=\"x\"><b><b>");
+        assert_eq!(list, vec!["b", "b", "b"]);
+    }
+
+    #[test]
+    fn noahs_ark_treats_identical_attributes_as_identical() {
+        let list = afe_list("<b class=\"x\"><b class=\"x\"><b class=\"x\"><b class=\"x\">");
+        assert_eq!(list, vec!["b", "b"]);
+    }
+
+    #[test]
+    fn the_clause_only_touches_formatting_elements() {
+        // <div> is not a formatting element, so it never enters the list
+        // and the clause has nothing to work on.
+        let list = afe_list("<div><div><div><div>");
+        assert!(list.is_empty());
+    }
 }
