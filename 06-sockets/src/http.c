@@ -364,6 +364,7 @@ int http_serve_connection(int fd, const char *root_body, http_server_stats *st)
     http_parse_status ps;
     char chunk[4096];
     char resp[HTTP_MAX_REQUEST];
+    char cbuf[64];
     int served = 0;
 
     http_parser_init(&p);
@@ -382,6 +383,57 @@ int http_serve_connection(int fd, const char *root_body, http_server_stats *st)
             int code;
             int n;
             sock_io_result wr;
+
+            if (strcmp(req.target, "/stream") == 0) {
+                /* A body whose length is not known until it is done --
+                 * the only honest reason to use chunked
+                 * transfer-encoding. */
+                static const char *const pieces[] = {
+                    "Hello, ", "chunked ", "world!\n"
+                };
+                size_t k;
+                size_t sent = 0;
+
+                n = http_response_build_chunked(resp, sizeof(resp), 200, "OK",
+                                                "text/plain", keep);
+                if (n < 0) {
+                    return -1;
+                }
+                if (sock_write_exact(fd, resp, (size_t)n, &wr) != 0) {
+                    return -1;
+                }
+                sent += (size_t)n;
+                for (k = 0; k < sizeof(pieces) / sizeof(pieces[0]); k++) {
+                    int cn = http_chunk_encode(pieces[k], strlen(pieces[k]),
+                                               cbuf, sizeof(cbuf));
+                    if (cn < 0) {
+                        return -1;
+                    }
+                    if (sock_write_exact(fd, cbuf, (size_t)cn, &wr) != 0) {
+                        return -1;
+                    }
+                    sent += (size_t)cn;
+                }
+                {
+                    int cn = http_chunk_encoder_finish(cbuf, sizeof(cbuf));
+                    if (cn < 0) {
+                        return -1;
+                    }
+                    if (sock_write_exact(fd, cbuf, (size_t)cn, &wr) != 0) {
+                        return -1;
+                    }
+                    sent += (size_t)cn;
+                }
+                served++;
+                if (st) {
+                    st->requests++;
+                    st->bytes_out += (unsigned long)sent;
+                }
+                if (!keep) {
+                    return served;
+                }
+                continue;
+            }
 
             if (strcmp(req.target, "/") == 0) {
                 code = 200;

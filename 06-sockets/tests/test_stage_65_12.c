@@ -24,6 +24,9 @@
 #include <errno.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <unistd.h>
 
 static int tests_run = 0;
 static int tests_passed = 0;
@@ -252,6 +255,64 @@ static void test_the_chunked_header_ends_with_a_blank_line(void)
     PASS();
 }
 
+
+static void test_the_server_answers_with_a_chunked_body(void)
+{
+    int sv[2];
+    char req[] = "GET /stream HTTP/1.1\r\nHost: localhost\r\n"
+                 "Connection: close\r\n\r\n";
+    char resp[2048];
+    size_t total = 0;
+    ssize_t n;
+    http_server_stats st;
+    char *body;
+
+    TEST("the server answers with a chunked body");
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0) {
+        FAIL("socketpair");
+        return;
+    }
+    if (write(sv[1], req, sizeof(req) - 1) != (ssize_t)(sizeof(req) - 1)) {
+        FAIL("could not write the request");
+        return;
+    }
+    shutdown(sv[1], SHUT_WR);
+    http_serve_connection(sv[0], "root\n", &st);
+    close(sv[0]);
+    for (;;) {
+        n = read(sv[1], resp + total, sizeof(resp) - total - 1);
+        if (n <= 0) {
+            break;
+        }
+        total += (size_t)n;
+    }
+    close(sv[1]);
+    resp[total] = '\0';
+    if (strstr(resp, "Transfer-Encoding: chunked") == NULL) {
+        FAIL("the response does not say chunked");
+        return;
+    }
+    if (strstr(resp, "Content-Length") != NULL) {
+        FAIL("the response still carries a Content-Length");
+        return;
+    }
+    body = strstr(resp, "\r\n\r\n");
+    if (body == NULL) {
+        FAIL("the response has no header/body boundary");
+        return;
+    }
+    body += 4;
+    if (strlen(body) != CAPTURED_LEN) {
+        FAIL("the body is not the captured length");
+        return;
+    }
+    if (memcmp(body, captured_chunked, CAPTURED_LEN) != 0) {
+        FAIL("the body on the wire is not the captured bytes");
+        return;
+    }
+    PASS();
+}
+
 int main(void)
 {
     printf("Stage 65.12 -- chunked transfer-encoding, the encoder\n\n");
@@ -264,6 +325,7 @@ int main(void)
     test_a_chunk_too_big_for_the_buffer_is_refused();
     test_the_chunked_header_carries_no_content_length();
     test_the_chunked_header_ends_with_a_blank_line();
+    test_the_server_answers_with_a_chunked_body();
 
     printf("\n%d/%d tests passed\n", tests_passed, tests_run);
     return tests_failed ? 1 : 0;
