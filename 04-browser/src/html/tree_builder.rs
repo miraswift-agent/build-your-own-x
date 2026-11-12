@@ -70,6 +70,31 @@ struct AfeEntry {
     id: Option<NodeId>,
 }
 
+/// The outcome of the adoption agency's OUTER loop (§13.2.6.4).
+///
+/// The outer loop is the part of the algorithm that decides *which*
+/// element it is going to work on, and what to do when the list and the
+/// stack of open elements disagree. The inner loop — the part that moves
+/// nodes around — is separate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OuterOutcome {
+    /// The inner step ran to completion.
+    InnerCompleted,
+    /// Parse error: there is no formatting element with that tag name
+    /// between the end of the list and the last marker (§13.2.6.4 step 7).
+    /// The spec says to act as described in the "any other end tag" entry.
+    NoSuchElement,
+    /// Parse error: the element is not in the stack of open elements
+    /// (§13.2.6.4 step 8). The entry is removed from the list and the
+    /// algorithm aborts.
+    NotInOpenStack,
+    /// Parse error: the element is in the stack of open elements but is
+    /// not in scope (§13.2.6.4 step 9). The algorithm aborts.
+    NotInScope,
+    /// The eight-iteration cap was reached (§13.2.6.4 step 5).
+    IterationLimit,
+}
+
 /// Builds a `Document` from HTML source.
 pub struct TreeBuilder {
     doc: Document,
@@ -387,6 +412,91 @@ impl TreeBuilder {
             }
         }
         None
+    }
+
+    /// §13.2.6.4 step 7: find the formatting element the outer loop
+    /// works on — the LAST entry in the list of active formatting
+    /// elements that has the same tag name, searching backwards from the
+    /// end of the list and stopping at the last marker.
+    ///
+    /// The marker is the boundary: formatting that was separated from the
+    /// end of the list by a non-formatting element is out of scope for
+    /// the formatting rules, and this search never reaches past it.
+    fn find_formatting_element(&self, tag: &str) -> Option<usize> {
+        for i in (0..self.afe.len()).rev() {
+            if self.afe[i].marker {
+                // The last marker bounds the search.
+                return None;
+            }
+            if self.afe[i].name == tag {
+                return Some(i);
+            }
+        }
+        None
+    }
+
+    /// §13.2.6.4: the OUTER loop of the adoption agency algorithm.
+    ///
+    /// The outer loop is where the list of active formatting elements and
+    /// the stack of open elements get compared, and where the spec's
+    /// parse errors live:
+    ///
+    /// * step 5 — the eight-iteration cap,
+    /// * step 7 — find the element in the list, bounded by the last
+    ///   marker; if there is none, abort (and act as "any other end
+    ///   tag"),
+    /// * step 8 — if it is not in the stack of open elements, remove it
+    ///   from the list and abort,
+    /// * step 9 — if it is in the stack but not in scope, abort.
+    ///
+    /// The inner step is passed in, so that the loop's control flow can
+    /// be tested without a tree: the inner step returns `true` when it
+    /// made progress and the outer loop should run again, and `false`
+    /// when it is finished.
+    ///
+    /// Scope: the inner step in this component is the simplified one,
+    /// which is terminal — it pops the target and re-opens the misnested
+    /// formatting elements — so the real path runs the loop once. The
+    /// spec's outer loop keeps going because the FULL inner loop
+    /// re-inserts the formatting element into the list, which gives the
+    /// next iteration something new to find. That is the next slice.
+    fn adoption_agency_outer(
+        &mut self,
+        tag: &str,
+        inner: &mut dyn FnMut(&mut TreeBuilder, NodeId) -> bool,
+    ) -> OuterOutcome {
+        let mut outer_loop_counter: u32 = 0;
+        loop {
+            // Step 5: the cap.
+            if outer_loop_counter >= 8 {
+                return OuterOutcome::IterationLimit;
+            }
+            outer_loop_counter += 1;
+
+            // Step 7: the element in the list, bounded by the last marker.
+            let Some(idx) = self.find_formatting_element(tag) else {
+                return OuterOutcome::NoSuchElement;
+            };
+            let Some(id) = self.afe[idx].id else {
+                return OuterOutcome::NoSuchElement;
+            };
+
+            // Step 8: not in the stack of open elements.
+            if !self.open.contains(&id) {
+                self.afe.remove(idx);
+                return OuterOutcome::NotInOpenStack;
+            }
+
+            // Step 9: in the stack, but not in scope.
+            if !self.in_scope(tag) {
+                return OuterOutcome::NotInScope;
+            }
+
+            // Steps 10+: the inner loop.
+            if !inner(self, id) {
+                return OuterOutcome::InnerCompleted;
+            }
+        }
     }
 
     /// Apply the adoption agency algorithm (§13.2.8.3) to a formatting
@@ -1361,4 +1471,102 @@ mod tests {
         let list = afe_list("<div><div><div><div>");
         assert!(list.is_empty());
     }
+
+    /// Build an AFE entry for `name` referring to `id`.
+    fn entry(name: &str, id: Option<NodeId>) -> AfeEntry {
+        AfeEntry {
+            name: name.to_string(),
+            marker: false,
+            id,
+        }
+    }
+
+    #[test]
+    fn the_search_finds_the_last_matching_entry() {
+        let mut b = TreeBuilder::new();
+        let first = b.insert_element("b", vec![]);
+        let inner = b.insert_element("i", vec![]);
+        let last = b.insert_element("b", vec![]);
+        b.afe.push(entry("b", Some(first)));
+        b.afe.push(entry("i", Some(inner)));
+        b.afe.push(entry("b", Some(last)));
+        assert_eq!(b.find_formatting_element("b"), Some(2));
+        assert_eq!(b.find_formatting_element("i"), Some(1));
+        assert_eq!(b.find_formatting_element("u"), None);
+    }
+
+    #[test]
+    fn the_search_stops_at_the_last_marker() {
+        let mut b = TreeBuilder::new();
+        let bold = b.insert_element("b", vec![]);
+        let ital = b.insert_element("i", vec![]);
+        b.afe.push(entry("b", Some(bold)));
+        b.afe.push(AfeEntry {
+            name: "#marker".to_string(),
+            marker: true,
+            id: None,
+        });
+        b.afe.push(entry("i", Some(ital)));
+        // The <b> is behind the marker, so the search must not find it.
+        assert_eq!(b.find_formatting_element("b"), None);
+        // The <i> is in front of the marker.
+        assert_eq!(b.find_formatting_element("i"), Some(2));
+    }
+
+    #[test]
+    fn an_element_that_is_not_on_the_stack_is_removed_from_the_list() {
+        let mut b = TreeBuilder::new();
+        // insert_element does not push onto the stack, so this <b> is on
+        // the list but not in the stack of open elements.
+        let bold = b.insert_element("b", vec![]);
+        b.afe.push(entry("b", Some(bold)));
+        let outcome = b.adoption_agency_outer("b", &mut |_, _| false);
+        assert_eq!(outcome, OuterOutcome::NotInOpenStack);
+        assert!(b.afe.is_empty(), "the entry must be removed from the list");
+    }
+
+    #[test]
+    fn an_element_that_is_out_of_scope_aborts_without_touching_the_list() {
+        let mut b = TreeBuilder::new();
+        let bold = b.insert_element("b", vec![]);
+        b.open.push(bold);
+        b.afe.push(entry("b", Some(bold)));
+        // A table boundary puts the <b> out of scope.
+        let table = b.insert_element("table", vec![]);
+        b.open.push(table);
+        let outcome = b.adoption_agency_outer("b", &mut |_, _| false);
+        assert_eq!(outcome, OuterOutcome::NotInScope);
+        assert_eq!(b.afe.len(), 1, "the list must be left alone");
+    }
+
+    #[test]
+    fn the_loop_stops_at_eight_iterations() {
+        let mut b = TreeBuilder::new();
+        let bold = b.insert_element("b", vec![]);
+        b.open.push(bold);
+        b.afe.push(entry("b", Some(bold)));
+        let mut iterations = 0u32;
+        let outcome = b.adoption_agency_outer("b", &mut |_, _| {
+            iterations += 1;
+            true // always make progress, so the cap is what stops the loop
+        });
+        assert_eq!(outcome, OuterOutcome::IterationLimit);
+        assert_eq!(iterations, 8);
+    }
+
+    #[test]
+    fn a_finished_inner_step_ends_the_loop() {
+        let mut b = TreeBuilder::new();
+        let bold = b.insert_element("b", vec![]);
+        b.open.push(bold);
+        b.afe.push(entry("b", Some(bold)));
+        let mut iterations = 0u32;
+        let outcome = b.adoption_agency_outer("b", &mut |_, _| {
+            iterations += 1;
+            false // the inner step is finished
+        });
+        assert_eq!(outcome, OuterOutcome::InnerCompleted);
+        assert_eq!(iterations, 1);
+    }
+
 }
