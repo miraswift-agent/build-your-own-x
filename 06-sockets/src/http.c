@@ -608,3 +608,78 @@ http_chunk_status http_chunk_decoder_next(http_chunk_decoder *d, char *out,
     d->pos += hdr + size + 2;
     return HTTP_CHUNK_OK;
 }
+
+/* ---- Stage 65.12: chunked transfer-encoding, the encoder ---- */
+
+int http_chunk_encode(const void *data, size_t len, char *out, size_t out_cap)
+{
+    char head[HTTP_MAX_CHUNK_LINE];
+    size_t need;
+    int hn;
+
+    if (!out || out_cap == 0 || !data) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (len == 0) {
+        /* A zero-length chunk is the terminal chunk. Writing one here
+         * would end the body by accident. */
+        errno = EINVAL;
+        return -1;
+    }
+    hn = snprintf(head, sizeof(head), "%zx\r\n", len);
+    if (hn < 0 || (size_t)hn >= sizeof(head)) {
+        errno = EINVAL;
+        return -1;
+    }
+    need = (size_t)hn + len + 2;
+    if (need > out_cap) {
+        errno = ENOSPC;
+        return -1;
+    }
+    memcpy(out, head, (size_t)hn);
+    memcpy(out + hn, data, len);
+    out[hn + len] = '\r';
+    out[hn + len + 1] = '\n';
+    return (int)need;
+}
+
+int http_chunk_encoder_finish(char *out, size_t out_cap)
+{
+    if (!out || out_cap < 5) {
+        errno = ENOSPC;
+        return -1;
+    }
+    memcpy(out, "0\r\n\r\n", 5);
+    return 5;
+}
+
+int http_response_build_chunked(char *dst, size_t dst_len, int status,
+                                const char *reason, const char *content_type,
+                                int keep_alive)
+{
+    int n;
+
+    if (!dst || dst_len == 0) {
+        errno = EINVAL;
+        return -1;
+    }
+    n = snprintf(dst, dst_len,
+                 "HTTP/1.1 %d %s\r\n"
+                 "Content-Type: %s\r\n"
+                 "Transfer-Encoding: chunked\r\n"
+                 "Connection: %s\r\n"
+                 "\r\n",
+                 status, reason ? reason : "",
+                 content_type ? content_type : "text/plain",
+                 keep_alive ? "keep-alive" : "close");
+    if (n < 0) {
+        errno = EINVAL;
+        return -1;
+    }
+    if ((size_t)n >= dst_len) {
+        errno = ENOBUFS;
+        return -1;
+    }
+    return n;
+}

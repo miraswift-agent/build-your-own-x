@@ -176,4 +176,42 @@ http_chunk_status http_chunk_decoder_next(http_chunk_decoder *d, char *out,
                                            size_t out_cap, size_t *out_len);
 
 
+/* ---- Stage 65.12: chunked transfer-encoding, the encoder ----
+ *
+ * The mirror of the decoder. Instead of pulling one chunk at a time out
+ * of a stream, the encoder pushes one chunk at a time into one: each
+ * call frames exactly one chunk -- the size line, the payload, the
+ * CRLF -- so the caller can put the bytes on the wire immediately.
+ * Nothing is buffered, because the whole point of chunked
+ * transfer-encoding is that the length is not known until the body is
+ * finished. */
+
+/* A chunk size line: up to 16 hex digits for a 64-bit size, plus CRLF. */
+#define HTTP_MAX_CHUNK_LINE 32
+
+/* Frame one chunk: "<hex size>\r\n<payload>\r\n".
+ *
+ * Returns the number of bytes written, or -1 with errno set: EINVAL if
+ * len is zero (a zero-length chunk IS the terminal chunk, which is
+ * http_chunk_encoder_finish's job), ENOSPC if the buffer is too
+ * small. */
+int http_chunk_encode(const void *data, size_t len, char *out, size_t out_cap);
+
+/* The terminal chunk, "0\r\n\r\n". Returns the number of bytes
+ * written, or -1 with errno set to ENOSPC. */
+int http_chunk_encoder_finish(char *out, size_t out_cap);
+
+/* Build the header block of a chunked response.
+ *
+ * The same status line, Content-Type and Connection as
+ * http_response_build, but with Transfer-Encoding: chunked and NO
+ * Content-Length -- the length of a chunked body is not known until the
+ * body is finished, and that is the only honest reason to choose this
+ * framing. Returns the number of bytes written, or -1 (with errno set)
+ * if dst is too small. */
+int http_response_build_chunked(char *dst, size_t dst_len, int status,
+                                const char *reason, const char *content_type,
+                                int keep_alive);
+
+
 #endif /* HTTP_H */
