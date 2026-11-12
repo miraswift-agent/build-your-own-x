@@ -94,9 +94,16 @@ int http_parser_feed(http_parser *p, const void *data, size_t len);
  *
  * A body is framed by a length OR by a coding. When the request says
  * "Transfer-Encoding: chunked", the body is the chunks, and the bytes
- * after the terminal chunk are the start of the NEXT message. A coding
- * overrides a length (RFC 9112 6.1): the coding that is on the wire
- * frames the body. */
+ * after the terminal chunk are the start of the NEXT message.
+ *
+ * A request that carries BOTH a Transfer-Encoding and a Content-Length
+ * is refused (RFC 9112 6.3 item 3): two framings are two answers to
+ * "where does the body end", and that is the shape request smuggling is
+ * made of. The coding that is on the wire frames the body when it is
+ * the only framing there is -- that is the rule for a recipient that
+ * has to process the message anyway (the client; an intermediary that
+ * strips the length before forwarding). An origin server says no
+ * instead. */
 http_parse_status http_parser_next(http_parser *p, http_request *out);
 
 /* Look up a header by name, case-insensitively. NULL if absent. */

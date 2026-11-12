@@ -306,6 +306,33 @@ http_parse_status http_parser_next(http_parser *p, http_request *out)
         return HTTP_PARSE_ERROR;
     }
 
+    /* Stage 65.21: a request that carries BOTH a Transfer-Encoding and
+     * a Content-Length has two answers to "where does the body end",
+     * and two recipients can pick different ones -- which is the shape
+     * request smuggling is made of (RFC 9112 11.2).
+     *
+     * RFC 9112 6.3 item 3 says two things about that message: the
+     * coding overrides the length (which is what a recipient that has
+     * to process the message anyway does -- our CLIENT, and an
+     * intermediary that strips the length before forwarding), and such
+     * a message "ought to be handled as an error".
+     *
+     * We are an origin server, and an origin server can say no: the
+     * loud half. The request is refused HERE, before any body is
+     * framed, so the answer does not wait for bytes we have already
+     * decided to refuse. The server turns the refusal into 400 and
+     * closes the connection -- a connection whose framing is ambiguous
+     * cannot be trusted with a second message.
+     *
+     * The rule is about the PRESENCE of the two headers, not about
+     * which coding the Transfer-Encoding names: "here is a coding" and
+     * "here is a length" disagree whatever the coding is called. */
+    if (out->content_length >= 0 &&
+        http_header_get(out, "Transfer-Encoding") != NULL) {
+        errno = EPROTO;
+        return HTTP_PARSE_ERROR;
+    }
+
     body_start = (size_t)hend + 4;
 
     if (request_is_chunked(out)) {
@@ -313,12 +340,10 @@ http_parse_status http_parser_next(http_parser *p, http_request *out)
          * and the terminal chunk is followed by the bytes that belong to
          * the NEXT message.
          *
-         * A coding overrides a length (RFC 9112 6.1): when a request
-         * carries both, the coding that is on the wire frames the body.
-         * The safe reading trusts the coding -- a length in a request
-         * that also says "chunked" is exactly the shape that lets one
-         * end of a connection and the other disagree about where the
-         * body ends.
+         * A coding frames the body when it is the ONLY framing on the
+         * wire. (A request that carries both a coding and a length was
+         * refused above -- RFC 9112 6.3 item 3, and the loud half of
+         * it.)
          *
          * The decoder is fed from the buffer every time, so a request
          * that arrives in pieces is simply not ready until it is whole. */

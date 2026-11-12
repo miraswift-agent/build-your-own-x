@@ -373,55 +373,6 @@ static void test_an_empty_chunked_body_echoes_nothing(void)
     PASS();
 }
 
-/* 6. A coding overrides a length (RFC 9112 6.1): when a request carries
- *    both, the coding that is on the wire frames the body. The length
- *    here is a lie -- it says 3 and the body is 5. */
-static void test_a_coding_overrides_a_length(void)
-{
-    pid_t pid;
-    uint16_t port;
-    http_client_connection c;
-    http_response r;
-    static const char req[] =
-        "POST /echo HTTP/1.1\r\n"
-        "Host: test\r\n"
-        "Content-Length: 3\r\n"
-        "Transfer-Encoding: chunked\r\n"
-        "Connection: close\r\n"
-        "\r\n"
-        "5\r\nhello\r\n"
-        "0\r\n\r\n";
-
-    TEST("a coding overrides a length");
-    port = spawn_our_server(&pid);
-    if (http_client_connection_open(&c, "127.0.0.1", port) != 0) {
-        FAIL("the connection did not open");
-        waitpid(pid, NULL, 0);
-        return;
-    }
-    if (write_raw(&c, req, sizeof(req) - 1) != 0) {
-        FAIL("the write failed");
-        http_client_connection_close(&c);
-        waitpid(pid, NULL, 0);
-        return;
-    }
-    if (http_client_connection_read_response(&c, &r) != 0) {
-        FAIL("the read failed");
-        http_client_connection_close(&c);
-        waitpid(pid, NULL, 0);
-        return;
-    }
-    if (r.body_len != 5 || memcmp(r.body, "hello", 5) != 0) {
-        FAIL("the length framed the body -- it must not");
-        http_client_connection_close(&c);
-        waitpid(pid, NULL, 0);
-        return;
-    }
-    http_client_connection_close(&c);
-    waitpid(pid, NULL, 0);
-    PASS();
-}
-
 int main(void)
 {
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -434,7 +385,11 @@ int main(void)
     test_a_chunked_body_and_then_another_request();
     test_a_chunked_body_that_arrives_in_pieces();
     test_an_empty_chunked_body_echoes_nothing();
-    test_a_coding_overrides_a_length();
+    /* Stage 65.21 replaced this stage's sixth test. "A coding overrides
+     * a length" was the SAFE half of RFC 9112 6.3 item 3, and it was
+     * this SERVER's behavior; Stage 65.21 gives the server the loud
+     * half instead -- the request is refused with 400 -- so the claim
+     * moved to tests/test_stage_65_21.c rather than dying here. */
 
     printf("\n%d/%d tests passed\n", tests_passed, tests_run);
     return tests_failed ? 1 : 0;
