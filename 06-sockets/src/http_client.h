@@ -137,10 +137,27 @@ typedef struct {
  * errno set. */
 int http_client_connection_open(http_client_connection *c, const char *host, uint16_t port);
 
+/* Write a request on the connection, WITHOUT reading the response.
+ *
+ * This is the half that makes pipelining possible: two requests can go
+ * out on the socket before either response comes back. The bytes are
+ * written now; nothing is read. Returns 0, or -1 with errno set. */
+int http_client_connection_write_request(http_client_connection *c, const char *method,
+                                         const char *target, const char *body,
+                                         size_t body_len);
+
+/* Read the next response from the connection.
+ *
+ * The parser is asked before the socket: the bytes of the next response
+ * may already be in hand (Stage 65.14a's leftovers). Returns 0 with
+ * *out filled, or -1 with errno set. */
+int http_client_connection_read_response(http_client_connection *c, http_response *out);
+
 /* Write a request on the connection and read the response that answers
  * it. The request asks to keep the connection alive, so a second call
- * writes a second request on the same socket. Returns 0 with *out
- * filled, or -1 with errno set. */
+ * writes a second request on the same socket. This is write-then-read,
+ * one turn at a time -- pipelining is the two halves used separately.
+ * Returns 0 with *out filled, or -1 with errno set. */
 int http_client_connection_request(http_client_connection *c, const char *method,
                                    const char *target, const char *body, size_t body_len,
                                    http_response *out);

@@ -634,17 +634,15 @@ void http_client_connection_close(http_client_connection *c)
     }
 }
 
-int http_client_connection_request(http_client_connection *c, const char *method,
-                                   const char *target, const char *body, size_t body_len,
-                                   http_response *out)
+int http_client_connection_write_request(http_client_connection *c, const char *method,
+                                         const char *target, const char *body,
+                                         size_t body_len)
 {
     char req[HTTP_CLIENT_MAX_REQUEST];
-    char buf[4096];
     int reqlen;
     size_t sent = 0;
-    http_parse_status st;
 
-    if (c == NULL || c->fd < 0 || method == NULL || target == NULL || out == NULL) {
+    if (c == NULL || c->fd < 0 || method == NULL || target == NULL) {
         errno = EINVAL;
         return -1;
     }
@@ -666,6 +664,18 @@ int http_client_connection_request(http_client_connection *c, const char *method
             return -1;
         }
         sent += (size_t)n;
+    }
+    return 0;
+}
+
+int http_client_connection_read_response(http_client_connection *c, http_response *out)
+{
+    char buf[4096];
+    http_parse_status st;
+
+    if (c == NULL || c->fd < 0 || out == NULL) {
+        errno = EINVAL;
+        return -1;
     }
     for (;;) {
         st = http_response_parser_next(&c->parser, out);
@@ -701,6 +711,16 @@ int http_client_connection_request(http_client_connection *c, const char *method
             return -1;
         }
     }
+}
+
+int http_client_connection_request(http_client_connection *c, const char *method,
+                                   const char *target, const char *body, size_t body_len,
+                                   http_response *out)
+{
+    if (http_client_connection_write_request(c, method, target, body, body_len) != 0) {
+        return -1;
+    }
+    return http_client_connection_read_response(c, out);
 }
 
 /* ---------- one round trip ---------- */
