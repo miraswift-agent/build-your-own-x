@@ -233,6 +233,27 @@ The lesson is the one the curriculum keeps meeting: a proof that does
 not fail is not a proof, and a proof that does not fail is usually
 pointing at an assertion that was never written.
 
+**And a stale binary, caught by the final direct run.** After the three
+proofs, the source was restored (md5 verified) but the *binary* was
+not rebuilt — the last thing that compiled `build/stage_65_29` was
+Proof C's patched source. The final direct run of the binary therefore
+reported **12/14** on a tree that was perfectly correct, and the two
+failures were Proof C's own. The committed source was right all along
+(md5-checked after every restore); the artifact was not.
+
+The fix was the house rule the curriculum already carries — a green run
+can be a lie unless the tree was forcibly rebuilt — applied one step
+further: **a proof's last build is the proof's binary, not the
+restored one.** The whole component was re-run from clean afterwards:
+`make clean && make test` → **325/325 across 31 binaries**, exit 0;
+`./build/stage_65_29` → **14/14**; `make valgrind` → exit 0, **206**
+clean summaries, no leaks, no invalid accesses.
+
+A stale binary is a harness bug, not an implementation bug — and it is
+the same shape as the failed proof above: something in the measuring
+apparatus, not in the thing being measured. Two different ways for the
+apparatus to lie, in one session.
+
 ---
 
 ## 6. The live oracles
