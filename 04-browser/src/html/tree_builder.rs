@@ -137,6 +137,11 @@ impl TreeBuilder {
     }
 
     fn insert_element(&mut self, tag: &str, attrs: Vec<Attribute>) -> NodeId {
+        // §13.2.6: some elements clear the list of active formatting
+        // elements back to the last marker when they are inserted.
+        if Self::clears_list(tag) {
+            self.clear_afe_to_last_marker();
+        }
         let (category, role) = classify_element(tag, &attrs);
         let data = NodeData::Element(ElementData {
             tag_name: tag.to_string(),
@@ -147,15 +152,49 @@ impl TreeBuilder {
         let id = self.doc.create_node(data);
         let parent = self.current_node();
         self.doc.append_child(parent, id);
+        // §13.2.6: some elements push a marker onto the list of active
+        // formatting elements when they are inserted.
+        if Self::pushes_marker(tag) {
+            self.push_afe_marker();
+        }
         id
     }
 
+    /// §13.2.6: the elements that push a marker onto the list of active
+    /// formatting elements when they are inserted.
+    ///
+    /// The spec's list is small and specific: applet, marquee, object and
+    /// button push a marker, and so does a `p` start tag. Everything else
+    /// leaves the list alone -- and that is the whole point of a marker:
+    /// it marks the boundary where formatting stops being in scope. Most
+    /// elements do NOT end formatting's scope, which is why a marker
+    /// before every element (what this component used to do) throws away
+    /// the scope it was meant to mark.
+    fn pushes_marker(tag: &str) -> bool {
+        matches!(tag, "applet" | "marquee" | "object" | "button" | "p")
+    }
+
+    /// §13.2.6: the elements that clear the list of active formatting
+    /// elements back to the last marker when they are inserted.
+    fn clears_list(tag: &str) -> bool {
+        matches!(
+            tag,
+            "caption" | "col" | "colgroup" | "frame" | "head" | "tbody" | "td" | "tfoot" | "th"
+                | "thead" | "tr"
+        )
+    }
+
+    /// §13.2.6: clear the list of active formatting elements back to the
+    /// last marker -- remove everything from the end of the list, up to
+    /// and including the last marker itself.
+    fn clear_afe_to_last_marker(&mut self) {
+        match self.afe.iter().rposition(|e| e.marker) {
+            Some(pos) => self.afe.truncate(pos),
+            None => self.afe.clear(),
+        }
+    }
+
     fn insert_and_push(&mut self, tag: &str, attrs: Vec<Attribute>) -> NodeId {
-        // §13.2.6: when the user agent creates a new element and the list of
-        // active formatting elements is not empty, a marker is pushed onto
-        // the list. The marker is what bounds the search for an element with
-        // the same tag name.
-        self.push_afe_marker();
         let id = self.insert_element(tag, attrs);
         self.open.push(id);
         if Self::is_formatting_element(tag) {
@@ -1570,3 +1609,75 @@ mod tests {
     }
 
 }
+
+    // --- marker semantics (§13.2.6) ---
+
+    /// The shape of the list of active formatting elements: element names,
+    /// with markers shown as "#marker".
+    fn list_shape(b: &TreeBuilder) -> Vec<String> {
+        b.afe
+            .iter()
+            .map(|e| {
+                if e.marker {
+                    "#marker".to_string()
+                } else {
+                    e.name.clone()
+                }
+            })
+            .collect()
+    }
+
+    fn shape_of(html: &str) -> Vec<String> {
+        let (tokens, _e) = tokenize(html);
+        let mut b = TreeBuilder::new();
+        for t in tokens {
+            b.process(t);
+        }
+        list_shape(&b)
+    }
+
+    #[test]
+    fn a_plain_element_does_not_end_the_formatting_scope() {
+        // The bug this slice fixes: a marker used to be pushed before
+        // EVERY element, so <div> ended formatting's scope. It does not.
+        assert_eq!(shape_of("<b><div>x</div>"), vec!["b"]);
+        assert_eq!(shape_of("<b><div>x</div><i>y"), vec!["b", "i"]);
+    }
+
+    #[test]
+    fn button_pushes_a_marker() {
+        assert_eq!(shape_of("<b><button>x</button>"), vec!["b", "#marker"]);
+    }
+
+    #[test]
+    fn p_pushes_a_marker() {
+        assert_eq!(shape_of("<b><p>x"), vec!["b", "#marker"]);
+    }
+
+    #[test]
+    fn the_marker_bounds_the_search() {
+        let (tokens, _e) = tokenize("<b><button>x</button><i>y");
+        let mut b = TreeBuilder::new();
+        for t in tokens {
+            b.process(t);
+        }
+        // The marker sits between the <b> and the <i>, so the search for
+        // a <b> stops at it -- but the <i> is still in scope.
+        assert_eq!(b.find_formatting_element("b"), None);
+        assert_eq!(b.find_formatting_element("i"), Some(2));
+    }
+
+    #[test]
+    fn clearing_removes_everything_up_to_and_including_the_last_marker() {
+        let (tokens, _e) = tokenize("<b><button>x</button><i>y");
+        let mut b = TreeBuilder::new();
+        for t in tokens {
+            b.process(t);
+        }
+        assert_eq!(list_shape(&b), vec!["b", "#marker", "i"]);
+        b.clear_afe_to_last_marker();
+        // "up to and including the last marker": everything after the
+        // marker goes, the marker goes, and what came BEFORE it stays
+        // in scope.
+        assert_eq!(list_shape(&b), vec!["b"]);
+    }
