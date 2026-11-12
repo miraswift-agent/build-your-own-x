@@ -137,7 +137,9 @@ typedef struct {
 /* Serve HTTP requests on an already-accepted connection until the peer
  * closes or asks to close.
  *
- * The server answers "/" with root_body and everything else with 404.
+ * The server answers "/" with root_body, "/stream" with the chunked
+ * demonstration, "/echo" with the request body, and everything else
+ * with 404.
  * Returns the number of requests served, or -1 on a socket error. */
 int http_serve_connection(int fd, const char *root_body, http_server_stats *st);
 
@@ -162,7 +164,8 @@ typedef struct {
  * is for.
  *
  * The path still routes: "/" serves the selected document, "/stream"
- * serves the chunked demonstration, anything else is 404. */
+ * serves the chunked demonstration, "/echo" answers with the request
+ * body, anything else is 404. */
 int http_serve_connection_routed(int fd, const http_host_route *routes,
                                   size_t route_count, const char *default_body,
                                   http_server_stats *st);

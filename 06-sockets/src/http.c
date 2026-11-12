@@ -571,6 +571,42 @@ static int serve_connection(int fd, const http_host_route *routes, size_t route_
                 continue;
             }
 
+            if (strcmp(req.target, "/echo") == 0) {
+                /* The body we read, given back.
+                 *
+                 * The framing was never broken: the request parser knows
+                 * Content-Length and consumes the body bytes, so the
+                 * bytes that follow the body are already the start of
+                 * the next request. What the server could not do was
+                 * ACT on what the request said -- the parsed body sat
+                 * in a field nobody read, and a POST got the same
+                 * answer as a GET.
+                 *
+                 * The body is bytes, not a C string: the length goes
+                 * with it. */
+                n = http_response_build(resp, sizeof(resp), 200, "OK",
+                                        "application/octet-stream",
+                                        req.body, req.body_len, keep, date);
+                if (n < 0) {
+                    return -1;
+                }
+                if (sock_write_exact(fd, resp, (size_t)n, &wr) != 0) {
+                    return -1;
+                }
+                if (wr.status != SOCK_IO_COMPLETE) {
+                    return -1;
+                }
+                served++;
+                if (st) {
+                    st->requests++;
+                    st->bytes_out += (unsigned long)n;
+                }
+                if (!keep) {
+                    return served;
+                }
+                continue;
+            }
+
             if (strcmp(req.target, "/") == 0) {
                 code = 200;
                 reason = "OK";
