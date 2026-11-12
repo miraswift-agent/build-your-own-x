@@ -37,6 +37,14 @@
 #define HTTP_CLIENT_MAX_BODY   4096
 #define HTTP_CLIENT_MAX_REQUEST 8192
 
+/* Stage 65.20: the largest piece of body one chunk may carry.
+ *
+ * A chunk is a piece of the body, not the body -- the point of chunked
+ * framing is that the body arrives in pieces and its total length is
+ * not known until the last piece has gone. The limit bounds the buffer
+ * one call needs; it is not a limit on the body. */
+#define HTTP_CLIENT_MAX_CHUNK  4096
+
 /* A parsed response. */
 typedef struct {
     char        version[HTTP_MAX_VERSION];
@@ -71,6 +79,20 @@ int http_client_request_build_ex(char *dst, size_t dst_len,
                                  const char *method, const char *target,
                                  const char *host, const char *body, size_t body_len,
                                  int keep_alive);
+
+/* Stage 65.20: the head of a request whose body length is not known yet.
+ *
+ * The same request line, Host, User-Agent and Connection as
+ * http_client_request_build_ex -- but with "Transfer-Encoding: chunked"
+ * and NO Content-Length. A length we do not have would be a lie, and
+ * chunked is the framing that says "I will show you where the body ends
+ * when it ends". The head is written first; the body follows as chunks.
+ *
+ * Returns the number of bytes written, or -1 with errno set to EINVAL
+ * for a bad argument or ENOBUFS when dst is too small. */
+int http_client_request_build_chunked_head(char *dst, size_t dst_len,
+                                           const char *method, const char *target,
+                                           const char *host, int keep_alive);
 
 /* The parser's buffer: bytes received, not yet consumed. */
 typedef struct {
@@ -131,6 +153,11 @@ typedef struct {
     uint16_t    port;
     char        host[64];
     http_response_parser parser;
+    /* Stage 65.20: 1 while a chunked request's head is on the wire and
+     * its body has not been finished. A chunk without a head, or a
+     * second request in the middle of a chunked body, would put two
+     * messages on the wire at once -- so the connection refuses. */
+    int         chunked_open;
 } http_client_connection;
 
 /* Open a connection to a dotted-quad address. Returns 0, or -1 with
@@ -145,6 +172,41 @@ int http_client_connection_open(http_client_connection *c, const char *host, uin
 int http_client_connection_write_request(http_client_connection *c, const char *method,
                                          const char *target, const char *body,
                                          size_t body_len);
+
+/* Stage 65.20: write the head of a chunked request.
+ *
+ * The head goes out first, saying "Transfer-Encoding: chunked" and
+ * naming no length -- because the length is not known yet. That is the
+ * whole reason to choose this framing: not that the body is big, but
+ * that its size is not known until it is done. The body then follows as
+ * chunks (http_client_connection_write_chunk) and ends with the
+ * terminal chunk (http_client_connection_write_chunked_end).
+ *
+ * The connection asks to keep-alive, like the other request path.
+ * Returns 0, or -1 with errno set. */
+int http_client_connection_write_chunked_head(http_client_connection *c,
+                                              const char *method, const char *target);
+
+/* Stage 65.20: write one chunk of the body.
+ *
+ * The chunk is framed by the Stage 65.12 encoder -- "<hex size>\r\n
+ * <payload>\r\n" -- so the bytes on the wire are the bytes every other
+ * implementation writes. A chunk of zero bytes is refused with EINVAL:
+ * a zero-length chunk IS the terminal chunk, and writing one here would
+ * end the body by accident. The terminal chunk has its own call.
+ *
+ * Returns 0, or -1 with errno set (EINVAL for a zero-length chunk or a
+ * chunk written before the head, ENOSPC for a chunk larger than
+ * HTTP_CLIENT_MAX_CHUNK). */
+int http_client_connection_write_chunk(http_client_connection *c,
+                                       const void *data, size_t len);
+
+/* Stage 65.20: write the terminal chunk -- "0\r\n\r\n".
+ *
+ * This is the only way to end a chunked body, and it is what makes the
+ * bytes after it the start of the next message. Returns 0, or -1 with
+ * errno set. */
+int http_client_connection_write_chunked_end(http_client_connection *c);
 
 /* Read the next response from the connection.
  *

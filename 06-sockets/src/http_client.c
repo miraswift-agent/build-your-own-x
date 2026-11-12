@@ -504,6 +504,33 @@ http_parse_status http_response_parser_finish(http_response_parser *p, http_resp
 
 /* ---------- the request ---------- */
 
+/* Write every byte, or fail.
+ *
+ * A short write is not an error: it means the socket took what it had
+ * room for. A write that moves NOTHING is an error -- the peer is gone
+ * (EPIPE) -- and treating it as success would leave the request
+ * half-written with nobody to notice. */
+static int write_all(int fd, const char *buf, size_t len)
+{
+    size_t sent = 0;
+
+    while (sent < len) {
+        ssize_t n = write(fd, buf + sent, len - sent);
+        if (n < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            return -1;
+        }
+        if (n == 0) {
+            errno = EPIPE;
+            return -1;
+        }
+        sent += (size_t)n;
+    }
+    return 0;
+}
+
 int http_client_request_build(char *dst, size_t dst_len,
                               const char *method, const char *target,
                               const char *host, const char *body, size_t body_len)
@@ -564,6 +591,43 @@ int http_client_request_build_ex(char *dst, size_t dst_len,
     return n;
 }
 
+/* Stage 65.20: the head of a request whose body length is not known.
+ *
+ * The difference from http_client_request_build_ex is one header and
+ * one omission: "Transfer-Encoding: chunked" instead of a length.
+ * The body does not follow here -- it follows as chunks, because the
+ * whole point is that it is not all in hand yet. */
+int http_client_request_build_chunked_head(char *dst, size_t dst_len,
+                                           const char *method, const char *target,
+                                           const char *host, int keep_alive)
+{
+    int n;
+    size_t need;
+
+    if (dst == NULL || method == NULL || target == NULL || host == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+    need = strlen(method) + strlen(target) + strlen(host) + 160;
+    if (dst_len < need) {
+        errno = ENOBUFS;
+        return -1;
+    }
+    n = snprintf(dst, dst_len,
+                 "%s %s HTTP/1.1\r\n"
+                 "Host: %s\r\n"
+                 "User-Agent: mira-http/1.0\r\n"
+                 "Connection: %s\r\n"
+                 "Transfer-Encoding: chunked\r\n"
+                 "\r\n",
+                 method, target, host, keep_alive ? "keep-alive" : "close");
+    if (n < 0 || (size_t)n >= dst_len) {
+        errno = ENOBUFS;
+        return -1;
+    }
+    return n;
+}
+
 /* ---------- the address, octet by octet ---------- */
 
 /* The port bytes come from the helper that already knows how to spell
@@ -619,6 +683,7 @@ int http_client_connection_open(http_client_connection *c, const char *host, uin
     }
     memcpy(c->host, host, hostlen + 1);
     c->port = port;
+    c->chunked_open = 0;
     http_response_parser_init(&c->parser);
     return 0;
 }
@@ -640,9 +705,15 @@ int http_client_connection_write_request(http_client_connection *c, const char *
 {
     char req[HTTP_CLIENT_MAX_REQUEST];
     int reqlen;
-    size_t sent = 0;
 
     if (c == NULL || c->fd < 0 || method == NULL || target == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (c->chunked_open) {
+        /* A chunked body is still open. A request written now would
+         * land in the middle of that body, and the peer would read it
+         * as part of the body it is still being sent. */
         errno = EINVAL;
         return -1;
     }
@@ -651,20 +722,97 @@ int http_client_connection_write_request(http_client_connection *c, const char *
     if (reqlen < 0) {
         return -1;
     }
-    while (sent < (size_t)reqlen) {
-        ssize_t n = write(c->fd, req + sent, (size_t)reqlen - sent);
-        if (n < 0) {
-            if (errno == EINTR) {
-                continue;
-            }
-            return -1;
-        }
-        if (n == 0) {
-            errno = EPIPE;
-            return -1;
-        }
-        sent += (size_t)n;
+    return write_all(c->fd, req, (size_t)reqlen);
+}
+
+/* Stage 65.20: the client sends a chunked request body.
+ *
+ * The shape of the API is the lesson: the head goes out first, the body
+ * follows in pieces as they become available, and the terminal chunk
+ * says the body is done. A body whose length is already known should
+ * carry Content-Length instead -- chunked is for a length that is not
+ * known until the body ends, not for a body that happens to be large. */
+
+int http_client_connection_write_chunked_head(http_client_connection *c,
+                                              const char *method, const char *target)
+{
+    char req[HTTP_CLIENT_MAX_REQUEST];
+    int reqlen;
+
+    if (c == NULL || c->fd < 0 || method == NULL || target == NULL) {
+        errno = EINVAL;
+        return -1;
     }
+    if (c->chunked_open) {
+        /* The body of the last request has not been finished. */
+        errno = EINVAL;
+        return -1;
+    }
+    reqlen = http_client_request_build_chunked_head(req, sizeof(req), method, target,
+                                                     c->host, 1);
+    if (reqlen < 0) {
+        return -1;
+    }
+    if (write_all(c->fd, req, (size_t)reqlen) != 0) {
+        return -1;
+    }
+    c->chunked_open = 1;
+    return 0;
+}
+
+int http_client_connection_write_chunk(http_client_connection *c,
+                                       const void *data, size_t len)
+{
+    char buf[HTTP_MAX_CHUNK_LINE + HTTP_CLIENT_MAX_CHUNK + 2];
+    int n;
+
+    if (c == NULL || c->fd < 0 || data == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (!c->chunked_open) {
+        /* A chunk before the head: the peer would see a size where a
+         * request line belongs. */
+        errno = EINVAL;
+        return -1;
+    }
+    if (len == 0) {
+        /* A zero-length chunk IS the terminal chunk. */
+        errno = EINVAL;
+        return -1;
+    }
+    if (len > HTTP_CLIENT_MAX_CHUNK) {
+        errno = ENOSPC;
+        return -1;
+    }
+    n = http_chunk_encode(data, len, buf, sizeof(buf));
+    if (n < 0) {
+        return -1;
+    }
+    return write_all(c->fd, buf, (size_t)n);
+}
+
+int http_client_connection_write_chunked_end(http_client_connection *c)
+{
+    char buf[8];
+    int n;
+
+    if (c == NULL || c->fd < 0) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (!c->chunked_open) {
+        errno = EINVAL;
+        return -1;
+    }
+    n = http_chunk_encoder_finish(buf, sizeof(buf));
+    if (n < 0) {
+        return -1;
+    }
+    if (write_all(c->fd, buf, (size_t)n) != 0) {
+        return -1;
+    }
+    c->chunked_open = 0;
     return 0;
 }
 
