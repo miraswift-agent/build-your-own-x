@@ -51,11 +51,28 @@ enum InsertionMode {
 // Tree builder
 // ---------------------------------------------------------------------------
 
+/// An entry in the list of active formatting elements (HTML Living Standard
+/// §13.2.6).
+///
+/// The list holds the formatting elements that are currently open, plus
+/// *markers*. A marker bounds the search for an element with the same tag
+/// name: the search never reaches past the last marker, so formatting that
+/// has been separated by a non-formatting element is out of scope.
+#[derive(Debug, Clone)]
+struct AfeEntry {
+    /// The element's tag name.
+    name: String,
+    /// True for a marker entry.
+    marker: bool,
+}
+
 /// Builds a `Document` from HTML source.
 pub struct TreeBuilder {
     doc: Document,
     /// Stack of open element ids (bottom = document root, top = current node).
     open: Vec<NodeId>,
+    /// The list of active formatting elements (§13.2.6).
+    afe: Vec<AfeEntry>,
     mode: InsertionMode,
     /// Head element id (saved so we can re-enter head if needed).
     head_ptr: Option<NodeId>,
@@ -71,6 +88,7 @@ impl TreeBuilder {
         TreeBuilder {
             doc,
             open: vec![DOCUMENT_NODE_ID],
+            afe: Vec::new(),
             mode: InsertionMode::Initial,
             head_ptr: None,
             in_template: false,
@@ -104,8 +122,19 @@ impl TreeBuilder {
     }
 
     fn insert_and_push(&mut self, tag: &str, attrs: Vec<Attribute>) -> NodeId {
+        // §13.2.6: when the user agent creates a new element and the list of
+        // active formatting elements is not empty, a marker is pushed onto
+        // the list. The marker is what bounds the search for an element with
+        // the same tag name.
+        self.push_afe_marker();
         let id = self.insert_element(tag, attrs);
         self.open.push(id);
+        if Self::is_formatting_element(tag) {
+            self.afe.push(AfeEntry {
+                name: tag.to_string(),
+                marker: false,
+            });
+        }
         id
     }
 
@@ -139,6 +168,12 @@ impl TreeBuilder {
             let top = *self.open.last().unwrap();
             let name = self.doc.node(top).tag_name().map(|s| s.to_string());
             self.open.pop();
+            if let Some(ref n) = name {
+                // §13.2.6: an element that is popped off the stack of open
+                // elements is removed from the list of active formatting
+                // elements.
+                self.remove_afe(n);
+            }
             if name.as_deref() == Some(tag) {
                 break;
             }
@@ -152,6 +187,9 @@ impl TreeBuilder {
             let top = *self.open.last().unwrap();
             let name = self.doc.node(top).tag_name().map(|s| s.to_string());
             self.open.pop();
+            if let Some(ref n) = name {
+                self.remove_afe(n);
+            }
             if name.as_deref().map(|n| tags.contains(&n)).unwrap_or(false) {
                 break;
             }
@@ -161,7 +199,14 @@ impl TreeBuilder {
     /// Pop the top of the open stack (current node).
     fn pop(&mut self) -> Option<NodeId> {
         if self.open.len() > 1 {
-            self.open.pop()
+            let popped = self.open.pop();
+            if let Some(id) = popped {
+                let name = self.doc.node(id).tag_name().map(|s| s.to_string());
+                if let Some(n) = name {
+                    self.remove_afe(&n);
+                }
+            }
+            popped
         } else {
             None
         }
@@ -248,6 +293,45 @@ impl TreeBuilder {
         "a", "b", "big", "code", "em", "font", "i", "nobr", "s", "small", "strike", "strong", "tt",
         "u",
     ];
+
+    /// Is `name` a formatting element (§13.2.6)?
+    fn is_formatting_element(name: &str) -> bool {
+        Self::FORMATTING_ELEMENTS.contains(&name)
+    }
+
+    /// Push a marker onto the list of active formatting elements (§13.2.6).
+    fn push_afe_marker(&mut self) {
+        if !self.afe.is_empty() {
+            self.afe.push(AfeEntry {
+                name: "#marker".to_string(),
+                marker: true,
+            });
+        }
+    }
+
+    /// Remove the most recent entry for `name` from the list of active
+    /// formatting elements — called when an element is popped off the stack
+    /// of open elements (§13.2.6).
+    fn remove_afe(&mut self, name: &str) {
+        if let Some(i) = self.afe.iter().rposition(|e| !e.marker && e.name == name) {
+            self.afe.remove(i);
+        }
+    }
+
+    /// The `<a>` special case (§13.2.6.4.7): find an `<a>` in the list of
+    /// active formatting elements between the end of the list and the last
+    /// marker (or the start of the list if there is no marker).
+    fn find_active_anchor(&self) -> Option<usize> {
+        for i in (0..self.afe.len()).rev() {
+            if self.afe[i].marker {
+                return None;
+            }
+            if self.afe[i].name == "a" {
+                return Some(i);
+            }
+        }
+        None
+    }
 
     /// Apply the adoption agency algorithm (§13.2.8.3) to a formatting
     /// element end tag.
@@ -792,6 +876,26 @@ impl TreeBuilder {
                     self.pop_until_any(&["dt", "dd"]);
                 }
                 self.close_p_if_open();
+                self.insert_and_push(name, attrs.clone());
+            }
+
+            // The `<a>` special case (§13.2.6.4.7): a start tag for `<a>` does
+            // not simply nest. If an `<a>` is still in the list of active
+            // formatting elements — between the end of the list and the last
+            // marker — it is closed first (a parse error), so the two anchors
+            // end up as siblings instead of one inside the other.
+            Token::StartTag {
+                ref name,
+                ref attrs,
+                ..
+            } if name == "a" => {
+                if let Some(idx) = self.find_active_anchor() {
+                    self.doc
+                        .errors
+                        .push("nested <a> start tag: the active anchor is closed".into());
+                    self.afe.remove(idx);
+                    self.adoption_agency("a");
+                }
                 self.insert_and_push(name, attrs.clone());
             }
 

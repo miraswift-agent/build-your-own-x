@@ -532,3 +532,38 @@ fn integration_cookie_jar_persistence() {
     let session = cookies.iter().find(|c| c.name == "session").unwrap();
     assert_eq!(session.value, "xyz");
 }
+
+#[test]
+fn parse_nested_anchor_special_case() {
+    // The `<a>` special case (HTML Living Standard §13.2.6.4.7): a start tag
+    // for `<a>` does not simply nest. If an `<a>` is still in the list of
+    // active formatting elements, the new tag closes it first — a parse error
+    // — and the two anchors end up as siblings:
+    //
+    //   <p><a href="a">1<a href="b">2</p>
+    //     becomes
+    //   <p><a href="a">1</a><a href="b">2</a></p>
+    //
+    // The expected tree was cross-checked against html5lib 1.1, which
+    // produces exactly this tree — it was not transcribed from the spec prose
+    // (last slice's first expectation was wrong, and the reference caught it).
+    use agent_browser::html::parse;
+
+    let html = include_str!("fixtures/16_nested_anchor.html");
+    let doc = parse(html);
+
+    let paras = doc.get_elements_by_tag_name("p");
+    assert_eq!(paras.len(), 1, "fixture should yield exactly one paragraph");
+    assert_eq!(
+        doc.inner_html(paras[0]),
+        "<a href=\"a\">1</a><a href=\"b\">2</a>",
+        "the <a> special case must close the active anchor instead of nesting"
+    );
+
+    // The two anchors are siblings: the first holds only "1", not the second
+    // anchor. A parser that nests them produces "1<a href=\"b\">2</a>".
+    let anchors = doc.get_elements_by_tag_name("a");
+    assert_eq!(anchors.len(), 2, "the fixture has two anchors");
+    assert_eq!(doc.inner_html(anchors[0]), "1");
+    assert_eq!(doc.inner_html(anchors[1]), "2");
+}

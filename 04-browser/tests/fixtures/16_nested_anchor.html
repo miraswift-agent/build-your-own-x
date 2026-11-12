@@ -1,0 +1,15 @@
+<!-- Nested anchors — the `<a>` special case (HTML Living Standard §13.2.6.4.7).
+     A start tag for `<a>` does not simply nest. If an `<a>` is still in the
+     list of active formatting elements, the new tag closes it first (a parse
+     error), and the two anchors end up as siblings rather than a nest:
+
+       <p><a href="a">1<a href="b">2</p>
+         becomes
+       <p><a href="a">1</a><a href="b">2</a></p>
+
+     The expected tree was cross-checked against html5lib 1.1, which produces
+     exactly this tree — not transcribed from the spec prose.
+
+     Fixture for browser-harden slice 3: the list of active formatting
+     elements (§13.2.6) and the `<a>` special case (§13.2.6.4.7). -->
+<p><a href="a">1<a href="b">2</p>
