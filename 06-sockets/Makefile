@@ -11,7 +11,7 @@ TEST_SOURCES = $(wildcard $(TESTDIR)/*.c)
 # new test file and inherits the runner.
 TEST_BINARIES = $(patsubst $(TESTDIR)/test_%.c,$(BUILDDIR)/%,$(TEST_SOURCES))
 
-.PHONY: all test valgrind clean
+.PHONY: all test valgrind clean bench
 
 all: $(TEST_BINARIES)
 
@@ -22,6 +22,12 @@ $(BUILDDIR)/%: $(SOURCES) $(TESTDIR)/test_%.c | $(BUILDDIR)
 
 $(BUILDDIR):
 	mkdir -p $(BUILDDIR)
+
+# The Stage 65.10 measurement program (not a test: it prints numbers).
+$(BUILDDIR)/bench_65_10: $(SOURCES) bench/bench_65_10.c | $(BUILDDIR)
+	$(CC) $(CFLAGS) $(SOURCES) bench/bench_65_10.c -o $@
+
+bench: $(BUILDDIR)/bench_65_10
 
 test: $(TEST_BINARIES)
 	@status=0; \
