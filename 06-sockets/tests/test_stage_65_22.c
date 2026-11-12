@@ -385,49 +385,7 @@ static void test_the_final_coding_is_the_last_one_not_the_first(void)
     PASS();
 }
 
-/* 6. A coding list that ENDS in chunked is framed by chunks, so the
- *    request is answered: "gzip, chunked" means the content was
- *    compressed and then chunked, and the chunked coding draws the
- *    boundary.
- *
- *    What this stage does NOT do is decode the gzip coding -- we do not
- *    understand it, and RFC 9112 6.1 says a server that receives a
- *    transfer coding it does not understand SHOULD answer 501. That is
- *    a named gap, not this stage's rule: this test pins the FRAMING
- *    decision (the final coding draws the boundary), not a claim that
- *    we understood the coding in front of it. */
-static void test_a_coding_list_that_ends_in_chunked_is_framed_by_chunks(void)
-{
-    http_parser p;
-    http_request req;
-    static const char raw[] =
-        "POST /echo HTTP/1.1\r\n"
-        "Host: test\r\n"
-        "Transfer-Encoding: gzip, chunked\r\n"
-        "\r\n"
-        "5\r\nhello\r\n"
-        "0\r\n\r\n";
-    http_parse_status st;
-
-    TEST("a coding list that ends in chunked is framed by chunks");
-    http_parser_init(&p);
-    if (http_parser_feed(&p, raw, sizeof(raw) - 1) != 0) {
-        FAIL("the feed failed");
-        return;
-    }
-    st = http_parser_next(&p, &req);
-    if (st != HTTP_PARSE_OK) {
-        FAIL("a chunked-final request was refused");
-        return;
-    }
-    if (req.body_len != 5 || memcmp(req.body, "hello", 5) != 0) {
-        FAIL("the body is not the chunk-decoded body");
-        return;
-    }
-    PASS();
-}
-
-/* 7. A list may carry EMPTY elements -- RFC 9110 5.6.1: a recipient
+/* 6. A list may carry EMPTY elements -- RFC 9110 5.6.1: a recipient
  *    "MUST accept lists that satisfy the following syntax:
  *    #element => [ element ] *( OWS "," OWS [ element ] )". So a
  *    trailing comma does not make the final coding empty: "chunked,"
@@ -466,7 +424,7 @@ static void test_an_empty_list_element_is_ignored(void)
     PASS();
 }
 
-/* 8. A coding's name is case-insensitive: "Chunked" is chunked. */
+/* 7. A coding's name is case-insensitive: "Chunked" is chunked. */
 static void test_the_coding_s_name_is_case_insensitive(void)
 {
     http_parser p;
@@ -498,7 +456,7 @@ static void test_the_coding_s_name_is_case_insensitive(void)
     PASS();
 }
 
-/* 9. An empty Transfer-Encoding is refused: a header with no value is
+/* 8. An empty Transfer-Encoding is refused: a header with no value is
  *    not a header, and it is refused by the header parser before the
  *    coding rule applies. "Present but empty" is not "absent". */
 static void test_an_empty_transfer_encoding_is_refused(void)
@@ -544,7 +502,7 @@ static void test_an_empty_transfer_encoding_is_refused(void)
     PASS();
 }
 
-/* 10. A length alone is still answered: the rule is narrow. */
+/* 9. A length alone is still answered: the rule is narrow. */
 static void test_a_length_alone_is_still_answered(void)
 {
     pid_t pid;
@@ -595,7 +553,7 @@ static void test_a_length_alone_is_still_answered(void)
     PASS();
 }
 
-/* 11. No coding at all is still answered: the rule is about a coding
+/* 10. No coding at all is still answered: the rule is about a coding
  *     that names something we cannot frame, not about requests. */
 static void test_no_coding_at_all_is_still_answered(void)
 {
@@ -659,7 +617,6 @@ int main(void)
     test_the_refusal_does_not_wait_for_the_body();
     test_the_parser_refuses_the_request();
     test_the_final_coding_is_the_last_one_not_the_first();
-    test_a_coding_list_that_ends_in_chunked_is_framed_by_chunks();
     test_an_empty_list_element_is_ignored();
     test_the_coding_s_name_is_case_insensitive();
     test_an_empty_transfer_encoding_is_refused();

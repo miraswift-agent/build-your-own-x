@@ -217,30 +217,46 @@ static int parse_content_length(http_request *r)
     return 0;
 }
 
-/* The LAST transfer coding named by the header, copied into dst.
+/* The transfer codings this server understands.
  *
- * The coding header is a LIST, and the LAST coding frames the body:
- * "gzip, chunked" means the body is chunked. Names are
- * case-insensitive, and the value may carry spaces around the token.
- *
- * A list may carry EMPTY elements. RFC 9110 5.6.1: "a recipient MUST
- * accept lists that satisfy the following syntax:
- * #element => [ element ] *( OWS "," OWS [ element ] )" -- so a
- * trailing comma does not make the final coding empty: "chunked," names
- * one coding, chunked.
- *
- * Returns 0 with the coding copied into dst, or -1 if the header names
- * no coding at all (absent, empty, or nothing but commas) or names one
- * too long to fit. */
-static int request_final_coding(const http_request *r, char *dst, size_t dst_len)
+ * Chunked is the only one: it is the only coding we can decode (the
+ * decoder Stage 65.11 wrote). RFC 9112 6.1: "A server that receives a
+ * request message with a transfer coding it does not understand SHOULD
+ * respond with 501 (Not Implemented)." */
+static int coding_is_understood(const char *coding, size_t len)
 {
-    const char *v = http_header_get(r, "Transfer-Encoding");
-    const char *last = NULL;
-    size_t last_len = 0;
+    return len == 7 && strncasecmp(coding, "chunked", 7) == 0;
+}
+
+/* What the Transfer-Encoding header says, read once.
+ *
+ * The coding header is a LIST, and each coding in it is applied to the
+ * body in turn: "gzip, chunked" means the content was compressed and
+ * then the compressed content was chunked. Two questions come out of
+ * that list, and one reading answers both:
+ *
+ *   - is the FINAL coding chunked? Only the last coding frames the
+ *     body (RFC 9112 6.3 item 4), so only the last one has to be
+ *     chunked for the length to be determinate.
+ *   - does the list name a coding we do not understand? We apply
+ *     chunked and nothing else (RFC 9112 6.1).
+ *
+ * A list may carry EMPTY elements -- RFC 9110 5.6.1: "a recipient MUST
+ * accept lists that satisfy the following syntax: #element => [ element
+ * ] *( OWS "," OWS [ element ] )" -- so an empty element is not a
+ * coding: it is neither the final coding nor an unknown one. */
+typedef struct {
+    int final_is_chunked;   /* the last non-empty element is "chunked" */
+    int has_unknown;        /* some non-empty element is a coding we cannot apply */
+} coding_scan;
+
+static void scan_codings(const char *v, coding_scan *out)
+{
     const char *p;
 
-    if (!v) {
-        return -1;
+    memset(out, 0, sizeof(*out));
+    if (v == NULL) {
+        return;
     }
     p = v;
     for (;;) {
@@ -256,31 +272,28 @@ static int request_final_coding(const http_request *r, char *dst, size_t dst_len
             e--;
         }
         if (e > s) {
-            last = s;
-            last_len = (size_t)(e - s);
+            /* A non-empty element names a coding. The last one seen is
+             * the final coding, and the scan remembers whether any of
+             * them is one we cannot apply. */
+            out->final_is_chunked = coding_is_understood(s, (size_t)(e - s));
+            if (!out->final_is_chunked) {
+                out->has_unknown = 1;
+            }
         }
         if (!comma) {
             break;
         }
         p = comma + 1;
     }
-    if (last == NULL || last_len + 1 > dst_len) {
-        return -1;
-    }
-    memcpy(dst, last, last_len);
-    dst[last_len] = '\0';
-    return 0;
 }
 
 /* Is the body framed by chunked transfer-encoding? */
 static int request_is_chunked(const http_request *r)
 {
-    char name[32];
+    coding_scan cs;
 
-    if (request_final_coding(r, name, sizeof(name)) != 0) {
-        return 0;
-    }
-    return ieq(name, "chunked");
+    scan_codings(http_header_get(r, "Transfer-Encoding"), &cs);
+    return cs.final_is_chunked;
 }
 
 http_parse_status http_parser_next(http_parser *p, http_request *out)
@@ -389,10 +402,51 @@ http_parse_status http_parser_next(http_parser *p, http_request *out)
      * The refusal lives in the PARSER, beside 65.21's rule, because the
      * framing is what is wrong: the request never becomes a request,
      * and the answer does not wait for a body we cannot measure. */
-    if (http_header_get(out, "Transfer-Encoding") != NULL &&
-        !request_is_chunked(out)) {
-        errno = EPROTO;
-        return HTTP_PARSE_ERROR;
+    {
+        const char *te = http_header_get(out, "Transfer-Encoding");
+
+        if (te != NULL) {
+            coding_scan cs;
+
+            scan_codings(te, &cs);
+
+            /* Stage 65.22: the body length cannot be determined. */
+            if (!cs.final_is_chunked) {
+                errno = EPROTO;
+                return HTTP_PARSE_ERROR;
+            }
+
+            /* Stage 65.23: RFC 9112 6.1 -- "A server that receives a
+             * request message with a transfer coding it does not
+             * understand SHOULD respond with 501 (Not
+             * Implemented)."
+             *
+             * The framing is determinate here -- the final coding is
+             * chunked, so we know where the body ends -- but a coding
+             * in FRONT of it is one we cannot apply. "gzip, chunked"
+             * means the content was compressed and then the compressed
+             * content was chunked; we can take the chunks apart and we
+             * cannot decompress them, so the body we would hand back
+             * would still be gzip coded. Answering 200 with it would
+             * be a server claiming to have processed a message it did
+             * not understand.
+             *
+             * The reason is NOT a protocol error: the request is well
+             * formed and the framing is fine. It is "not implemented",
+             * which is why the answer is 501 and not 400 -- the request
+             * is not wrong, this server is not capable. So the reason
+             * travels out of the parser in errno (ENOTSUP) and the
+             * server chooses the status from it.
+             *
+             * The order matters, and the order comes from the RFCs: the
+             * 65.22 rule above is a MUST and this one is a SHOULD, so
+             * "Transfer-Encoding: gzip" is a 400 (the length cannot be
+             * determined) and not a 501. */
+            if (cs.has_unknown) {
+                errno = ENOTSUP;
+                return HTTP_PARSE_ERROR;
+            }
+        }
     }
 
     body_start = (size_t)hend + 4;
@@ -827,16 +881,35 @@ static int serve_connection(int fd, const http_host_route *routes, size_t route_
         }
 
         if (ps == HTTP_PARSE_ERROR) {
-            /* The request will never be valid. Say so and hang up. */
+            /* The request will never be served. Say so and hang up.
+             *
+             * Two reasons, two answers. A request we cannot parse or
+             * cannot trust is 400: the request is wrong. A request
+             * carrying a transfer coding we do not implement is 501:
+             * the request is fine, this server is not capable (RFC
+             * 9112 6.1). The reason travels out of the parser in
+             * errno, and it is read HERE, before anything else can
+             * clobber it. */
             char date[64];
             int n;
             sock_io_result wr;
+            int code = 400;
+            const char *reason = "Bad Request";
+            const char *body = "400 Bad Request\n";
+            size_t blen = 16;
+
+            if (errno == ENOTSUP) {
+                code = 501;
+                reason = "Not Implemented";
+                body = "501 Not Implemented\n";
+                blen = 20;
+            }
 
             if (http_date_format(time(NULL), date, sizeof(date)) < 0) {
                 return -1;
             }
-            n = http_response_build(resp, sizeof(resp), 400, "Bad Request",
-                                    "text/plain", "400 Bad Request\n", 16, 0, date);
+            n = http_response_build(resp, sizeof(resp), code, reason,
+                                    "text/plain", body, blen, 0, date);
             if (n > 0) {
                 (void)sock_write_exact(fd, resp, (size_t)n, &wr);
             }

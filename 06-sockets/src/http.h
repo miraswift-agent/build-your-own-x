@@ -108,9 +108,23 @@ int http_parser_feed(http_parser *p, const void *data, size_t len);
  * A request whose Transfer-Encoding names a FINAL coding other than
  * chunked is refused too (RFC 9112 6.3 item 4): the message body
  * length cannot be determined reliably, so the server MUST answer 400
- * and close. "gzip, chunked" is framed by chunks and is answered;
- * "chunked, gzip" is not, and is refused. The word "final" carries the
- * rule: the LAST coding in the list draws the boundary. */
+ * and close. "chunked, gzip" is refused, and so is "gzip". The word
+ * "final" carries the rule: the LAST coding in the list draws the
+ * boundary.
+ *
+ * And a request whose Transfer-Encoding names a coding the server does
+ * not implement is refused with 501 (RFC 9112 6.1: "A server that
+ * receives a request message with a transfer coding it does not
+ * understand SHOULD respond with 501 (Not Implemented)"). The framing
+ * can be determinate and the coding still unknown -- "gzip, chunked"
+ * is framed by chunks, but the content under the chunks is compressed
+ * and we cannot decompress it -- so the body could not be handed back
+ * decoded.
+ *
+ * The reason travels out of the parser in errno: ENOTSUP for a coding
+ * we do not implement, EPROTO for everything else. The server chooses
+ * the status from it: 501 says "the request is fine, this server is
+ * not capable", 400 says "the request is wrong". */
 http_parse_status http_parser_next(http_parser *p, http_request *out);
 
 /* Look up a header by name, case-insensitively. NULL if absent. */
