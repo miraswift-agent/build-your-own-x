@@ -1,0 +1,16 @@
+<!-- Browser harden slice 7b-1: the adoption agency's inner loop.
+     One document per case; the test parses them one at a time
+     (the cases are separated by a marker line) and compares each
+     tree with html5lib 1.1's tree for the same markup. -->
+@@ misnested_b_i
+<p>1<b>2<i>3</b>4</i>5</p>
+@@ misnested_deeper
+<p><b>bold <i>both</i></b><i> italic</i> plain</p>
+@@ block_between
+<b>1<p>2</b>3</p>
+@@ across_block
+<b><div>x</div></b>
+@@ anchor_special_case
+<p><a href="x">1<a href="y">2</a>3</a></p>
+@@ nested_same
+<b>1<i>2<b>3</i>4</b></i>
