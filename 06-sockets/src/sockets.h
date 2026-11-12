@@ -111,4 +111,58 @@ int sock_server_start(sock_server *s, uint16_t port, int backlog);
 int sock_server_serve(sock_server *s, sock_conn_handler handler, void *ctx,
                       int max_connections);
 
+/* ------------------------------------------------------------------ */
+/* Stage 65.4 — errors as protocol.                                    */
+/* ------------------------------------------------------------------ */
+
+/* What happened on the wire, as data.
+ *
+ * The naive form (sock_read_once / sock_write_once) hands back a number and
+ * leaves the caller to remember that a number smaller than the one asked
+ * for is not an error and not a success either -- it is a partial transfer
+ * that nobody looks at. A short write is a silent truncation.
+ *
+ * This enum names the outcome instead. The five states a byte transfer can
+ * be in are not variations of "error": they are different situations, and
+ * the caller has to treat them differently. */
+typedef enum {
+    SOCK_IO_COMPLETE = 0,   /* everything asked for was transferred */
+    SOCK_IO_PARTIAL,        /* some bytes moved, but not all -- NOT an error */
+    SOCK_IO_EOF,            /* the peer closed: no more bytes will come */
+    SOCK_IO_INTERRUPTED,    /* EINTR: a signal arrived; the call is retryable */
+    SOCK_IO_WOULD_BLOCK,    /* EAGAIN: non-blocking socket, nothing to do now */
+    SOCK_IO_ERROR           /* a real failure; err holds the errno value */
+} sock_io_status;
+
+/* The result of one transfer.
+ *
+ * err is a VALUE, not the global errno: it is captured at the moment of the
+ * failure and travels with the result, so the caller cannot lose it by
+ * calling something else before reading it. */
+typedef struct {
+    sock_io_status status;
+    size_t          transferred;  /* bytes actually moved */
+    int             err;          /* errno value when status is SOCK_IO_ERROR */
+} sock_io_result;
+
+/* The name of a status, for messages. */
+const char *sock_io_status_name(sock_io_status st);
+
+/* One read() / one write(), with the outcome as data.
+ *
+ * Returns 0 on success with *out filled; -1 only for API misuse (a NULL
+ * result, or a NULL buffer with a non-zero length), with errno set.
+ * A failure on the socket is NOT an API error: it is SOCK_IO_ERROR in *out. */
+int sock_read_some(int fd, void *buf, size_t len, sock_io_result *out);
+int sock_write_some(int fd, const void *buf, size_t len, sock_io_result *out);
+
+/* Read or write until the whole request is satisfied.
+ *
+ * A loop, because a partial transfer is normal: the kernel gave you what it
+ * had and you go back for the rest. The loop stops on anything it cannot
+ * fix by trying again -- an error, a closed peer, or a non-blocking socket
+ * with nothing available -- and the result says how far it got. */
+int sock_read_exact(int fd, void *buf, size_t len, sock_io_result *out);
+int sock_write_exact(int fd, const void *buf, size_t len, sock_io_result *out);
+
 #endif /* SOCKETS_H */

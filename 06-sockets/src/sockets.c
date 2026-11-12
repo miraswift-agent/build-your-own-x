@@ -303,3 +303,186 @@ int sock_server_serve(sock_server *s, sock_conn_handler handler, void *ctx,
     sock_reap_children(s, 1);
     return 0;
 }
+
+/* ------------------------------------------------------------------ */
+/* Stage 65.4 — errors as protocol.                                    */
+/* ------------------------------------------------------------------ */
+
+const char *sock_io_status_name(sock_io_status st)
+{
+    switch (st) {
+    case SOCK_IO_COMPLETE:    return "complete";
+    case SOCK_IO_PARTIAL:     return "partial";
+    case SOCK_IO_EOF:         return "eof";
+    case SOCK_IO_INTERRUPTED: return "interrupted";
+    case SOCK_IO_WOULD_BLOCK: return "would-block";
+    case SOCK_IO_ERROR:       return "error";
+    }
+    return "unknown";
+}
+
+/* Fill a result. Every path in read_some / write_some goes through here, so
+ * a caller can trust that a result is never left half-written. */
+static void sock_io_set(sock_io_result *out, sock_io_status status,
+                        size_t transferred, int err)
+{
+    out->status = status;
+    out->transferred = transferred;
+    out->err = err;
+}
+
+/* Turn one syscall outcome into a status. This is the whole stage: the
+ * outcome becomes data, and errno stops being a global the caller has to
+ * remember to read before it does anything else. */
+static sock_io_status sock_io_status_of(int failed, int saved_errno,
+                                        size_t got, size_t asked)
+{
+    if (!failed) {
+        if (got == 0) {
+            return SOCK_IO_EOF;
+        }
+        return (got == asked) ? SOCK_IO_COMPLETE : SOCK_IO_PARTIAL;
+    }
+    if (saved_errno == EINTR) {
+        return SOCK_IO_INTERRUPTED;
+    }
+    if (saved_errno == EAGAIN || saved_errno == EWOULDBLOCK) {
+        return SOCK_IO_WOULD_BLOCK;
+    }
+    return SOCK_IO_ERROR;
+}
+
+int sock_read_some(int fd, void *buf, size_t len, sock_io_result *out)
+{
+    ssize_t n;
+    int saved;
+
+    if (out == NULL || (buf == NULL && len > 0)) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (len == 0) {
+        /* A zero-length request is trivially satisfied. read() would answer
+         * 0 here, which we would otherwise have to read as EOF. */
+        sock_io_set(out, SOCK_IO_COMPLETE, 0, 0);
+        return 0;
+    }
+
+    n = read(fd, buf, len);
+    saved = errno;  /* captured now: the next call may clobber it */
+
+    {
+        sock_io_status st = sock_io_status_of(n < 0, saved,
+                                              (n > 0) ? (size_t)n : 0, len);
+        /* err carries errno ONLY for a real error. EINTR and EAGAIN are
+         * not failures: filling err for them would make `err != 0` mean
+         * "something happened, sometimes harmless" -- the exact confusion
+         * this stage exists to remove. The status already names them. */
+        sock_io_set(out, st, (n > 0) ? (size_t)n : 0,
+                    (st == SOCK_IO_ERROR) ? saved : 0);
+    }
+    return 0;
+}
+
+int sock_write_some(int fd, const void *buf, size_t len, sock_io_result *out)
+{
+    ssize_t n;
+    int saved;
+
+    if (out == NULL || (buf == NULL && len > 0)) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (len == 0) {
+        sock_io_set(out, SOCK_IO_COMPLETE, 0, 0);
+        return 0;
+    }
+
+    n = write(fd, buf, len);
+    saved = errno;  /* captured now: the next call may clobber it */
+
+    {
+        sock_io_status st = sock_io_status_of(n < 0, saved,
+                                              (n > 0) ? (size_t)n : 0, len);
+        /* err carries errno ONLY for a real error. EINTR and EAGAIN are
+         * not failures: filling err for them would make `err != 0` mean
+         * "something happened, sometimes harmless" -- the exact confusion
+         * this stage exists to remove. The status already names them. */
+        sock_io_set(out, st, (n > 0) ? (size_t)n : 0,
+                    (st == SOCK_IO_ERROR) ? saved : 0);
+    }
+    return 0;
+}
+
+int sock_read_exact(int fd, void *buf, size_t len, sock_io_result *out)
+{
+    size_t done = 0;
+
+    if (out == NULL || (buf == NULL && len > 0)) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (len == 0) {
+        sock_io_set(out, SOCK_IO_COMPLETE, 0, 0);
+        return 0;
+    }
+
+    while (done < len) {
+        sock_io_result r;
+
+        if (sock_read_some(fd, (char *)buf + done, len - done, &r) != 0) {
+            return -1;
+        }
+        if (r.status == SOCK_IO_ERROR || r.status == SOCK_IO_WOULD_BLOCK ||
+            r.status == SOCK_IO_EOF) {
+            /* Nothing to fix by trying again. Report it, and report how far
+             * we got -- a partial read that stopped early is still data the
+             * caller has. */
+            sock_io_set(out, r.status, done + r.transferred, r.err);
+            return 0;
+        }
+        if (r.status == SOCK_IO_INTERRUPTED) {
+            continue;  /* a signal, not a failure: go again */
+        }
+        done += r.transferred;
+    }
+
+    sock_io_set(out, SOCK_IO_COMPLETE, done, 0);
+    return 0;
+}
+
+int sock_write_exact(int fd, const void *buf, size_t len, sock_io_result *out)
+{
+    size_t done = 0;
+
+    if (out == NULL || (buf == NULL && len > 0)) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (len == 0) {
+        sock_io_set(out, SOCK_IO_COMPLETE, 0, 0);
+        return 0;
+    }
+
+    while (done < len) {
+        sock_io_result r;
+
+        if (sock_write_some(fd, (const char *)buf + done, len - done, &r) != 0) {
+            return -1;
+        }
+        if (r.status == SOCK_IO_ERROR || r.status == SOCK_IO_WOULD_BLOCK) {
+            /* A short write is a silent truncation unless the result says so.
+             * This is where it says so: "would block" after N bytes means the
+             * caller has N bytes written and must come back for the rest. */
+            sock_io_set(out, r.status, done + r.transferred, r.err);
+            return 0;
+        }
+        if (r.status == SOCK_IO_INTERRUPTED) {
+            continue;  /* a signal, not a failure: go again */
+        }
+        done += r.transferred;
+    }
+
+    sock_io_set(out, SOCK_IO_COMPLETE, done, 0);
+    return 0;
+}
