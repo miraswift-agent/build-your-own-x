@@ -221,6 +221,39 @@ static int header_content_length(const http_response *r, long *out)
     return 0;
 }
 
+/* Whether the response's final transfer-coding is "chunked".
+ *
+ * The header is a comma-separated list of codings, and the LAST one is
+ * the coding that framed the body: "gzip, chunked" is a chunked body
+ * inside a gzip coding. */
+static int header_is_chunked(const http_response *r)
+{
+    const char *v = http_response_header_get(r, "Transfer-Encoding");
+    const char *end;
+    size_t len;
+
+    if (v == NULL) {
+        return 0;
+    }
+    /* Walk to the last coding. */
+    for (;;) {
+        const char *comma = strchr(v, ',');
+        if (comma == NULL) {
+            break;
+        }
+        v = comma + 1;
+    }
+    while (*v == ' ' || *v == '\t') {
+        v++;
+    }
+    end = v + strlen(v);
+    while (end > v && (end[-1] == ' ' || end[-1] == '\t')) {
+        end--;
+    }
+    len = (size_t)(end - v);
+    return len == 7 && strncasecmp(v, "chunked", 7) == 0;
+}
+
 /* ---------- the head: status line, headers, and where the body starts ---------- */
 
 static http_parse_status parse_head(http_response_parser *p, http_response *out,
@@ -267,7 +300,73 @@ static http_parse_status parse_head(http_response_parser *p, http_response *out,
         return HTTP_PARSE_ERROR;
     }
     out->content_length = cl;
+    out->framed_by_chunked = header_is_chunked(out);
+    if (out->framed_by_chunked) {
+        /* Transfer-Encoding overrides Content-Length. A message with
+         * both is the classic request-smuggling shape, and the safe
+         * reading is the one that trusts the framing that is actually
+         * on the wire: the transfer coding. */
+        out->content_length = -1;
+    }
     return HTTP_PARSE_OK;
+}
+
+/* ---------- the chunked body ---------- */
+
+/* The body is chunked: the bytes go to the Stage 65.11 decoder, and the
+ * decoded body accumulates in the parser -- the caller's output is a
+ * view of it, so a body that arrives in pieces is still one body. */
+static http_parse_status chunked_next(http_response_parser *p, http_response *out,
+                                      size_t body_start)
+{
+    char chunk[HTTP_CLIENT_MAX_BODY];
+    size_t chunk_len;
+    http_chunk_status cst;
+
+    if (!p->body_started) {
+        p->body_start = body_start;
+        p->body_fed_upto = body_start;
+        p->body_started = 1;
+    }
+    if (p->len > p->body_fed_upto) {
+        if (http_chunk_decoder_feed(&p->chunker, p->buf + p->body_fed_upto,
+                                    p->len - p->body_fed_upto) != 0) {
+            errno = ENOBUFS;
+            return HTTP_PARSE_ERROR;
+        }
+        /* The body bytes now live in the decoder; only the head stays
+         * in the parser's buffer, so a long body does not fill it. */
+        p->len = body_start;
+        p->body_fed_upto = body_start;
+    }
+    for (;;) {
+        cst = http_chunk_decoder_next(&p->chunker, chunk, sizeof(chunk), &chunk_len);
+        if (cst == HTTP_CHUNK_OK) {
+            if (p->decoded_len + chunk_len > HTTP_CLIENT_MAX_BODY) {
+                errno = ENOBUFS;
+                return HTTP_PARSE_ERROR;
+            }
+            memcpy(p->decoded + p->decoded_len, chunk, chunk_len);
+            p->decoded_len += chunk_len;
+            continue;
+        }
+        if (cst == HTTP_CHUNK_NEED_MORE) {
+            return HTTP_PARSE_NEED_MORE;
+        }
+        if (cst == HTTP_CHUNK_ERROR) {
+            return HTTP_PARSE_ERROR;
+        }
+        /* The terminal chunk: the body is complete. */
+        memcpy(out->body, p->decoded, p->decoded_len);
+        out->body[p->decoded_len] = '\0';
+        out->body_len = p->decoded_len;
+        out->framed_by_length = 0;
+        out->framed_by_chunked = 1;
+        p->len = 0;
+        p->body_started = 0;
+        p->body_fed_upto = 0;
+        return HTTP_PARSE_OK;
+    }
 }
 
 /* ---------- the parser ---------- */
@@ -275,6 +374,11 @@ static http_parse_status parse_head(http_response_parser *p, http_response *out,
 void http_response_parser_init(http_response_parser *p)
 {
     p->len = 0;
+    p->body_started = 0;
+    p->body_start = 0;
+    p->body_fed_upto = 0;
+    p->decoded_len = 0;
+    http_chunk_decoder_init(&p->chunker);
 }
 
 int http_response_parser_feed(http_response_parser *p, const void *data, size_t len)
@@ -301,6 +405,9 @@ http_parse_status http_response_parser_next(http_response_parser *p, http_respon
     st = parse_head(p, out, &body_start);
     if (st != HTTP_PARSE_OK) {
         return st;
+    }
+    if (out->framed_by_chunked) {
+        return chunked_next(p, out, body_start);
     }
     cl = (size_t)out->content_length;
     if (out->content_length < 0) {
@@ -345,6 +452,12 @@ http_parse_status http_response_parser_finish(http_response_parser *p, http_resp
     }
     if (st != HTTP_PARSE_OK) {
         return st;
+    }
+    if (out->framed_by_chunked) {
+        /* The peer closed before the terminal chunk. A chunked body that
+         * stops is truncated, not short. */
+        errno = EPROTO;
+        return HTTP_PARSE_ERROR;
     }
     if (out->content_length >= 0) {
         /* The peer closed before the promised bytes arrived. That is a

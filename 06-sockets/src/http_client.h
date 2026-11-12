@@ -47,7 +47,8 @@ typedef struct {
     long        content_length;   /* -1 when the header is absent */
     char        body[HTTP_CLIENT_MAX_BODY + 1];
     size_t      body_len;
-    int         framed_by_length; /* 1 = Content-Length, 0 = EOF */
+    int         framed_by_length; /* 1 = Content-Length, 0 = EOF or chunked */
+    int         framed_by_chunked;/* 1 = Transfer-Encoding: chunked */
 } http_response;
 
 /* Build a request into dst.
@@ -64,6 +65,16 @@ int http_client_request_build(char *dst, size_t dst_len,
 typedef struct {
     char   buf[HTTP_CLIENT_MAX_REQUEST];
     size_t len;
+
+    /* Stage 65.13: the chunked framing. The head stays in buf; the body
+     * bytes are handed to the Stage 65.11 decoder as they arrive, and
+     * the decoded body accumulates here (the output is a view of it). */
+    http_chunk_decoder chunker;
+    int         body_started;   /* the head has been parsed; body_start is valid */
+    size_t      body_start;     /* where the body begins in buf */
+    size_t      body_fed_upto;  /* body bytes already given to the decoder */
+    size_t      decoded_len;    /* decoded body bytes so far */
+    char        decoded[HTTP_CLIENT_MAX_BODY + 1];
 } http_response_parser;
 
 void http_response_parser_init(http_response_parser *p);
