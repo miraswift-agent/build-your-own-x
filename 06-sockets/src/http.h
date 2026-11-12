@@ -123,6 +123,32 @@ typedef struct {
  * Returns the number of requests served, or -1 on a socket error. */
 int http_serve_connection(int fd, const char *root_body, http_server_stats *st);
 
+/* ---- Stage 65.16: routing by the Host header ----
+ *
+ * A server with one document does not need the Host header. A server
+ * with several does: the Host names the site the request is for.
+ *
+ * A host name is case-insensitive (RFC 9110 4.2.3), and the port in
+ * "example.com:8080" is not part of the name. */
+typedef struct {
+    const char *host;   /* the host name, without a port */
+    const char *body;   /* the document served for that host */
+} http_host_route;
+
+/* Serve with a routing table: the Host header selects the document.
+ *
+ * A request whose Host matches a route is answered with that route's
+ * document; a request with an unknown Host is answered with
+ * default_body. A request with NO Host is answered 400: a server with
+ * several sites cannot route a request that does not say which site it
+ * is for.
+ *
+ * The path still routes: "/" serves the selected document, "/stream"
+ * serves the chunked demonstration, anything else is 404. */
+int http_serve_connection_routed(int fd, const http_host_route *routes,
+                                  size_t route_count, const char *default_body,
+                                  http_server_stats *st);
+
 /* ---- Stage 65.11: chunked transfer-encoding, the decoder ----
  *
  * The lesson of 65.5 was that a stream has no message boundaries: you

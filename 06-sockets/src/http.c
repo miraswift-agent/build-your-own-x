@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 #include "sockets.h"
 
@@ -357,7 +358,61 @@ int http_response_build(char *dst, size_t dst_len, int status, const char *reaso
     return n + (int)body_len;
 }
 
-int http_serve_connection(int fd, const char *root_body, http_server_stats *st)
+/* The host name from a Host header value.
+ *
+ * "example.com:8080" names the host "example.com": the port is not
+ * part of the name. A bracketed IPv6 literal keeps its brackets --
+ * "[::1]:8080" names the host "[::1]".
+ *
+ * Returns 0 on success, -1 if the value is empty or too long. */
+static int host_name_from_value(const char *value, char *out, size_t out_cap)
+{
+    size_t len;
+
+    if (value == NULL || value[0] == '\0') {
+        return -1;
+    }
+    if (value[0] == '[') {
+        const char *close = strchr(value, ']');
+        if (close == NULL) {
+            return -1;
+        }
+        len = (size_t)(close - value) + 1;
+    } else {
+        const char *colon = strchr(value, ':');
+        len = (colon != NULL) ? (size_t)(colon - value) : strlen(value);
+    }
+    if (len == 0 || len + 1 > out_cap) {
+        return -1;
+    }
+    memcpy(out, value, len);
+    out[len] = '\0';
+    return 0;
+}
+
+/* The document for a request: the route that matches the host, or the
+ * default. A host name is case-insensitive, so the comparison is too. */
+static const char *route_document(const http_host_route *routes, size_t route_count,
+                                   const char *host, const char *default_body)
+{
+    size_t i;
+
+    if (routes != NULL && host != NULL) {
+        for (i = 0; i < route_count; i++) {
+            if (routes[i].host != NULL && strcasecmp(routes[i].host, host) == 0) {
+                return routes[i].body ? routes[i].body : "";
+            }
+        }
+    }
+    return default_body ? default_body : "";
+}
+
+/* The one serve loop. require_host says whether this server routes by
+ * the Host header -- and so whether a request without one can be
+ * answered at all. */
+static int serve_connection(int fd, const http_host_route *routes, size_t route_count,
+                             const char *default_body, int require_host,
+                             http_server_stats *st)
 {
     http_parser p;
     http_request req;
@@ -376,6 +431,8 @@ int http_serve_connection(int fd, const char *root_body, http_server_stats *st)
     for (;;) {
         while ((ps = http_parser_next(&p, &req)) == HTTP_PARSE_OK) {
             int keep = http_request_keep_alive(&req);
+            char host[HTTP_MAX_HVALUE + 1];
+            const char *host_name = NULL;
             const char *body;
             const char *ctype;
             const char *reason;
@@ -383,6 +440,33 @@ int http_serve_connection(int fd, const char *root_body, http_server_stats *st)
             int code;
             int n;
             sock_io_result wr;
+
+            if (require_host) {
+                const char *hostv = http_header_get(&req, "Host");
+                if (hostv == NULL ||
+                    host_name_from_value(hostv, host, sizeof(host)) != 0) {
+                    /* A server with several sites cannot route a request
+                     * that does not say which site it is for. */
+                    n = http_response_build(resp, sizeof(resp), 400, "Bad Request",
+                                            "text/plain", "400 Bad Request\n", 16, keep);
+                    if (n < 0) {
+                        return -1;
+                    }
+                    if (sock_write_exact(fd, resp, (size_t)n, &wr) != 0) {
+                        return -1;
+                    }
+                    served++;
+                    if (st) {
+                        st->requests++;
+                        st->bytes_out += (unsigned long)n;
+                    }
+                    if (!keep) {
+                        return served;
+                    }
+                    continue;
+                }
+                host_name = host;
+            }
 
             if (strcmp(req.target, "/stream") == 0) {
                 /* A body whose length is not known until it is done --
@@ -439,7 +523,7 @@ int http_serve_connection(int fd, const char *root_body, http_server_stats *st)
                 code = 200;
                 reason = "OK";
                 ctype = "text/html";
-                body = root_body ? root_body : "";
+                body = route_document(routes, route_count, host_name, default_body);
             } else {
                 code = 404;
                 reason = "Not Found";
@@ -505,6 +589,23 @@ int http_serve_connection(int fd, const char *root_body, http_server_stats *st)
             }
         }
     }
+}
+
+/* Serve HTTP requests on an already-accepted connection until the peer
+ * closes or asks to close. The server answers "/" with root_body and
+ * everything else with 404. The Host header is ignored: this server
+ * has one document, so there is nothing to route. */
+int http_serve_connection(int fd, const char *root_body, http_server_stats *st)
+{
+    return serve_connection(fd, NULL, 0, root_body, 0, st);
+}
+
+/* Serve HTTP requests, choosing the document by the Host header. */
+int http_serve_connection_routed(int fd, const http_host_route *routes,
+                                  size_t route_count, const char *default_body,
+                                  http_server_stats *st)
+{
+    return serve_connection(fd, routes, route_count, default_body, 1, st);
 }
 
 /* ---- Stage 65.11: chunked transfer-encoding, the decoder ---- */
