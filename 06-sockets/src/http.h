@@ -103,7 +103,14 @@ int http_parser_feed(http_parser *p, const void *data, size_t len);
  * the only framing there is -- that is the rule for a recipient that
  * has to process the message anyway (the client; an intermediary that
  * strips the length before forwarding). An origin server says no
- * instead. */
+ * instead.
+ *
+ * A request whose Transfer-Encoding names a FINAL coding other than
+ * chunked is refused too (RFC 9112 6.3 item 4): the message body
+ * length cannot be determined reliably, so the server MUST answer 400
+ * and close. "gzip, chunked" is framed by chunks and is answered;
+ * "chunked, gzip" is not, and is refused. The word "final" carries the
+ * rule: the LAST coding in the list draws the boundary. */
 http_parse_status http_parser_next(http_parser *p, http_request *out);
 
 /* Look up a header by name, case-insensitively. NULL if absent. */

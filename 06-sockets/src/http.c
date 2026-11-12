@@ -217,34 +217,69 @@ static int parse_content_length(http_request *r)
     return 0;
 }
 
-/* Is the body framed by chunked transfer-encoding?
+/* The LAST transfer coding named by the header, copied into dst.
  *
  * The coding header is a LIST, and the LAST coding frames the body:
  * "gzip, chunked" means the body is chunked. Names are
- * case-insensitive, and the value may carry spaces around the token. */
-static int request_is_chunked(const http_request *r)
+ * case-insensitive, and the value may carry spaces around the token.
+ *
+ * A list may carry EMPTY elements. RFC 9110 5.6.1: "a recipient MUST
+ * accept lists that satisfy the following syntax:
+ * #element => [ element ] *( OWS "," OWS [ element ] )" -- so a
+ * trailing comma does not make the final coding empty: "chunked," names
+ * one coding, chunked.
+ *
+ * Returns 0 with the coding copied into dst, or -1 if the header names
+ * no coding at all (absent, empty, or nothing but commas) or names one
+ * too long to fit. */
+static int request_final_coding(const http_request *r, char *dst, size_t dst_len)
 {
     const char *v = http_header_get(r, "Transfer-Encoding");
-    const char *last;
-    size_t n;
+    const char *last = NULL;
+    size_t last_len = 0;
+    const char *p;
+
+    if (!v) {
+        return -1;
+    }
+    p = v;
+    for (;;) {
+        const char *comma = strchr(p, ',');
+        const char *end = comma ? comma : p + strlen(p);
+        const char *s = p;
+        const char *e = end;
+
+        while (s < e && (*s == ' ' || *s == '\t')) {
+            s++;
+        }
+        while (e > s && (e[-1] == ' ' || e[-1] == '\t')) {
+            e--;
+        }
+        if (e > s) {
+            last = s;
+            last_len = (size_t)(e - s);
+        }
+        if (!comma) {
+            break;
+        }
+        p = comma + 1;
+    }
+    if (last == NULL || last_len + 1 > dst_len) {
+        return -1;
+    }
+    memcpy(dst, last, last_len);
+    dst[last_len] = '\0';
+    return 0;
+}
+
+/* Is the body framed by chunked transfer-encoding? */
+static int request_is_chunked(const http_request *r)
+{
     char name[32];
 
-    if (!v || *v == '\0') {
+    if (request_final_coding(r, name, sizeof(name)) != 0) {
         return 0;
     }
-    last = strrchr(v, ',');
-    if (last) {
-        v = last + 1;
-    }
-    while (*v == ' ' || *v == '\t') {
-        v++;
-    }
-    n = 0;
-    while (v[n] != '\0' && v[n] != ' ' && v[n] != '\t' && n + 1 < sizeof(name)) {
-        name[n] = v[n];
-        n++;
-    }
-    name[n] = '\0';
     return ieq(name, "chunked");
 }
 
@@ -329,6 +364,33 @@ http_parse_status http_parser_next(http_parser *p, http_request *out)
      * "here is a length" disagree whatever the coding is called. */
     if (out->content_length >= 0 &&
         http_header_get(out, "Transfer-Encoding") != NULL) {
+        errno = EPROTO;
+        return HTTP_PARSE_ERROR;
+    }
+
+    /* Stage 65.22: RFC 9112 6.3 item 4 -- "If a Transfer-Encoding
+     * header field is present in a request and the chunked transfer
+     * coding is not the final encoding, the message body length cannot
+     * be determined reliably; the server MUST respond with the 400 (Bad
+     * Request) status code and then close the connection."
+     *
+     * The rule is about the FINAL coding, and that word carries the
+     * whole rule: "gzip, chunked" frames the body with chunks (the
+     * coding in front of it is applied first, and the chunked coding
+     * draws the boundary), so that request is answered; "chunked,
+     * gzip" does not, so that request is refused. The same two codings
+     * in the other order give the opposite answer.
+     *
+     * A request whose body length cannot be determined is a request
+     * whose body boundary two recipients can disagree about -- the
+     * shape request smuggling is made of (RFC 9112 11.2), and the same
+     * shape Stage 65.21 refused from the other side.
+     *
+     * The refusal lives in the PARSER, beside 65.21's rule, because the
+     * framing is what is wrong: the request never becomes a request,
+     * and the answer does not wait for a body we cannot measure. */
+    if (http_header_get(out, "Transfer-Encoding") != NULL &&
+        !request_is_chunked(out)) {
         errno = EPROTO;
         return HTTP_PARSE_ERROR;
     }
