@@ -376,6 +376,6 @@ unknown method gets a refusal that says which methods are allowed ✓.
   EDNS0 ✓, TCP fallback ✓, larger benchmarks ✓, a CPU-bound handler ✓,
   a warm-up ✓, and the one-shot `http_client_get` write-loop gap ✓.
 * **The Vercel publish gate** — the site has been stale for
-  twenty-four cycles ✓ and only one toggle in Tom's account clears it
+  twenty-three cycles ✓ and only one toggle in Tom's account clears it
   ✓.
 * **Silence** does not change the pick ✓.
