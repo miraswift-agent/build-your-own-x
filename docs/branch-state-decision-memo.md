@@ -1,3 +1,12 @@
+> **Status (2026-11-12):** the recommendation was **executed**.
+> Option A shipped as merge `6ffc1ff` (close-out `0574891`); Option B
+> shipped as a fast-forward of `master` from `b266964` to `0574891`
+> (close-out `docs/master-fast-forward-closeout.md`). §1–§6 are kept as
+> written for the record — two of their numbers were wrong in ways the
+> close-outs correct (the merge's cost, and §3/§4's "reversible" vs §7's
+> "irreversible"). The `main` rename (§4.4) is now the only open part,
+> and it is a question for Tom.
+
 # The repository branch state — a decision memo
 
 **Date:** 2026-11-12 · **Measured on:** `build-your-own-x` @ `6792b12`
