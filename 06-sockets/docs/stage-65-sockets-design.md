@@ -76,6 +76,26 @@ layer is already understood.
 | **65.9** | DNS from scratch, second half -- the transport and the cache: send over UDP, read, cache | A lookup is a UDP exchange, not a function call |
 | **65.10** | two concurrency models on one server: `fork()` vs event loop, measured | The tradeoff is throughput and latency, not taste |
 
+**The arc closed 2026-11-11** at `bc00a67`. Stages 65.1–65.10 are
+complete (146/146 tests, valgrind clean on all ten binaries). The
+cumulative lesson, which no single stage could teach: *a server is a
+loop, and every layer above it is a rule about where the loop's
+boundaries are.* The fd is a kernel object (65.1); the address is
+bytes you assembled (65.2); a forked child inherits every descriptor
+the parent had open (65.3); a transfer is an outcome, not a number
+(65.4); a stream has no boundaries, so you frame it yourself (65.5);
+HTTP frames itself in the text (65.6); a body is framed by a length or
+by a close (65.7); DNS frames itself in binary with compressed names
+(65.8); a lookup is an exchange, not a function call (65.9); and the
+choice between two ways to run the loop is a measurement, not a
+preference (65.10).
+
+**What the arc deliberately left on the table,** for whoever picks up
+this component later: `Host` routing, `Date:`, chunked
+transfer-encoding, TLS, `SIGPIPE` handling, CNAME chasing, EDNS0, the
+TCP fallback and the TC bit, a CPU-bound workload for the benchmark,
+and a warm-up phase to separate connection setup from steady state.
+
 **Split note (2026-11-11):** 65.8 was split into two stages after two
 judgment cycles in a row blew the 900-second cap. 65.8 (the packets)
 shipped as `20a0344`; 65.9 (the transport and the cache) is the
