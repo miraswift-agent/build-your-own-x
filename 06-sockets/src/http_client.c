@@ -302,9 +302,21 @@ static http_parse_status parse_head(http_response_parser *p, http_response *out,
         /* Stage 65.25: the framing is invalid (RFC 9112 6.3 item 5).
          * The reason travels out in errno: EBADMSG, so the connection
          * layer can do what the RFC says a user agent must do -- close
-         * the connection to the server and discard the response. */
-        errno = EBADMSG;
-        return HTTP_PARSE_ERROR;
+         * the connection to the server and discard the response.
+         *
+         * Stage 65.28: but item 1 comes FIRST in the precedence list. A
+         * response to a HEAD request "is always terminated by the first
+         * empty line after the header fields, regardless of the header
+         * fields present in the message" -- so a length that cannot be
+         * used does not make the message invalid: there is no body for
+         * it to be invalid about. The length is still reported when it
+         * can be read, because it is a claim about the body the
+         * matching GET would have returned. */
+        if (!p->no_body) {
+            errno = EBADMSG;
+            return HTTP_PARSE_ERROR;
+        }
+        cl = -1;
     }
     out->content_length = cl;
     {
@@ -432,6 +444,7 @@ void http_response_parser_init(http_response_parser *p)
     p->body_start = 0;
     p->body_fed_upto = 0;
     p->decoded_len = 0;
+    p->no_body = 0;
     http_chunk_decoder_init(&p->chunker);
 }
 
@@ -459,6 +472,34 @@ http_parse_status http_response_parser_next(http_response_parser *p, http_respon
     st = parse_head(p, out, &body_start);
     if (st != HTTP_PARSE_OK) {
         return st;
+    }
+    if (p->no_body) {
+        /* Stage 65.28: the response to a HEAD request ends at the end of
+         * the head.
+         *
+         * RFC 9112 6.3 item 1: "Any response to a HEAD request ... is
+         * always terminated by the first empty line after the header
+         * fields, regardless of the header fields present in the
+         * message, and thus cannot contain a message body or trailer
+         * section."
+         *
+         * So the Content-Length in the head is NOT a promise about this
+         * message: it describes the body the matching GET would have
+         * returned (RFC 9110 8.6). The bytes are not coming, and a
+         * client that waits for them sits on the connection until the
+         * peer times it out.
+         *
+         * What follows the head, if anything, is the start of the NEXT
+         * message -- and a server that sent content anyway broke the
+         * rule, so those bytes are kept rather than taken as a body
+         * ("A client SHOULD NOT interpret the response to a HEAD
+         * request as containing content", RFC 9110 9.3.2). */
+        out->body_len = 0;
+        out->framed_by_length = 0;
+        memmove(p->buf, p->buf + body_start, p->len - body_start);
+        p->len -= body_start;
+        p->no_body = 0;
+        return HTTP_PARSE_OK;
     }
     if (out->framed_by_chunked) {
         return chunked_next(p, out, body_start);
@@ -519,6 +560,18 @@ http_parse_status http_response_parser_finish(http_response_parser *p, http_resp
     }
     if (st != HTTP_PARSE_OK) {
         return st;
+    }
+    if (p->no_body) {
+        /* Stage 65.28: the peer closed after a response to a HEAD
+         * request. That response ended at the end of its head (RFC 9112
+         * 6.3 item 1), so it is COMPLETE -- the close is the peer
+         * hanging up on a conversation it is done with, not a message
+         * that stopped early. */
+        out->body_len = 0;
+        out->framed_by_length = 0;
+        p->len = 0;
+        p->no_body = 0;
+        return HTTP_PARSE_OK;
     }
     if (out->framed_by_chunked) {
         /* The peer closed before the terminal chunk. A chunked body
@@ -738,6 +791,7 @@ int http_client_connection_open(http_client_connection *c, const char *host, uin
     memcpy(c->host, host, hostlen + 1);
     c->port = port;
     c->chunked_open = 0;
+    c->n_inflight = 0;
     http_response_parser_init(&c->parser);
     return 0;
 }
@@ -771,12 +825,27 @@ int http_client_connection_write_request(http_client_connection *c, const char *
         errno = EINVAL;
         return -1;
     }
+    if (c->n_inflight >= HTTP_CLIENT_MAX_INFLIGHT) {
+        /* Too many requests are in flight: the client could no longer
+         * tell which response is the one without a body. Refuse
+         * BEFORE the request goes out. */
+        errno = ENOBUFS;
+        return -1;
+    }
     reqlen = http_client_request_build_ex(req, sizeof(req), method, target, c->host,
                                           body, body_len, 1);
     if (reqlen < 0) {
         return -1;
     }
-    return write_all(c->fd, req, (size_t)reqlen);
+    if (write_all(c->fd, req, (size_t)reqlen) != 0) {
+        return -1;
+    }
+    /* Stage 65.28: remember what was asked for. The response to a HEAD
+     * request has no body, and the client must not wait for one. The
+     * method token is case-sensitive (RFC 9110 9.1), so "head" is not
+     * HEAD and its response may carry a body. */
+    c->in_flight[c->n_inflight++] = (strcmp(method, "HEAD") == 0) ? 1 : 0;
+    return 0;
 }
 
 /* Stage 65.20: the client sends a chunked request body.
@@ -802,6 +871,10 @@ int http_client_connection_write_chunked_head(http_client_connection *c,
         errno = EINVAL;
         return -1;
     }
+    if (c->n_inflight >= HTTP_CLIENT_MAX_INFLIGHT) {
+        errno = ENOBUFS;
+        return -1;
+    }
     reqlen = http_client_request_build_chunked_head(req, sizeof(req), method, target,
                                                      c->host, 1);
     if (reqlen < 0) {
@@ -811,6 +884,9 @@ int http_client_connection_write_chunked_head(http_client_connection *c,
         return -1;
     }
     c->chunked_open = 1;
+    /* Stage 65.28: the same expectation as the other request path --
+     * a response to a HEAD request carries no body. */
+    c->in_flight[c->n_inflight++] = (strcmp(method, "HEAD") == 0) ? 1 : 0;
     return 0;
 }
 
@@ -878,6 +954,19 @@ int http_client_connection_read_response(http_client_connection *c, http_respons
     if (c == NULL || c->fd < 0 || out == NULL) {
         errno = EINVAL;
         return -1;
+    }
+    /* Stage 65.28: which response is this one?
+     *
+     * A response to a HEAD request carries no body (RFC 9112 6.3 item
+     * 1), so the parser has to be told before it reads -- otherwise it
+     * waits for octets that are not coming. The requests were written
+     * in order and the responses come back in that order, so the front
+     * of the queue is this response. */
+    c->parser.no_body = (c->n_inflight > 0) ? c->in_flight[0] : 0;
+    if (c->n_inflight > 0) {
+        memmove(c->in_flight, c->in_flight + 1,
+                (size_t)(c->n_inflight - 1) * sizeof(c->in_flight[0]));
+        c->n_inflight--;
     }
     for (;;) {
         st = http_response_parser_next(&c->parser, out);

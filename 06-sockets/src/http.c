@@ -665,6 +665,39 @@ static const char *route_document(const http_host_route *routes, size_t route_co
     return default_body ? default_body : "";
 }
 
+/* Stage 65.28: how many bytes of a built response go on the wire.
+ *
+ * A response to a HEAD request carries the head the matching GET would
+ * have carried, and NO content: RFC 9110 9.3.2 ("the server MUST NOT
+ * send content in the response") and RFC 9112 6.3 item 1 (such a
+ * response "is always terminated by the first empty line after the
+ * header fields, regardless of the header fields present in the
+ * message").
+ *
+ * The head is built exactly as it would be for the GET -- including
+ * the Content-Length, which is a claim about the body the GET would
+ * have returned -- and then the content is left off the wire. So the
+ * bytes to send are the bytes up to and including the empty line that
+ * ends the header section.
+ *
+ * Returns 0 when there is no header section in the buffer, which the
+ * caller treats as an error: a response with no head is not a
+ * response. */
+static size_t response_bytes_to_send(const char *resp, size_t n, int is_head)
+{
+    size_t i;
+
+    if (!is_head) {
+        return n;
+    }
+    for (i = 0; i + 4 <= n; i++) {
+        if (memcmp(resp + i, "\r\n\r\n", 4) == 0) {
+            return i + 4;
+        }
+    }
+    return 0;
+}
+
 /* The one serve loop. require_host says whether this server routes by
  * the Host header -- and so whether a request without one can be
  * answered at all. */
@@ -697,8 +730,16 @@ static int serve_connection(int fd, const http_host_route *routes, size_t route_
             size_t blen;
             int code;
             int n;
+            size_t to_send;
             sock_io_result wr;
             char date[64];
+
+            /* Stage 65.28: is this a HEAD request? The method token is
+             * case-sensitive (RFC 9110 9.1: "The method token is
+             * case-sensitive because it might be used as a gateway to
+             * object-based systems with case-sensitive method names"),
+             * so "head" is not HEAD. */
+            int is_head = (strcmp(req.method, "HEAD") == 0);
 
             if (http_date_format(time(NULL), date, sizeof(date)) < 0) {
                 return -1;
@@ -716,13 +757,17 @@ static int serve_connection(int fd, const http_host_route *routes, size_t route_
                     if (n < 0) {
                         return -1;
                     }
-                    if (sock_write_exact(fd, resp, (size_t)n, &wr) != 0) {
+                    to_send = response_bytes_to_send(resp, (size_t)n, is_head);
+                    if (to_send == 0) {
+                        return -1;
+                    }
+                    if (sock_write_exact(fd, resp, to_send, &wr) != 0) {
                         return -1;
                     }
                     served++;
                     if (st) {
                         st->requests++;
-                        st->bytes_out += (unsigned long)n;
+                        st->bytes_out += (unsigned long)to_send;
                     }
                     if (!keep) {
                         return served;
@@ -747,30 +792,39 @@ static int serve_connection(int fd, const http_host_route *routes, size_t route_
                 if (n < 0) {
                     return -1;
                 }
-                if (sock_write_exact(fd, resp, (size_t)n, &wr) != 0) {
+                to_send = response_bytes_to_send(resp, (size_t)n, is_head);
+                if (to_send == 0) {
                     return -1;
                 }
-                sent += (size_t)n;
-                for (k = 0; k < sizeof(pieces) / sizeof(pieces[0]); k++) {
-                    int cn = http_chunk_encode(pieces[k], strlen(pieces[k]),
-                                               cbuf, sizeof(cbuf));
-                    if (cn < 0) {
-                        return -1;
-                    }
-                    if (sock_write_exact(fd, cbuf, (size_t)cn, &wr) != 0) {
-                        return -1;
-                    }
-                    sent += (size_t)cn;
+                if (sock_write_exact(fd, resp, to_send, &wr) != 0) {
+                    return -1;
                 }
-                {
-                    int cn = http_chunk_encoder_finish(cbuf, sizeof(cbuf));
-                    if (cn < 0) {
-                        return -1;
+                sent += to_send;
+                /* Stage 65.28: a response to HEAD carries no content --
+                 * and the chunks ARE the content. The head alone is the
+                 * whole response (RFC 9112 6.3 item 1). */
+                if (!is_head) {
+                    for (k = 0; k < sizeof(pieces) / sizeof(pieces[0]); k++) {
+                        int cn = http_chunk_encode(pieces[k], strlen(pieces[k]),
+                                                   cbuf, sizeof(cbuf));
+                        if (cn < 0) {
+                            return -1;
+                        }
+                        if (sock_write_exact(fd, cbuf, (size_t)cn, &wr) != 0) {
+                            return -1;
+                        }
+                        sent += (size_t)cn;
                     }
-                    if (sock_write_exact(fd, cbuf, (size_t)cn, &wr) != 0) {
-                        return -1;
+                    {
+                        int cn = http_chunk_encoder_finish(cbuf, sizeof(cbuf));
+                        if (cn < 0) {
+                            return -1;
+                        }
+                        if (sock_write_exact(fd, cbuf, (size_t)cn, &wr) != 0) {
+                            return -1;
+                        }
+                        sent += (size_t)cn;
                     }
-                    sent += (size_t)cn;
                 }
                 served++;
                 if (st) {
@@ -796,13 +850,24 @@ static int serve_connection(int fd, const http_host_route *routes, size_t route_
                  *
                  * The body is bytes, not a C string: the length goes
                  * with it. */
+                /* Stage 65.28: the content of a HEAD request has no
+                 * generally defined semantics (RFC 9110 9.3.2), so the
+                 * response is the one the matching GET would have
+                 * produced -- and a GET carries no content, so the echo
+                 * is empty and the length is zero. */
                 n = http_response_build(resp, sizeof(resp), 200, "OK",
                                         "application/octet-stream",
-                                        req.body, req.body_len, keep, date);
+                                        is_head ? "" : req.body,
+                                        is_head ? 0 : req.body_len,
+                                        keep, date);
                 if (n < 0) {
                     return -1;
                 }
-                if (sock_write_exact(fd, resp, (size_t)n, &wr) != 0) {
+                to_send = response_bytes_to_send(resp, (size_t)n, is_head);
+                if (to_send == 0) {
+                    return -1;
+                }
+                if (sock_write_exact(fd, resp, to_send, &wr) != 0) {
                     return -1;
                 }
                 if (wr.status != SOCK_IO_COMPLETE) {
@@ -811,7 +876,7 @@ static int serve_connection(int fd, const http_host_route *routes, size_t route_
                 served++;
                 if (st) {
                     st->requests++;
-                    st->bytes_out += (unsigned long)n;
+                    st->bytes_out += (unsigned long)to_send;
                 }
                 if (!keep) {
                     return served;
@@ -837,7 +902,11 @@ static int serve_connection(int fd, const http_host_route *routes, size_t route_
             if (n < 0) {
                 return -1;
             }
-            if (sock_write_exact(fd, resp, (size_t)n, &wr) != 0) {
+            to_send = response_bytes_to_send(resp, (size_t)n, is_head);
+            if (to_send == 0) {
+                return -1;
+            }
+            if (sock_write_exact(fd, resp, to_send, &wr) != 0) {
                 return -1;
             }
             if (wr.status != SOCK_IO_COMPLETE) {
@@ -846,7 +915,7 @@ static int serve_connection(int fd, const http_host_route *routes, size_t route_
             served++;
             if (st) {
                 st->requests++;
-                st->bytes_out += (unsigned long)n;
+                st->bytes_out += (unsigned long)to_send;
             }
             if (!keep) {
                 return served;

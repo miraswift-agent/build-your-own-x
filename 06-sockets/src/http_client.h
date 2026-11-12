@@ -94,6 +94,12 @@ int http_client_request_build_chunked_head(char *dst, size_t dst_len,
                                            const char *method, const char *target,
                                            const char *host, int keep_alive);
 
+/* Stage 65.28: the largest number of requests that may be in flight
+ * on one connection. Each one is a response the client is waiting
+ * for, and each one may be a HEAD response -- so each one needs its
+ * own "there is no body" flag. */
+#define HTTP_CLIENT_MAX_INFLIGHT 16
+
 /* The parser's buffer: bytes received, not yet consumed. */
 typedef struct {
     char   buf[HTTP_CLIENT_MAX_REQUEST];
@@ -108,6 +114,18 @@ typedef struct {
     size_t      body_fed_upto;  /* body bytes already given to the decoder */
     size_t      decoded_len;    /* decoded body bytes so far */
     char        decoded[HTTP_CLIENT_MAX_BODY + 1];
+
+    /* Stage 65.28: 1 when the response being parsed answers a HEAD
+     * request, and so has no body at all.
+     *
+     * RFC 9112 6.3 item 1: "Any response to a HEAD request ... is
+     * always terminated by the first empty line after the header
+     * fields, regardless of the header fields present in the message,
+     * and thus cannot contain a message body or trailer section."
+     *
+     * The flag is set by the connection layer, which knows what it
+     * asked for; the parser consumes it when a response completes. */
+    int         no_body;
 } http_response_parser;
 
 void http_response_parser_init(http_response_parser *p);
@@ -178,6 +196,16 @@ typedef struct {
      * second request in the middle of a chunked body, would put two
      * messages on the wire at once -- so the connection refuses. */
     int         chunked_open;
+
+    /* Stage 65.28: the requests in flight, in order.
+     *
+     * A response to a HEAD request carries no body, and the client must
+     * not wait for one -- so it has to know which response it is
+     * reading. The responses come back in the order the requests were
+     * written, so the expectations are a queue: 1 means "this one is a
+     * HEAD response, there is no body". */
+    int         in_flight[HTTP_CLIENT_MAX_INFLIGHT];
+    int         n_inflight;
 } http_client_connection;
 
 /* Open a connection to a dotted-quad address. Returns 0, or -1 with
@@ -188,7 +216,11 @@ int http_client_connection_open(http_client_connection *c, const char *host, uin
  *
  * This is the half that makes pipelining possible: two requests can go
  * out on the socket before either response comes back. The bytes are
- * written now; nothing is read. Returns 0, or -1 with errno set. */
+ * written now; nothing is read. Returns 0, or -1 with errno set.
+ *
+ * Stage 65.28: the method is remembered, because the response to a
+ * HEAD request has no body and the client must not wait for one. The
+ * requests in flight are a queue, in the order they were written. */
 int http_client_connection_write_request(http_client_connection *c, const char *method,
                                          const char *target, const char *body,
                                          size_t body_len);
@@ -240,7 +272,13 @@ int http_client_connection_write_chunked_end(http_client_connection *c);
  * agent MUST close the connection to the server and discard the
  * received response." A connection whose framing is untrustworthy
  * cannot be trusted with a second message. The reason survives the
- * close: it is the evidence of what happened. */
+ * close: it is the evidence of what happened.
+ *
+ * Stage 65.28: the response to a HEAD request is read without waiting
+ * for a body: RFC 9112 6.3 item 1 says such a response "is always
+ * terminated by the first empty line after the header fields". The
+ * Content-Length in that head is a claim about the body the matching
+ * GET would have returned, and the bytes are not coming. */
 int http_client_connection_read_response(http_client_connection *c, http_response *out);
 
 /* Write a request on the connection and read the response that answers
