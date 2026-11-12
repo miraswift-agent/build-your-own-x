@@ -76,4 +76,39 @@ ssize_t sock_write_once(int fd, const void *buf, size_t len);
  * descriptor was already closed). */
 int sock_close(int fd);
 
+/* ------------------------------------------------------------------ */
+/* Stage 65.3 — the accept loop.                                       */
+/* ------------------------------------------------------------------ */
+
+/* A connection handler. It runs in the CHILD process for one connection,
+ * with the connected descriptor, the 0-based connection number, and the
+ * caller's context. Return 0 for success; anything else marks the child as
+ * failed. */
+typedef int (*sock_conn_handler)(int conn_fd, int index, void *ctx);
+
+/* A forking server: one process accepts, one child per connection. */
+typedef struct {
+    sock_listener listener;   /* the listening socket the parent accepts on */
+    int   connections;       /* connections accepted and forked */
+    int   children_failed;   /* children whose handler failed */
+    int   children_reaped;   /* children the parent has reaped */
+    pid_t last_child;        /* pid of the most recently forked child */
+} sock_server;
+
+/* Create the listening socket for a server. port 0 asks the kernel to pick
+ * a free port, which comes back in s->listener.port. */
+int sock_server_start(sock_server *s, uint16_t port, int backlog);
+
+/* Accept up to max_connections connections, one child process each.
+ *
+ * The parent accepts, forks, closes its copy of the connection, and reaps
+ * any child that has finished -- without ever blocking the accept loop.
+ * The child closes its copy of the LISTENING socket (it does not need it;
+ * keeping it would stop the socket draining when the parent goes away),
+ * runs the handler, closes the connection, and exits.
+ *
+ * Returns 0 once every connection has been served and every child reaped. */
+int sock_server_serve(sock_server *s, sock_conn_handler handler, void *ctx,
+                      int max_connections);
+
 #endif /* SOCKETS_H */

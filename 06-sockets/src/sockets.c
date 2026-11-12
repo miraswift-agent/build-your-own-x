@@ -19,6 +19,7 @@
 #include <netinet/in.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 /* ------------------------------------------------------------------ */
@@ -212,4 +213,93 @@ ssize_t sock_write_once(int fd, const void *buf, size_t len)
 int sock_close(int fd)
 {
     return close(fd);
+}
+
+/* ------------------------------------------------------------------ */
+/* Stage 65.3 — the accept loop.                                       */
+/* ------------------------------------------------------------------ */
+
+int sock_server_start(sock_server *s, uint16_t port, int backlog)
+{
+    if (s == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+    memset(s, 0, sizeof(*s));
+    return sock_listen_loopback(&s->listener, port, backlog);
+}
+
+/* Reap whatever children have finished. The non-blocking form is used inside
+ * the accept loop, because a child that is still serving must never hold up
+ * the next accept. */
+static void sock_reap_children(sock_server *s, int blocking)
+{
+    int status;
+    pid_t done;
+
+    while ((done = waitpid(-1, &status, blocking ? 0 : WNOHANG)) > 0) {
+        s->children_reaped++;
+        if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+            s->children_failed++;
+        }
+    }
+}
+
+int sock_server_serve(sock_server *s, sock_conn_handler handler, void *ctx,
+                      int max_connections)
+{
+    int i;
+
+    if (s == NULL || handler == NULL || max_connections < 0) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    for (i = 0; i < max_connections; i++) {
+        int conn;
+        pid_t pid;
+
+        do {
+            conn = sock_accept(&s->listener);
+        } while (conn < 0 && errno == EINTR);
+        if (conn < 0) {
+            return -1;
+        }
+
+        pid = fork();
+        if (pid < 0) {
+            int saved = errno;
+            sock_close(conn);
+            errno = saved;
+            return -1;
+        }
+
+        if (pid == 0) {
+            /* The child. It inherited the listening socket, and it does not
+             * need it: a child that keeps the listener open keeps the port
+             * alive after the parent is gone, and the socket never drains.
+             * The parent needs it -- it is the only accept path. */
+            int rc;
+
+            sock_close(s->listener.listen_fd);
+            rc = handler(conn, i, ctx);
+            sock_close(conn);
+            _exit(rc == 0 ? 0 : 1);
+        }
+
+        /* The parent. It does not need the connection -- the child owns it
+         * now -- and it must not close the listener. */
+        sock_close(conn);
+        s->last_child = pid;
+        s->connections++;
+
+        /* Reap without blocking: a child still serving must never hold up
+         * the next accept. This is what makes the server concurrent. */
+        sock_reap_children(s, 0);
+    }
+
+    /* Every connection has been served; wait for the children still running
+     * so that no zombie is left behind. */
+    sock_reap_children(s, 1);
+    return 0;
 }
