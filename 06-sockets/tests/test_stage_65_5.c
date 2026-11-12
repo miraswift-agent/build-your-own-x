@@ -517,6 +517,40 @@ static void test_mux_closes_connection_on_oversized_frame(void)
     PASS();
 }
 
+static void test_mux_delivers_a_reply_after_the_peer_half_closes(void)
+{
+    hctx h;
+    int fd;
+    char out[64];
+    uint32_t olen = 0;
+    int i;
+
+    TEST("mux_delivers_a_reply_after_the_peer_half_closes");
+    memset(&h, 0, sizeof h);
+    ASSERT(sock_mux_start(&mux, 0, 8) == 0, "mux start");
+    fd = sock_connect_loopback(mux.listener.port);
+    ASSERT(fd >= 0, "client connect");
+    pump_accept(1, 20);
+    ASSERT(client_send_frame(fd, "bye", 3) == 0, "client send");
+
+    /* The client stops sending but keeps reading: a half-close. The
+     * server sees EOF, but it still owes a reply -- closing on EOF would
+     * drop it on the floor. */
+    ASSERT(shutdown(fd, SHUT_WR) == 0, "half close");
+    pump(&h, 1, 20);
+    ASSERT(h.calls == 1, "the message was still delivered");
+    ASSERT(client_read_frame(fd, out, sizeof out, &olen) == 0,
+           "the reply must still be written after the peer's EOF");
+    ASSERT(olen == 3 && memcmp(out, "bye", 3) == 0, "right reply");
+    for (i = 0; i < 20 && mux.nconns > 0; i++) {
+        sock_mux_poll(&mux, echo_handler, &h, 20);
+    }
+    ASSERT(mux.nconns == 0, "the connection is released once the reply drained");
+    sock_close(fd);
+    sock_close(mux.listener.listen_fd);
+    PASS();
+}
+
 int main(void)
 {
     printf("Stage 65.5 — non-blocking + multiplexing + framing\n\n");
@@ -540,6 +574,7 @@ int main(void)
     test_mux_handles_two_messages_in_one_write();
     test_mux_closes_connection_on_eof();
     test_mux_closes_connection_on_oversized_frame();
+    test_mux_delivers_a_reply_after_the_peer_half_closes();
 
     printf("\n%d/%d tests passed", tests_passed, tests_run);
     if (tests_failed > 0) {
