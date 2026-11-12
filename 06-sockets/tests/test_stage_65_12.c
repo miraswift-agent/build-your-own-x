@@ -213,7 +213,8 @@ static void test_the_chunked_header_carries_no_content_length(void)
     int n;
 
     TEST("the chunked header carries no Content-Length");
-    n = http_response_build_chunked(hdr, sizeof(hdr), 200, "OK", "text/plain", 1);
+    n = http_response_build_chunked(hdr, sizeof(hdr), 200, "OK", "text/plain", 1,
+                                   "Sun, 06 Nov 1994 08:49:37 GMT");
     if (n < 0) {
         FAIL("the header block was refused");
         return;
@@ -243,7 +244,8 @@ static void test_the_chunked_header_ends_with_a_blank_line(void)
     int n;
 
     TEST("the chunked header ends with a blank line");
-    n = http_response_build_chunked(hdr, sizeof(hdr), 200, "OK", "text/plain", 0);
+    n = http_response_build_chunked(hdr, sizeof(hdr), 200, "OK", "text/plain", 0,
+                                   "Sun, 06 Nov 1994 08:49:37 GMT");
     if (n < 4) {
         FAIL("the header block is too short");
         return;

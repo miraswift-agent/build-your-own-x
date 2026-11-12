@@ -2,6 +2,10 @@
  * Stage 65.6 -- HTTP/1.1 from the wire. See http.h for the lesson.
  */
 
+/* _DEFAULT_SOURCE and _POSIX_C_SOURCE expose gmtime_r under -std=c11. */
+#define _DEFAULT_SOURCE
+#define _POSIX_C_SOURCE 200809L
+
 #include "http.h"
 
 #include <ctype.h>
@@ -10,6 +14,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <strings.h>
 
 #include "sockets.h"
@@ -326,23 +331,64 @@ int http_request_keep_alive(const http_request *r)
     return strcmp(r->version, "HTTP/1.1") == 0;
 }
 
+/* The Date header's value for a time, in IMF-fixdate form.
+ *
+ * The day and month names are written out by hand rather than taken
+ * from strftime: %a and %b are locale-dependent, and a header a cache
+ * parses must not change with the environment. */
+int http_date_format(time_t when, char *out, size_t out_cap)
+{
+    static const char *const days[7] = {
+        "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"
+    };
+    static const char *const months[12] = {
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+    };
+    struct tm tm;
+    int n;
+
+    if (out == NULL || out_cap == 0) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (gmtime_r(&when, &tm) == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+    n = snprintf(out, out_cap, "%s, %02d %s %04d %02d:%02d:%02d GMT",
+                 days[tm.tm_wday], tm.tm_mday, months[tm.tm_mon],
+                 tm.tm_year + 1900, tm.tm_hour, tm.tm_min, tm.tm_sec);
+    if (n < 0) {
+        errno = EINVAL;
+        return -1;
+    }
+    if ((size_t)n >= out_cap) {
+        errno = ENOBUFS;
+        return -1;
+    }
+    return n;
+}
+
 int http_response_build(char *dst, size_t dst_len, int status, const char *reason,
                         const char *content_type, const char *body,
-                        size_t body_len, int keep_alive)
+                        size_t body_len, int keep_alive, const char *date)
 {
     int n;
 
-    if (!dst || dst_len == 0) {
+    if (!dst || dst_len == 0 || !date) {
         errno = EINVAL;
         return -1;
     }
     n = snprintf(dst, dst_len,
                  "HTTP/1.1 %d %s\r\n"
+                 "Date: %s\r\n"
                  "Content-Type: %s\r\n"
                  "Content-Length: %zu\r\n"
                  "Connection: %s\r\n"
                  "\r\n",
                  status, reason ? reason : "",
+                 date,
                  content_type ? content_type : "text/plain",
                  body_len, keep_alive ? "keep-alive" : "close");
     if (n < 0) {
@@ -440,6 +486,11 @@ static int serve_connection(int fd, const http_host_route *routes, size_t route_
             int code;
             int n;
             sock_io_result wr;
+            char date[64];
+
+            if (http_date_format(time(NULL), date, sizeof(date)) < 0) {
+                return -1;
+            }
 
             if (require_host) {
                 const char *hostv = http_header_get(&req, "Host");
@@ -448,7 +499,8 @@ static int serve_connection(int fd, const http_host_route *routes, size_t route_
                     /* A server with several sites cannot route a request
                      * that does not say which site it is for. */
                     n = http_response_build(resp, sizeof(resp), 400, "Bad Request",
-                                            "text/plain", "400 Bad Request\n", 16, keep);
+                                            "text/plain", "400 Bad Request\n", 16,
+                                            keep, date);
                     if (n < 0) {
                         return -1;
                     }
@@ -479,7 +531,7 @@ static int serve_connection(int fd, const http_host_route *routes, size_t route_
                 size_t sent = 0;
 
                 n = http_response_build_chunked(resp, sizeof(resp), 200, "OK",
-                                                "text/plain", keep);
+                                                "text/plain", keep, date);
                 if (n < 0) {
                     return -1;
                 }
@@ -533,7 +585,7 @@ static int serve_connection(int fd, const http_host_route *routes, size_t route_
             blen = strlen(body);
 
             n = http_response_build(resp, sizeof(resp), code, reason, ctype,
-                                    body, blen, keep);
+                                    body, blen, keep, date);
             if (n < 0) {
                 return -1;
             }
@@ -555,9 +607,15 @@ static int serve_connection(int fd, const http_host_route *routes, size_t route_
 
         if (ps == HTTP_PARSE_ERROR) {
             /* The request will never be valid. Say so and hang up. */
-            int n = http_response_build(resp, sizeof(resp), 400, "Bad Request",
-                                        "text/plain", "400 Bad Request\n", 16, 0);
+            char date[64];
+            int n;
             sock_io_result wr;
+
+            if (http_date_format(time(NULL), date, sizeof(date)) < 0) {
+                return -1;
+            }
+            n = http_response_build(resp, sizeof(resp), 400, "Bad Request",
+                                    "text/plain", "400 Bad Request\n", 16, 0, date);
             if (n > 0) {
                 (void)sock_write_exact(fd, resp, (size_t)n, &wr);
             }
@@ -818,21 +876,23 @@ int http_chunk_encoder_finish(char *out, size_t out_cap)
 
 int http_response_build_chunked(char *dst, size_t dst_len, int status,
                                 const char *reason, const char *content_type,
-                                int keep_alive)
+                                int keep_alive, const char *date)
 {
     int n;
 
-    if (!dst || dst_len == 0) {
+    if (!dst || dst_len == 0 || !date) {
         errno = EINVAL;
         return -1;
     }
     n = snprintf(dst, dst_len,
                  "HTTP/1.1 %d %s\r\n"
+                 "Date: %s\r\n"
                  "Content-Type: %s\r\n"
                  "Transfer-Encoding: chunked\r\n"
                  "Connection: %s\r\n"
                  "\r\n",
                  status, reason ? reason : "",
+                 date,
                  content_type ? content_type : "text/plain",
                  keep_alive ? "keep-alive" : "close");
     if (n < 0) {

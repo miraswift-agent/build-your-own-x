@@ -32,6 +32,7 @@
 #define HTTP_H
 
 #include <stddef.h>
+#include <time.h>
 
 #define HTTP_MAX_METHOD    16
 #define HTTP_MAX_TARGET   256
@@ -101,14 +102,31 @@ const char *http_header_get(const http_request *r, const char *name);
  * Either version can override with a Connection header. */
 int http_request_keep_alive(const http_request *r);
 
+/* The Date header's value for a time, in IMF-fixdate form:
+ * "Sun, 06 Nov 1994 08:49:37 GMT" (RFC 9110 5.6.7).
+ *
+ * The day and month names are written out by hand: strftime's %a and %b
+ * are locale-dependent, and a header a cache parses must not be at the
+ * mercy of the environment.
+ *
+ * Returns the number of characters written, or -1 (with errno set). */
+int http_date_format(time_t when, char *out, size_t out_cap);
+
 /* Build a response into dst.
  *
- * A status line, Content-Type, Content-Length, Connection, a blank line,
- * and the body. Returns the number of bytes written, or -1 (with errno
- * set) if dst is too small. */
+ * A status line, Date, Content-Type, Content-Length, Connection, a
+ * blank line, and the body. Returns the number of bytes written, or -1
+ * (with errno set) if dst is too small.
+ *
+ * The date is a parameter, not something the builder looks up: the
+ * builder does not read a clock. An origin server MUST generate a Date
+ * header field in all 2xx, 3xx, 4xx and 5xx responses (RFC 9110
+ * 6.6.1), and the server that answers is the one that knows when it
+ * answered. Pass the value http_date_format produced; NULL is refused,
+ * because a response without a Date is not one this server sends. */
 int http_response_build(char *dst, size_t dst_len, int status, const char *reason,
                         const char *content_type, const char *body,
-                        size_t body_len, int keep_alive);
+                        size_t body_len, int keep_alive, const char *date);
 
 /* What a served connection did. */
 typedef struct {
@@ -242,7 +260,7 @@ int http_chunk_encoder_finish(char *out, size_t out_cap);
  * if dst is too small. */
 int http_response_build_chunked(char *dst, size_t dst_len, int status,
                                 const char *reason, const char *content_type,
-                                int keep_alive);
+                                int keep_alive, const char *date);
 
 
 #endif /* HTTP_H */

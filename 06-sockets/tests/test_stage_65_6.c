@@ -377,7 +377,7 @@ static void test_response_build_200(void)
     int n;
 
     n = http_response_build(buf, sizeof(buf), 200, "OK", "text/html",
-                            "<html>hi</html>\n", 16, 1);
+                            "<html>hi</html>\n", 16, 1, "Sun, 06 Nov 1994 08:49:37 GMT");
     TEST("builds a 200 response");
     if (n < 0) {
         FAIL("build failed");
@@ -399,7 +399,7 @@ static void test_response_build_404_and_close(void)
     int n;
 
     n = http_response_build(buf, sizeof(buf), 404, "Not Found", "text/plain",
-                            "nope\n", 5, 0);
+                            "nope\n", 5, 0, "Sun, 06 Nov 1994 08:49:37 GMT");
     TEST("builds a 404 that closes");
     if (n < 0) {
         FAIL("build failed");
@@ -415,10 +415,26 @@ static void test_response_build_404_and_close(void)
 
 static void test_response_build_refuses_to_overflow(void)
 {
-    char buf[32];
+    char head[512];
+    char buf[512];
     int n;
+    int head_len;
 
-    n = http_response_build(buf, sizeof(buf), 200, "OK", "text/plain", "hello", 5, 1);
+    /* A buffer that holds the head exactly: the body does not fit.
+     * (A small fixed buffer would now fail on the head, which is not
+     * what this test is about -- the Date header made the head
+     * longer, and a test that quietly stops testing its claim is
+     * worse than a test that fails.) */
+    n = http_response_build(head, sizeof(head), 200, "OK", "text/plain", "", 0, 1,
+                            "Sun, 06 Nov 1994 08:49:37 GMT");
+    if (n <= 0) {
+        TEST("refuses to write past the buffer");
+        FAIL("the head did not build");
+        return;
+    }
+    head_len = n;
+    n = http_response_build(buf, (size_t)head_len, 200, "OK", "text/plain",
+                            "hello", 5, 1, "Sun, 06 Nov 1994 08:49:37 GMT");
     TEST("refuses to write past the buffer");
     if (n < 0) {
         PASS();
