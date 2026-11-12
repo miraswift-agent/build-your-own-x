@@ -165,4 +165,110 @@ int sock_write_some(int fd, const void *buf, size_t len, sock_io_result *out);
 int sock_read_exact(int fd, void *buf, size_t len, sock_io_result *out);
 int sock_write_exact(int fd, const void *buf, size_t len, sock_io_result *out);
 
+/* ------------------------------------------------------------------ */
+/* Stage 65.5 -- non-blocking, multiplexed, framed.                    */
+/* ------------------------------------------------------------------ */
+
+/* Set or clear O_NONBLOCK on a descriptor.
+ *
+ * A non-blocking socket is the precondition for multiplexing: a server
+ * that blocks in accept() or read() cannot be told to look at another
+ * connection, so one slow client owns the whole process. */
+int sock_set_nonblocking(int fd, int nonblocking);
+
+/* The largest framed payload we will accept. */
+#define SOCK_FRAME_MAX 4096
+/* The buffer a frame parser needs: a 4-byte header plus a max payload. */
+#define SOCK_FRAME_BUF (SOCK_FRAME_MAX + 8)
+/* How many connections one multiplexer serves. */
+#define SOCK_MAX_CONNS 32
+/* The per-connection output buffer. */
+#define SOCK_CONN_BUF 4096
+
+/* A frame parser: bytes in, complete messages out.
+ *
+ * A stream has no message boundaries. One read() can return half a
+ * message, one message, or three messages and the beginning of a fourth --
+ * the kernel gives you bytes, not packets. Framing is the layer that
+ * decides which, and you have to write it yourself: that is what "TCP is
+ * a byte stream" means once you stop quoting it.
+ *
+ * The frame is a 4-byte big-endian length followed by that many payload
+ * bytes. */
+typedef struct {
+    char   buf[SOCK_FRAME_BUF];  /* bytes received, not yet consumed */
+    size_t len;                  /* bytes valid in buf */
+    size_t off;                  /* consumed prefix of buf */
+} sock_frame;
+
+void sock_frame_init(sock_frame *f);
+
+/* Add bytes to the parser's buffer. Returns 0, or -1 with errno set to
+ * ENOBUFS if the buffer cannot hold them (a peer sending more than one
+ * maximum-size message without letting us consume it). */
+int sock_frame_feed(sock_frame *f, const void *data, size_t len);
+
+/* Pull the next complete message.
+ *
+ * Returns 1 and fills out/len (out points into the parser's buffer and is
+ * valid until the next feed), 0 if more bytes are needed, or -1 with errno
+ * set to EMSGSIZE if the length prefix exceeds SOCK_FRAME_MAX -- a
+ * protocol error the caller should answer by closing the connection. */
+int sock_frame_next(sock_frame *f, const char **out, uint32_t *len);
+
+/* Write a framed message (4-byte big-endian length + payload) into dst.
+ * Returns the number of bytes written, or -1 if dst is too small. */
+int sock_frame_encode(char *dst, size_t dst_len, const void *payload, uint32_t len);
+
+/* One connection in a multiplexing server.
+ *
+ * The frame parser IS the input buffer: because we consume bytes only
+ * when they turn out to belong to a whole message, the parser never has
+ * to hold more than one message's worth, and the connection cannot grow
+ * without bound. */
+typedef struct {
+    int            fd;
+    int            in_use;
+    int            closing;       /* the peer closed; drain and go */
+    sock_frame     frame;         /* the input side: where the boundaries are */
+    size_t         out_len;       /* bytes queued for the peer */
+    size_t         out_off;       /* bytes already written */
+    unsigned long  messages_in;
+    unsigned long  bytes_out;
+    char           out_buf[SOCK_CONN_BUF];
+} sock_conn;
+
+/* A message handler. It is called once per complete framed message and
+ * may queue a reply with sock_conn_queue_frame(). */
+typedef int (*sock_msg_handler)(sock_conn *c, const char *msg, uint32_t len, void *ctx);
+
+/* A multiplexing server: one process, many connections, no fork. */
+typedef struct {
+    sock_listener listener;
+    sock_conn     conns[SOCK_MAX_CONNS];
+    int           nconns;
+    unsigned long accepted;
+    unsigned long messages;
+} sock_mux;
+
+/* Start a non-blocking listening socket. port 0 asks the kernel to pick. */
+int sock_mux_start(sock_mux *m, uint16_t port, int backlog);
+
+/* Accept every pending connection (non-blocking). Returns how many were
+ * accepted. */
+int sock_mux_accept(sock_mux *m);
+
+/* Queue bytes for this connection. */
+int sock_conn_queue(sock_conn *c, const void *data, size_t len);
+
+/* Queue a framed message for this connection. */
+int sock_conn_queue_frame(sock_conn *c, const void *payload, uint32_t len);
+
+/* Wait up to timeout_ms for activity, then service it: accept new
+ * connections, read what is readable, hand complete framed messages to the
+ * handler, and write out whatever is queued.
+ *
+ * Returns the number of events serviced, or -1 with errno set. */
+int sock_mux_poll(sock_mux *m, sock_msg_handler handler, void *ctx, int timeout_ms);
+
 #endif /* SOCKETS_H */
