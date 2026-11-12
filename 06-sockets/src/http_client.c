@@ -203,11 +203,17 @@ const char *http_response_header_get(const http_response *r, const char *name)
  * exception applies -- "5, 5" names one value, 5, and the message is
  * processed with it -- and the two roles cannot drift apart again.
  * (They had: the server's strtol accepted a sign, this side's digit
- * loop did not.) */
+ * loop did not.)
+ *
+ * Stage 65.26: the reader reads the COMBINED field value, so a
+ * response that carries the field more than once is read by all of its
+ * field lines (RFC 9110 5.2). Two lines naming 5 are one value; two
+ * lines naming 5 and 6 are an invalid framing -- and taking the first
+ * line instead (what we used to do) is a wrong accept, and the
+ * response-splitting shape. */
 static int header_content_length(const http_response *r, long *out)
 {
-    const char *v = http_response_header_get(r, "Content-Length");
-    int st = http_content_length_parse(v, out);
+    int st = http_content_length_collect(r->headers, r->nheaders, out);
 
     if (st == HTTP_CL_ABSENT) {
         *out = -1;

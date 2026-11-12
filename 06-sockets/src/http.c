@@ -204,18 +204,25 @@ static int parse_headers(const char *s, size_t n, http_request *out)
  * the same header meant two different things on the two sides of a
  * socket.
  *
+ * Stage 65.26: the reader reads the COMBINED field value, so a request
+ * that carries the field more than once is read by all of its field
+ * lines. RFC 9110 5.2: a repeated field name's combined field value is
+ * its field line values concatenated in order, separated by commas. Two
+ * lines naming 5 are one value; two lines naming 5 and 6 are an
+ * invalid framing -- and taking the first line instead (what we used
+ * to do) is a wrong accept, and the request-smuggling shape.
+ *
  * The return says WHICH failure it was, because the two failures are
  * different claims: -1 is "the framing is invalid" (the RFC's
  * unrecoverable error) and -2 is "a length we will not hold" (our
  * capacity, not the message's fault). */
 static int parse_content_length(http_request *r)
 {
-    const char *v = http_header_get(r, "Content-Length");
     long n;
     int st;
 
     r->content_length = -1;
-    st = http_content_length_parse(v, &n);
+    st = http_content_length_collect(r->headers, r->nheaders, &n);
     if (st == HTTP_CL_ABSENT) {
         return 0;                /* absent: no body */
     }
