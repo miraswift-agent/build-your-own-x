@@ -188,6 +188,39 @@ int http_response_build(char *dst, size_t dst_len, int status, const char *reaso
                         const char *content_type, const char *body,
                         size_t body_len, int keep_alive, const char *date);
 
+/* Stage 65.29: build a response that also carries an Allow header.
+ *
+ * The Allow header names the methods the target resource supports, and
+ * RFC 9110 15.5.6 makes it a MUST on a 405 response: "The origin server
+ * MUST generate an Allow header field in a 405 response containing a
+ * list of the target resource's currently supported methods."
+ *
+ * The header line is placed between Content-Type and Content-Length.
+ * allow is the LIST ("GET, HEAD"), not the whole line; pass NULL for
+ * no Allow header at all.
+ *
+ * Everything else is exactly http_response_build -- this is the same
+ * builder with one optional header, not a second way to build a
+ * response. */
+int http_response_build_allow(char *dst, size_t dst_len, int status,
+                               const char *reason, const char *content_type,
+                               const char *body, size_t body_len,
+                               int keep_alive, const char *date,
+                               const char *allow);
+
+/* Stage 65.29: the methods this server supports for a target -- the
+ * value of the Allow header ("GET, HEAD"), or an empty string for a
+ * target that is not a resource this server serves.
+ *
+ * The methods are per resource, not per server: RFC 9110 9.1 says the
+ * standardized methods "are not resource-specific ... though each
+ * resource determines for itself whether those semantics are
+ * implemented or allowed." So this is what a 405 for that target would
+ * name.
+ *
+ * Returns the number of bytes written, or -1 (with errno set). */
+int http_resource_allow(char *dst, size_t dst_len, const char *target);
+
 /* What a served connection did. */
 typedef struct {
     unsigned long requests;

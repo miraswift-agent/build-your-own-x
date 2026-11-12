@@ -476,8 +476,15 @@ static void test_the_method_is_case_sensitive(void)
         FAIL("the exchange failed");
         return;
     }
-    if (!contains(resp, our_body)) {
-        FAIL("a method that is not HEAD may carry a body");
+    if (strncmp(resp, "HTTP/1.1 501 Not Implemented\r\n", 29) != 0) {
+        /* Stage 65.29 changed what happens to a method the server does
+         * not know: "head" is not a method this server recognizes, so
+         * it is a 501 (RFC 9110 15.6.2), not a served document. The
+         * claim this test makes -- the method token is case-sensitive,
+         * so "head" is not HEAD -- is now proved in a plainer way: the
+         * request was refused outright, so it was certainly not treated
+         * as a HEAD. */
+        FAIL("a method that is not HEAD is not served at all");
         return;
     }
     PASS();

@@ -586,22 +586,49 @@ int http_response_build(char *dst, size_t dst_len, int status, const char *reaso
                         const char *content_type, const char *body,
                         size_t body_len, int keep_alive, const char *date)
 {
+    return http_response_build_allow(dst, dst_len, status, reason, content_type,
+                                      body, body_len, keep_alive, date, NULL);
+}
+
+/* Stage 65.29: the same response, with an Allow header when the caller
+ * has one.
+ *
+ * One builder, not two: the header order, the length, the date, the
+ * connection -- all of it is the same code path, so a response with an
+ * Allow header cannot drift from a response without one. */
+int http_response_build_allow(char *dst, size_t dst_len, int status, const char *reason,
+                               const char *content_type, const char *body,
+                               size_t body_len, int keep_alive, const char *date,
+                               const char *allow)
+{
+    char allow_line[160];
+    const char *allow_hdr = "";
     int n;
 
     if (!dst || dst_len == 0 || !date) {
         errno = EINVAL;
         return -1;
     }
+    if (allow != NULL && *allow != '\0') {
+        int an = snprintf(allow_line, sizeof(allow_line), "Allow: %s\r\n", allow);
+        if (an < 0 || (size_t)an >= sizeof(allow_line)) {
+            errno = ENOBUFS;
+            return -1;
+        }
+        allow_hdr = allow_line;
+    }
     n = snprintf(dst, dst_len,
                  "HTTP/1.1 %d %s\r\n"
                  "Date: %s\r\n"
                  "Content-Type: %s\r\n"
+                 "%s"
                  "Content-Length: %zu\r\n"
                  "Connection: %s\r\n"
                  "\r\n",
                  status, reason ? reason : "",
                  date,
                  content_type ? content_type : "text/plain",
+                 allow_hdr,
                  body_len, keep_alive ? "keep-alive" : "close");
     if (n < 0) {
         return -1;
@@ -663,6 +690,116 @@ static const char *route_document(const http_host_route *routes, size_t route_co
         }
     }
     return default_body ? default_body : "";
+}
+
+/* Stage 65.29: the methods this server knows at all.
+ *
+ * A method outside this set is one the server does not recognize, and
+ * RFC 9110 15.6.2 names the answer for that: 501, because it "is the
+ * appropriate response when the server does not recognize the request
+ * method and is not capable of supporting it for any resource." */
+#define HTTP_METHOD_GET  0x1u
+#define HTTP_METHOD_HEAD 0x2u
+#define HTTP_METHOD_POST 0x4u
+
+/* The methods a resource supports. RFC 9110 9.1: the standardized
+ * methods "are not resource-specific ... though each resource
+ * determines for itself whether those semantics are implemented or
+ * allowed." So this is per resource and not per server -- which is
+ * what makes the Allow header a list rather than a constant.
+ *
+ * One table, so the mask and the list that goes on the wire cannot
+ * drift apart: both are read from here. */
+static const struct {
+    const char *target;
+    unsigned methods;
+} resource_table[] = {
+    { "/",       HTTP_METHOD_GET | HTTP_METHOD_HEAD },
+    { "/stream", HTTP_METHOD_GET | HTTP_METHOD_HEAD },
+    { "/echo",   HTTP_METHOD_GET | HTTP_METHOD_HEAD | HTTP_METHOD_POST }
+};
+
+static unsigned resource_methods(const char *target)
+{
+    size_t i;
+
+    for (i = 0; i < sizeof(resource_table) / sizeof(resource_table[0]); i++) {
+        if (strcmp(target, resource_table[i].target) == 0) {
+            return resource_table[i].methods;
+        }
+    }
+    return 0u;   /* not a resource this server serves */
+}
+
+/* The bit of a method this server knows, or 0 for a method it does
+ * not. The method token is case-sensitive (RFC 9110 9.1: "The method
+ * token is case-sensitive because it might be used as a gateway to
+ * object-based systems with case-sensitive method names"), so "get" is
+ * not GET -- an unknown method is not a misspelling of a known one. */
+static unsigned method_bit(const char *method)
+{
+    if (strcmp(method, "GET") == 0) {
+        return HTTP_METHOD_GET;
+    }
+    if (strcmp(method, "HEAD") == 0) {
+        return HTTP_METHOD_HEAD;
+    }
+    if (strcmp(method, "POST") == 0) {
+        return HTTP_METHOD_POST;
+    }
+    return 0u;
+}
+
+/* The Allow header's value: the methods the resource supports, in the
+ * order the server knows them. */
+static int allow_header_build(char *dst, size_t dst_len, unsigned mask)
+{
+    static const struct {
+        unsigned bit;
+        const char *name;
+    } methods[] = {
+        { HTTP_METHOD_GET, "GET" },
+        { HTTP_METHOD_HEAD, "HEAD" },
+        { HTTP_METHOD_POST, "POST" }
+    };
+    size_t used = 0;
+    size_t i;
+
+    if (!dst || dst_len == 0) {
+        errno = EINVAL;
+        return -1;
+    }
+    dst[0] = '\0';
+    for (i = 0; i < sizeof(methods) / sizeof(methods[0]); i++) {
+        int n;
+        if ((mask & methods[i].bit) == 0) {
+            continue;
+        }
+        n = snprintf(dst + used, dst_len - used, "%s%s",
+                     used > 0 ? ", " : "", methods[i].name);
+        if (n < 0 || (size_t)n >= dst_len - used) {
+            errno = ENOBUFS;
+            return -1;
+        }
+        used += (size_t)n;
+    }
+    return (int)used;
+}
+
+int http_resource_allow(char *dst, size_t dst_len, const char *target)
+{
+    unsigned mask;
+
+    if (!dst || dst_len == 0 || !target) {
+        errno = EINVAL;
+        return -1;
+    }
+    mask = resource_methods(target);
+    if (mask == 0u) {
+        dst[0] = '\0';
+        return 0;   /* not a resource this server serves */
+    }
+    return allow_header_build(dst, dst_len, mask);
 }
 
 /* Stage 65.28: how many bytes of a built response go on the wire.
@@ -775,6 +912,94 @@ static int serve_connection(int fd, const http_host_route *routes, size_t route_
                     continue;
                 }
                 host_name = host;
+            }
+
+            /* Stage 65.29: a request has a method, and the method says
+             * what the response is.
+             *
+             * Three questions, and they have to be asked in this order:
+             *
+             *   - Does the target resource exist?  No -> 404. There is
+             *     no resource whose methods could be listed, so there
+             *     is no Allow header.
+             *
+             *   - Does the server know the method at all?  No -> 501
+             *     (RFC 9110 15.6.2: "the server does not recognize the
+             *     request method and is not capable of supporting it
+             *     for any resource").
+             *
+             *   - Does THIS resource support the method?  No -> 405,
+             *     and the Allow header is a MUST (RFC 9110 15.5.6).
+             *
+             * The request itself was fine in every one of these cases:
+             * its body was framed and consumed by the parser, so the
+             * connection is still in sync and the refusal does not have
+             * to close it. That is the difference from the parser-level
+             * refusals of Stages 65.21-65.23, which refused the
+             * MESSAGE -- there the body was never framed, so the
+             * connection could not be reused. */
+            {
+                unsigned supported = resource_methods(req.target);
+                unsigned bit = method_bit(req.method);
+
+                if (supported != 0u && bit == 0u) {
+                    /* The method is not one this server knows. */
+                    n = http_response_build(resp, sizeof(resp), 501,
+                                            "Not Implemented", "text/plain",
+                                            "501 Not Implemented\n", 20,
+                                            keep, date);
+                    if (n < 0) {
+                        return -1;
+                    }
+                    to_send = response_bytes_to_send(resp, (size_t)n, is_head);
+                    if (to_send == 0) {
+                        return -1;
+                    }
+                    if (sock_write_exact(fd, resp, to_send, &wr) != 0) {
+                        return -1;
+                    }
+                    served++;
+                    if (st) {
+                        st->requests++;
+                        st->bytes_out += (unsigned long)to_send;
+                    }
+                    if (!keep) {
+                        return served;
+                    }
+                    continue;
+                }
+                if (supported != 0u && (supported & bit) == 0u) {
+                    /* The method is known, and this resource does not
+                     * support it. The Allow header is a MUST, and it
+                     * names THIS resource's methods. */
+                    char allow[64];
+                    if (http_resource_allow(allow, sizeof(allow), req.target) < 0) {
+                        return -1;
+                    }
+                    n = http_response_build_allow(resp, sizeof(resp), 405,
+                                                  "Method Not Allowed", "text/plain",
+                                                  "405 Method Not Allowed\n", 23,
+                                                  keep, date, allow);
+                    if (n < 0) {
+                        return -1;
+                    }
+                    to_send = response_bytes_to_send(resp, (size_t)n, is_head);
+                    if (to_send == 0) {
+                        return -1;
+                    }
+                    if (sock_write_exact(fd, resp, to_send, &wr) != 0) {
+                        return -1;
+                    }
+                    served++;
+                    if (st) {
+                        st->requests++;
+                        st->bytes_out += (unsigned long)to_send;
+                    }
+                    if (!keep) {
+                        return served;
+                    }
+                    continue;
+                }
             }
 
             if (strcmp(req.target, "/stream") == 0) {
