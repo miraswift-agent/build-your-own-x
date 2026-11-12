@@ -553,12 +553,29 @@ impl TreeBuilder {
             // Step 8: not in the stack of open elements.
             if !self.open.contains(&id) {
                 self.afe.remove(idx);
+                self.doc.errors.push(
+                    "adoption-agency-1.2: the formatting element is not in the stack of open \
+                     elements"
+                        .into(),
+                );
                 return OuterOutcome::NotInOpenStack;
             }
 
             // Step 9: in the stack, but not in scope.
             if !self.in_scope(tag) {
+                self.doc
+                    .errors
+                    .push("adoption-agency-4.4: the formatting element is not in scope".into());
                 return OuterOutcome::NotInScope;
+            }
+
+            // html5lib's step 9: if the formatting element is not the
+            // current node, that is a parse error -- but the algorithm
+            // goes on regardless, and so does this one.
+            if self.open.last() != Some(&id) {
+                self.doc.errors.push(
+                    "adoption-agency-1.3: the formatting element is not the current node".into(),
+                );
             }
 
             // Steps 10+: the inner loop.
@@ -642,6 +659,10 @@ impl TreeBuilder {
                 return;
             }
             if Self::SPECIAL_ELEMENTS.contains(&name) {
+                // html5lib records the special element that got in the way.
+                self.doc
+                    .errors
+                    .push(format!("unexpected-end-tag: {name}"));
                 return;
             }
         }
@@ -1331,9 +1352,11 @@ impl TreeBuilder {
                 ..
             } if name == "a" => {
                 if let Some(idx) = self.find_active_anchor() {
-                    self.doc
-                        .errors
-                        .push("nested <a> start tag: the active anchor is closed".into());
+                    self.doc.errors.push(
+                        "unexpected-start-tag-implies-end-tag: the nested <a> start tag closes \
+                         the active anchor"
+                            .into(),
+                    );
                     let anchor_id = self.afe[idx].id;
                     self.afe.remove(idx);
                     if let Some(anchor_id) = anchor_id {
@@ -1801,6 +1824,51 @@ mod tests {
         let outcome = b.adoption_agency_outer("b", &mut |_, _| false);
         assert_eq!(outcome, OuterOutcome::NotInOpenStack);
         assert!(b.afe.is_empty(), "the entry must be removed from the list");
+        assert!(
+            b.doc
+                .errors
+                .iter()
+                .any(|e| e.starts_with("adoption-agency-1.2")),
+            "the parse error must be recorded: {:?}",
+            b.doc.errors
+        );
+    }
+
+    #[test]
+    fn the_formatting_element_that_is_not_the_current_node_records_the_spec_error() {
+        let mut b = TreeBuilder::new();
+        let bold = b.insert_element("b", vec![]);
+        let ital = b.insert_element("i", vec![]);
+        b.open.push(bold);
+        b.open.push(ital); // the <i> is the current node, not the <b>
+        b.afe.push(entry("b", Some(bold)));
+        let outcome = b.adoption_agency_outer("b", &mut |_, _| false);
+        assert_eq!(outcome, OuterOutcome::InnerCompleted);
+        assert!(
+            b.doc
+                .errors
+                .iter()
+                .any(|e| e.starts_with("adoption-agency-1.3")),
+            "the parse error must be recorded: {:?}",
+            b.doc.errors
+        );
+    }
+
+    #[test]
+    fn the_fallback_records_the_unexpected_end_tag() {
+        let mut b = TreeBuilder::new();
+        let para = b.insert_element("p", vec![]);
+        b.open.push(para); // a special element gets in the way
+        let outcome = b.adoption_agency_wired("b");
+        assert_eq!(outcome, OuterOutcome::NoSuchElement);
+        assert!(
+            b.doc
+                .errors
+                .iter()
+                .any(|e| e.starts_with("unexpected-end-tag")),
+            "the parse error must be recorded: {:?}",
+            b.doc.errors
+        );
     }
 
     #[test]
@@ -1814,6 +1882,14 @@ mod tests {
         b.open.push(table);
         let outcome = b.adoption_agency_outer("b", &mut |_, _| false);
         assert_eq!(outcome, OuterOutcome::NotInScope);
+        assert!(
+            b.doc
+                .errors
+                .iter()
+                .any(|e| e.starts_with("adoption-agency-4.4")),
+            "the parse error must be recorded: {:?}",
+            b.doc.errors
+        );
         assert_eq!(b.afe.len(), 1, "the list must be left alone");
     }
 
