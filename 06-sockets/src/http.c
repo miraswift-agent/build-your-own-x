@@ -601,13 +601,34 @@ int http_response_build_allow(char *dst, size_t dst_len, int status, const char 
                                size_t body_len, int keep_alive, const char *date,
                                const char *allow)
 {
+    char ctype_line[80];
     char allow_line[160];
+    const char *ctype_hdr = "";
     const char *allow_hdr = "";
     int n;
 
     if (!dst || dst_len == 0 || !date) {
         errno = EINVAL;
         return -1;
+    }
+    /* Stage 65.30: a message with no content has no media type.
+     *
+     * RFC 9110 8.3: "A sender SHOULD NOT generate a Content-Type
+     * header field in a message that does not contain content." An
+     * empty string says "no Content-Type"; NULL keeps the old default
+     * of text/plain, so the callers that want a type do not have to
+     * change. */
+    if (content_type == NULL) {
+        content_type = "text/plain";
+    }
+    if (content_type[0] != '\0') {
+        int cn = snprintf(ctype_line, sizeof(ctype_line),
+                          "Content-Type: %s\r\n", content_type);
+        if (cn < 0 || (size_t)cn >= sizeof(ctype_line)) {
+            errno = ENOBUFS;
+            return -1;
+        }
+        ctype_hdr = ctype_line;
     }
     if (allow != NULL && *allow != '\0') {
         int an = snprintf(allow_line, sizeof(allow_line), "Allow: %s\r\n", allow);
@@ -620,14 +641,14 @@ int http_response_build_allow(char *dst, size_t dst_len, int status, const char 
     n = snprintf(dst, dst_len,
                  "HTTP/1.1 %d %s\r\n"
                  "Date: %s\r\n"
-                 "Content-Type: %s\r\n"
+                 "%s"
                  "%s"
                  "Content-Length: %zu\r\n"
                  "Connection: %s\r\n"
                  "\r\n",
                  status, reason ? reason : "",
                  date,
-                 content_type ? content_type : "text/plain",
+                 ctype_hdr,
                  allow_hdr,
                  body_len, keep_alive ? "keep-alive" : "close");
     if (n < 0) {
@@ -701,6 +722,12 @@ static const char *route_document(const http_host_route *routes, size_t route_co
 #define HTTP_METHOD_GET  0x1u
 #define HTTP_METHOD_HEAD 0x2u
 #define HTTP_METHOD_POST 0x4u
+/* Stage 65.30: OPTIONS applies to every resource this server serves,
+ * so it is in every resource's set. That is also why it belongs in the
+ * Allow list: RFC 9110 10.2.1 says the field "lists the set of methods
+ * advertised as supported by the target resource", and after this
+ * stage OPTIONS is one of them. */
+#define HTTP_METHOD_OPTIONS 0x8u
 
 /* The methods a resource supports. RFC 9110 9.1: the standardized
  * methods "are not resource-specific ... though each resource
@@ -714,9 +741,9 @@ static const struct {
     const char *target;
     unsigned methods;
 } resource_table[] = {
-    { "/",       HTTP_METHOD_GET | HTTP_METHOD_HEAD },
-    { "/stream", HTTP_METHOD_GET | HTTP_METHOD_HEAD },
-    { "/echo",   HTTP_METHOD_GET | HTTP_METHOD_HEAD | HTTP_METHOD_POST }
+    { "/",       HTTP_METHOD_GET | HTTP_METHOD_HEAD | HTTP_METHOD_OPTIONS },
+    { "/stream", HTTP_METHOD_GET | HTTP_METHOD_HEAD | HTTP_METHOD_OPTIONS },
+    { "/echo",   HTTP_METHOD_GET | HTTP_METHOD_HEAD | HTTP_METHOD_POST | HTTP_METHOD_OPTIONS }
 };
 
 static unsigned resource_methods(const char *target)
@@ -747,6 +774,9 @@ static unsigned method_bit(const char *method)
     if (strcmp(method, "POST") == 0) {
         return HTTP_METHOD_POST;
     }
+    if (strcmp(method, "OPTIONS") == 0) {
+        return HTTP_METHOD_OPTIONS;
+    }
     return 0u;
 }
 
@@ -760,7 +790,8 @@ static int allow_header_build(char *dst, size_t dst_len, unsigned mask)
     } methods[] = {
         { HTTP_METHOD_GET, "GET" },
         { HTTP_METHOD_HEAD, "HEAD" },
-        { HTTP_METHOD_POST, "POST" }
+        { HTTP_METHOD_POST, "POST" },
+        { HTTP_METHOD_OPTIONS, "OPTIONS" }
     };
     size_t used = 0;
     size_t i;
@@ -1000,6 +1031,59 @@ static int serve_connection(int fd, const http_host_route *routes, size_t route_
                     }
                     continue;
                 }
+            }
+
+            if (strcmp(req.method, "OPTIONS") == 0 &&
+                resource_methods(req.target) != 0u) {
+                /* Stage 65.30: OPTIONS asks what can be done with a
+                 * target resource, and the answer is the list this
+                 * server already keeps.
+                 *
+                 * RFC 9110 9.3.7: "A server generating a successful
+                 * response to OPTIONS SHOULD send any header that might
+                 * indicate optional features implemented by the server
+                 * and applicable to the target resource (e.g., Allow)."
+                 *
+                 * So: 200, the Allow header, and no content. The
+                 * framing is the ordinary kind -- Content-Length: 0 --
+                 * which is why this needs no client-side machinery. A
+                 * HEAD response is different: its length describes
+                 * another message, so the client has to be told.
+                 *
+                 * The target has to exist. A path this server does not
+                 * serve has no methods to list, so it falls through to
+                 * the 404 below -- which carries no Allow header,
+                 * because there is no resource whose methods could be
+                 * listed. */
+                char allow[64];
+
+                if (http_resource_allow(allow, sizeof(allow), req.target) < 0) {
+                    return -1;
+                }
+                n = http_response_build_allow(resp, sizeof(resp), 200, "OK",
+                                              "", NULL, 0, keep, date, allow);
+                if (n < 0) {
+                    return -1;
+                }
+                to_send = response_bytes_to_send(resp, (size_t)n, is_head);
+                if (to_send == 0) {
+                    return -1;
+                }
+                if (sock_write_exact(fd, resp, to_send, &wr) != 0) {
+                    return -1;
+                }
+                if (wr.status != SOCK_IO_COMPLETE) {
+                    return -1;
+                }
+                served++;
+                if (st) {
+                    st->requests++;
+                    st->bytes_out += (unsigned long)to_send;
+                }
+                if (!keep) {
+                    return served;
+                }
+                continue;
             }
 
             if (strcmp(req.target, "/stream") == 0) {

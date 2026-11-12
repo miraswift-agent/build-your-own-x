@@ -349,7 +349,7 @@ static void test_post_to_a_get_only_resource_is_405(void)
     pid_t pid;
     uint16_t port;
 
-    TEST("POST / is 405 with Allow: GET, HEAD");
+    TEST("POST / is 405 with Allow: GET, HEAD, OPTIONS");
     alarm(10);
     port = spawn_our_server(&pid);
     snprintf(req, sizeof(req),
@@ -365,7 +365,7 @@ static void test_post_to_a_get_only_resource_is_405(void)
         FAIL("the status is not 405 Method Not Allowed");
         return;
     }
-    if (!contains(resp, "Allow: GET, HEAD\r\n")) {
+    if (!contains(resp, "Allow: GET, HEAD, OPTIONS\r\n")) {
         FAIL("the Allow header does not name the supported methods");
         return;
     }
@@ -465,18 +465,18 @@ static void test_the_method_set_is_per_resource(void)
 
     TEST("the method set is per resource (/echo has POST, / does not)");
     n = http_resource_allow(allow, sizeof(allow), "/");
-    if (n < 0 || strcmp(allow, "GET, HEAD") != 0) {
-        FAIL("/ does not support GET and HEAD");
+    if (n < 0 || strcmp(allow, "GET, HEAD, OPTIONS") != 0) {
+        FAIL("/ does not support GET, HEAD and OPTIONS");
         return;
     }
     n = http_resource_allow(allow, sizeof(allow), "/stream");
-    if (n < 0 || strcmp(allow, "GET, HEAD") != 0) {
-        FAIL("/stream does not support GET and HEAD");
+    if (n < 0 || strcmp(allow, "GET, HEAD, OPTIONS") != 0) {
+        FAIL("/stream does not support GET, HEAD and OPTIONS");
         return;
     }
     n = http_resource_allow(allow, sizeof(allow), "/echo");
-    if (n < 0 || strcmp(allow, "GET, HEAD, POST") != 0) {
-        FAIL("/echo does not support GET, HEAD and POST");
+    if (n < 0 || strcmp(allow, "GET, HEAD, POST, OPTIONS") != 0) {
+        FAIL("/echo does not support GET, HEAD, POST and OPTIONS");
         return;
     }
     n = http_resource_allow(allow, sizeof(allow), "/nope");
