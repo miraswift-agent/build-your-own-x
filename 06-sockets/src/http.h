@@ -123,4 +123,57 @@ typedef struct {
  * Returns the number of requests served, or -1 on a socket error. */
 int http_serve_connection(int fd, const char *root_body, http_server_stats *st);
 
+/* ---- Stage 65.11: chunked transfer-encoding, the decoder ----
+ *
+ * The lesson of 65.5 was that a stream has no message boundaries: you
+ * get bytes, not messages. Content-Length is one way to draw the
+ * boundary; chunked transfer-encoding is the other, and it draws the
+ * boundary INSIDE the body, as text, the same way HTTP draws it in the
+ * headers.
+ *
+ * A chunked body is a sequence of chunks:
+ *
+ *     <hex size>[;extensions]CRLF <size bytes>CRLF ... 0CRLF [trailers]CRLF
+ *
+ * The size is hexadecimal. The zero chunk ends the body, and what
+ * follows it may be trailers, ended by a blank line.
+ *
+ * The decoder is fed bytes and hands back one chunk at a time, so a
+ * chunk that arrives in pieces is not an error -- it is the normal
+ * state of an open connection. */
+#define HTTP_MAX_CHUNKED 16384
+
+typedef enum {
+    HTTP_CHUNK_ERROR     = -1,  /* the stream can never be valid */
+    HTTP_CHUNK_NEED_MORE =  0,  /* more bytes are needed; not a failure */
+    HTTP_CHUNK_OK        =  1,  /* one chunk was decoded */
+    HTTP_CHUNK_DONE      =  2   /* the terminal chunk was seen */
+} http_chunk_status;
+
+typedef struct {
+    char   buf[HTTP_MAX_CHUNKED];  /* bytes fed, not yet decoded */
+    size_t len;                    /* bytes in buf */
+    size_t pos;                    /* cursor: bytes already decoded */
+    int    done;                   /* the terminal chunk has been seen */
+} http_chunk_decoder;
+
+void http_chunk_decoder_init(http_chunk_decoder *d);
+
+/* Add bytes to the decoder. Returns 0, or -1 with errno set to ENOBUFS
+ * if the buffer cannot hold them (the decoded prefix is dropped first,
+ * so room is made as the caller goes). */
+int http_chunk_decoder_feed(http_chunk_decoder *d, const void *data, size_t len);
+
+/* Pull the next chunk.
+ *
+ * Returns HTTP_CHUNK_OK with *out_len set to the chunk's size (the
+ * payload is copied into out), HTTP_CHUNK_NEED_MORE if the chunk has
+ * not fully arrived yet, HTTP_CHUNK_DONE once the terminal chunk has
+ * been seen (and *out_len is 0), or HTTP_CHUNK_ERROR with errno set for
+ * a stream that can never be valid -- a size that is not hexadecimal, a
+ * missing CRLF after a chunk's payload, or a chunk too large for out. */
+http_chunk_status http_chunk_decoder_next(http_chunk_decoder *d, char *out,
+                                           size_t out_cap, size_t *out_len);
+
+
 #endif /* HTTP_H */

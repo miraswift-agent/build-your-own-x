@@ -5,6 +5,7 @@
 #include "http.h"
 
 #include <ctype.h>
+#include <limits.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -452,4 +453,158 @@ int http_serve_connection(int fd, const char *root_body, http_server_stats *st)
             }
         }
     }
+}
+
+/* ---- Stage 65.11: chunked transfer-encoding, the decoder ---- */
+
+static int hexval(int ch)
+{
+    if (ch >= '0' && ch <= '9') {
+        return ch - '0';
+    }
+    if (ch >= 'a' && ch <= 'f') {
+        return ch - 'a' + 10;
+    }
+    if (ch >= 'A' && ch <= 'F') {
+        return ch - 'A' + 10;
+    }
+    return -1;
+}
+
+/* The offset of the CR that ends the first line at or after `from`, or
+ * (size_t)-1 when that line has not arrived yet. */
+static size_t find_crlf(const char *buf, size_t len, size_t from)
+{
+    size_t i;
+
+    for (i = from; i + 1 < len; i++) {
+        if (buf[i] == '\r' && buf[i + 1] == '\n') {
+            return i;
+        }
+    }
+    return (size_t)-1;
+}
+
+void http_chunk_decoder_init(http_chunk_decoder *d)
+{
+    d->len = 0;
+    d->pos = 0;
+    d->done = 0;
+}
+
+int http_chunk_decoder_feed(http_chunk_decoder *d, const void *data, size_t len)
+{
+    if (!d || (!data && len > 0)) {
+        errno = EINVAL;
+        return -1;
+    }
+    /* Drop what has already been decoded, so the buffer holds only what
+     * is still owed. */
+    if (d->pos > 0) {
+        memmove(d->buf, d->buf + d->pos, d->len - d->pos);
+        d->len -= d->pos;
+        d->pos = 0;
+    }
+    if (len > sizeof(d->buf) - d->len) {
+        errno = ENOBUFS;
+        return -1;
+    }
+    if (len > 0) {
+        memcpy(d->buf + d->len, data, len);
+        d->len += len;
+    }
+    return 0;
+}
+
+http_chunk_status http_chunk_decoder_next(http_chunk_decoder *d, char *out,
+                                           size_t out_cap, size_t *out_len)
+{
+    size_t avail, line_end, hdr, size, i;
+    unsigned long value = 0;
+    int digits = 0;
+
+    if (!d || !out_len) {
+        errno = EINVAL;
+        return HTTP_CHUNK_ERROR;
+    }
+    *out_len = 0;
+    if (d->done) {
+        return HTTP_CHUNK_DONE;
+    }
+    avail = d->len - d->pos;
+    if (avail == 0) {
+        return HTTP_CHUNK_NEED_MORE;
+    }
+
+    /* The chunk size line: hexadecimal, then optional extensions, then
+     * CRLF. The extensions are ignored -- but they have to be skipped
+     * over, or the size parse sees a ';' and stops too early. */
+    line_end = find_crlf(d->buf, d->len, d->pos);
+    if (line_end == (size_t)-1) {
+        return HTTP_CHUNK_NEED_MORE;
+    }
+    for (i = d->pos; i < line_end; i++) {
+        int v;
+
+        if (d->buf[i] == ';') {
+            break;
+        }
+        v = hexval((unsigned char)d->buf[i]);
+        if (v < 0) {
+            errno = EINVAL;
+            return HTTP_CHUNK_ERROR;
+        }
+        if (value > (ULONG_MAX - (unsigned long)v) / 16UL) {
+            errno = EINVAL;
+            return HTTP_CHUNK_ERROR;
+        }
+        value = value * 16UL + (unsigned long)v;
+        digits++;
+    }
+    if (digits == 0) {
+        errno = EINVAL;
+        return HTTP_CHUNK_ERROR;
+    }
+    size = (size_t)value;
+    hdr = line_end + 2 - d->pos;
+
+    if (size == 0) {
+        /* The terminal chunk. What follows may be trailers, and the
+         * trailers end with a blank line. */
+        size_t after = d->pos + hdr;
+
+        for (;;) {
+            size_t tline = find_crlf(d->buf, d->len, after);
+
+            if (tline == (size_t)-1) {
+                return HTTP_CHUNK_NEED_MORE;
+            }
+            if (tline == after) {
+                after = tline + 2;
+                break;
+            }
+            after = tline + 2;
+        }
+        d->pos = after;
+        d->done = 1;
+        return HTTP_CHUNK_DONE;
+    }
+
+    /* The payload, then the CRLF that ends it. */
+    if (avail < hdr + size + 2) {
+        return HTTP_CHUNK_NEED_MORE;
+    }
+    if (size > out_cap) {
+        errno = ENOBUFS;
+        return HTTP_CHUNK_ERROR;
+    }
+    if (d->buf[d->pos + hdr + size] != '\r' ||
+        d->buf[d->pos + hdr + size + 1] != '\n') {
+        errno = EINVAL;
+        return HTTP_CHUNK_ERROR;
+    }
+    memcpy(out, d->buf + d->pos + hdr, size);
+    *out_len = size;
+    d->pos += hdr + size + 2;
+    return HTTP_CHUNK_OK;
 }
