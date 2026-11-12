@@ -610,9 +610,8 @@ impl TreeBuilder {
     /// entry -- which is not the same as popping to the tag: the walk
     /// stops at a *special* element.
     fn adoption_agency_wired(&mut self, tag: &str) -> OuterOutcome {
-        let outcome = self.adoption_agency_outer(tag, &mut |b, _id| {
-            b.adoption_agency(tag);
-            false // the inner step is finished
+        let outcome = self.adoption_agency_outer(tag, &mut |b, id| {
+            b.adoption_agency(tag, id)
         });
         if matches!(outcome, OuterOutcome::NoSuchElement) {
             self.any_other_end_tag(tag);
@@ -648,7 +647,153 @@ impl TreeBuilder {
         }
     }
 
-    fn adoption_agency(&mut self, tag: &str) {
+    /// §13.2.8.3: the INNER step of the adoption agency algorithm, in two
+    /// paths.
+    ///
+    /// **The furthest-block path** (html5lib's `endTagFormatting`, steps 5
+    /// through 15) runs when there is a *special* element at or above the
+    /// formatting element in the stack of open elements -- that is, when a
+    /// block interrupted the formatting element and is still open. The
+    /// formatting element is then cloned, the block's children move into
+    /// the clone, and the clone is re-opened inside the block: the
+    /// formatting survives the block boundary.
+    ///
+    /// **The no-furthest-block path** (the component's existing behaviour)
+    /// runs when there is none: the stack is popped to the target and the
+    /// misnested formatting elements above it are re-opened.
+    ///
+    /// The return value is the outer loop's "made progress" flag: the
+    /// furthest-block path leaves the clone open on the stack, so the
+    /// outer loop must run again to close it.
+    fn adoption_agency(&mut self, tag: &str, fmt_id: NodeId) -> bool {
+        // The formatting element's place in the stack of open elements.
+        let Some(stack_idx) = self.open.iter().position(|&id| id == fmt_id) else {
+            return false;
+        };
+
+        // Step 5: the furthest block -- the first special element at or
+        // above the formatting element in the stack of open elements.
+        let furthest = self.open[stack_idx..].iter().copied().find(|&id| {
+            self.doc
+                .node(id)
+                .tag_name()
+                .map(|n| Self::SPECIAL_ELEMENTS.contains(&n))
+                .unwrap_or(false)
+        });
+
+        let Some(furthest_id) = furthest else {
+            // No furthest block: the existing path.
+            self.adoption_agency_no_furthest_block(tag);
+            return false;
+        };
+
+        // Step 7: the common ancestor -- the element immediately below the
+        // formatting element in the stack of open elements.
+        let Some(common_id) = stack_idx.checked_sub(1).map(|i| self.open[i]) else {
+            return false;
+        };
+
+        // Step 8: the bookmark -- the list position of the formatting
+        // element, which is where its clone will go.
+        let mut bookmark = self.find_formatting_element(tag).unwrap_or(0);
+
+        // Step 9: the inner loop.
+        let mut last_node = furthest_id;
+        let mut node = furthest_id;
+        let mut index = self
+            .open
+            .iter()
+            .position(|&id| id == furthest_id)
+            .unwrap_or(stack_idx);
+        let mut inner = 0u32;
+        while inner < 3 {
+            inner += 1;
+            if index == 0 {
+                break;
+            }
+            index -= 1;
+            node = self.open[index];
+            // Not in the list of active formatting elements: remove it from
+            // the stack and go round again.
+            if !self.afe.iter().any(|e| e.id == Some(node)) {
+                self.open.remove(index);
+                continue;
+            }
+            // Step 9.6: the formatting element itself.
+            if node == fmt_id {
+                break;
+            }
+            // Step 9.7: the bookmark moves after the node.
+            if last_node == furthest_id {
+                if let Some(pos) = self.afe.iter().position(|e| e.id == Some(node)) {
+                    bookmark = pos + 1;
+                }
+            }
+            // Step 9.8: clone the node; the clone replaces it in both the
+            // list and the stack.
+            let Some(clone) = self.doc.clone_element(node) else {
+                break;
+            };
+            if let Some(pos) = self.afe.iter().position(|e| e.id == Some(node)) {
+                self.afe[pos].id = Some(clone);
+            }
+            if let Some(pos) = self.open.iter().position(|&id| id == node) {
+                self.open[pos] = clone;
+            }
+            node = clone;
+            // Step 9.9: the last node moves into the clone.
+            self.doc.detach_from_parent(last_node);
+            self.doc.append_child(clone, last_node);
+            // Step 9.10.
+            last_node = node;
+        }
+
+        // Step 10: the last node goes into the common ancestor. (html5lib
+        // foster-parents it when the common ancestor is a table; this
+        // component has no table insertion modes, so that cannot happen.)
+        self.doc.detach_from_parent(last_node);
+        self.doc.append_child(common_id, last_node);
+
+        // Step 11: the clone of the formatting element.
+        let Some(clone) = self.doc.clone_element(fmt_id) else {
+            return false;
+        };
+        // Step 12: the furthest block's children move into the clone.
+        self.doc.reparent_children(furthest_id, clone);
+        // Step 13: the clone goes into the furthest block.
+        self.doc.append_child(furthest_id, clone);
+
+        // Step 14: in the list of active formatting elements, the clone
+        // replaces the formatting element, at the bookmark.
+        self.afe.retain(|e| e.id != Some(fmt_id));
+        let entry = AfeEntry {
+            name: tag.to_string(),
+            marker: false,
+            id: Some(clone),
+        };
+        let at = bookmark.min(self.afe.len());
+        self.afe.insert(at, entry);
+
+        // Step 15: in the stack of open elements, the clone replaces the
+        // formatting element, immediately above the furthest block.
+        self.open.retain(|&id| id != fmt_id);
+        let pos = self
+            .open
+            .iter()
+            .position(|&id| id == furthest_id)
+            .map(|i| i + 1)
+            .unwrap_or(self.open.len());
+        self.open.insert(pos, clone);
+
+        // The clone is left open: the outer loop runs again and closes it.
+        true
+    }
+
+    /// The adoption agency's inner step for the case where there is **no**
+    /// furthest block: pop the stack to the target, and re-open the
+    /// misnested formatting elements above it so the content that follows
+    /// the stray end tag stays inside them.
+    fn adoption_agency_no_furthest_block(&mut self, tag: &str) {
         let Some(target_idx) = self
             .open
             .iter()
@@ -1189,8 +1334,11 @@ impl TreeBuilder {
                     self.doc
                         .errors
                         .push("nested <a> start tag: the active anchor is closed".into());
+                    let anchor_id = self.afe[idx].id;
                     self.afe.remove(idx);
-                    self.adoption_agency("a");
+                    if let Some(anchor_id) = anchor_id {
+                        self.adoption_agency("a", anchor_id);
+                    }
                 }
                 self.insert_and_push(name, attrs.clone());
             }

@@ -30,10 +30,13 @@ const CASES: &[(&str, &str)] = &[
     ("nested_same", "<b>1<i>2<b>3</b></i><b>4</b></b>"),
 ];
 
-/// The cases whose trees differ from html5lib's TODAY. This is the work list
-/// for the inner-loop port: when a case is fixed, this list changes and this
-/// test fails, which is the point.
-const KNOWN_GAPS: &[&str] = &["block_between"];
+// The work list of cases whose trees differed from html5lib's is GONE.
+//
+// Slice 7b-1 shipped it as `const KNOWN_GAPS: &[&str] = &["block_between"];`
+// -- a to-do list, not a bug report: it failed when a case was fixed OR
+// broke. Slice 7b-2c implemented the furthest-block path of the inner loop
+// and closed the last gap, so the constant is DELETED, not edited. The
+// test below now asserts that every case matches html5lib 1.1.
 
 fn parse_case(html: &str) -> String {
     let doc = parse(html);
@@ -63,7 +66,7 @@ fn cases_from_fixture() -> Vec<(&'static str, &'static str)> {
 }
 
 #[test]
-fn the_inner_loop_gap_is_exactly_the_known_set() {
+fn the_inner_loop_matches_html5lib_in_every_case() {
     let cases = cases_from_fixture();
     assert_eq!(cases.len(), CASES.len(), "fixture/case count mismatch");
 
@@ -81,9 +84,9 @@ fn the_inner_loop_gap_is_exactly_the_known_set() {
             ));
         }
     }
-    assert_eq!(
-        gaps, KNOWN_GAPS,
-        "the inner-loop gap changed -- one of these cases was fixed (or broke):\n{}",
+    assert!(
+        gaps.is_empty(),
+        "the inner loop still differs from html5lib in:\n{}",
         mismatches.join("\n")
     );
 }
