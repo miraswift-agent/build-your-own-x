@@ -163,15 +163,28 @@ impl TreeBuilder {
     /// §13.2.6: the elements that push a marker onto the list of active
     /// formatting elements when they are inserted.
     ///
-    /// The spec's list is small and specific: applet, marquee, object and
-    /// button push a marker, and so does a `p` start tag. Everything else
-    /// leaves the list alone -- and that is the whole point of a marker:
-    /// it marks the boundary where formatting stops being in scope. Most
-    /// elements do NOT end formatting's scope, which is why a marker
-    /// before every element (what this component used to do) throws away
-    /// the scope it was meant to mark.
+    /// The spec's in-body rules name four tags: applet, marquee, object
+    /// and template. html5lib 1.1's source agrees for the first three --
+    /// `startTagAppletMarqueeObject` is its only marker site in the body
+    /// mode -- and has no template rule at all (the spec's is newer).
+    ///
+    /// It does NOT push a marker for `button`, and it does not push one
+    /// for a `p` start tag. Slice 6 pushed both, from a reading of the
+    /// spec that was wrong; html5lib's source is the check that caught
+    /// it.
+    ///
+    /// The spec also inserts markers for caption, td and th -- but in the
+    /// table, caption and cell insertion modes, which this component does
+    /// not model (it has no table modes at all), so those rules are
+    /// deliberately out of scope here rather than applied generically.
+    ///
+    /// Everything else leaves the list alone -- and that is the whole
+    /// point of a marker: it marks the boundary where formatting stops
+    /// being in scope. Most elements do NOT end formatting's scope, which
+    /// is why a marker before every element (what this component used to
+    /// do) throws away the scope it was meant to mark.
     fn pushes_marker(tag: &str) -> bool {
-        matches!(tag, "applet" | "marquee" | "object" | "button" | "p")
+        matches!(tag, "applet" | "marquee" | "object" | "template")
     }
 
     /// §13.2.6: the elements that clear the list of active formatting
@@ -1715,10 +1728,16 @@ mod tests {
     fn the_fallback_stops_at_a_special_element() {
         let mut b = TreeBuilder::new();
         let bold = b.insert_and_push("b", vec![]);
-        b.insert_and_push("button", vec![]);
-        // The <button> pushed a marker, so the search for the <b> is
+        b.insert_and_push("object", vec![]);
+        // The <object> pushed a marker, so the search for the <b> is
         // bounded before it; the fallback walks the stack and gives up
-        // at the special <button> without popping anything.
+        // at the special <object> without popping anything.
+        //
+        // This used to use a <button>, on the strength of slice 6's
+        // marker set. html5lib 1.1's source says <button> pushes no
+        // marker, so the marker-bound search no longer applies here --
+        // and the outcome changes with it, which is the point of
+        // correcting the set rather than working around it.
         let outcome = b.adoption_agency_wired("b");
         assert_eq!(outcome, OuterOutcome::NoSuchElement);
         assert!(b.open.contains(&bold), "the <b> must still be open");
@@ -1761,18 +1780,28 @@ mod tests {
     }
 
     #[test]
-    fn button_pushes_a_marker() {
-        assert_eq!(shape_of("<b><button>x</button>"), vec!["b", "#marker"]);
+    fn button_does_not_push_a_marker() {
+        // html5lib 1.1's `startTagButton` inserts no marker, and the
+        // spec's in-body rule for <button> does not either.
+        assert_eq!(shape_of("<b><button>x</button>"), vec!["b"]);
     }
 
     #[test]
-    fn p_pushes_a_marker() {
-        assert_eq!(shape_of("<b><p>x"), vec!["b", "#marker"]);
+    fn p_does_not_push_a_marker() {
+        // A `p` start tag closes an open `p` in button scope; it does not
+        // mark the end of formatting's scope.
+        assert_eq!(shape_of("<b><p>x"), vec!["b"]);
+    }
+
+    #[test]
+    fn template_pushes_a_marker() {
+        // The spec's in-body rule for <template> inserts a marker.
+        assert_eq!(shape_of("<b><template>x</template>"), vec!["b", "#marker"]);
     }
 
     #[test]
     fn the_marker_bounds_the_search() {
-        let (tokens, _e) = tokenize("<b><button>x</button><i>y");
+        let (tokens, _e) = tokenize("<b><object>x</object><i>y");
         let mut b = TreeBuilder::new();
         for t in tokens {
             b.process(t);
@@ -1785,7 +1814,7 @@ mod tests {
 
     #[test]
     fn clearing_removes_everything_up_to_and_including_the_last_marker() {
-        let (tokens, _e) = tokenize("<b><button>x</button><i>y");
+        let (tokens, _e) = tokenize("<b><object>x</object><i>y");
         let mut b = TreeBuilder::new();
         for t in tokens {
             b.process(t);
