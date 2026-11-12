@@ -1,0 +1,23 @@
+// Stage 62: array_partition(arr, predicate) -> [pass, fail]
+fun gt3(n) {
+  return n > 3;
+}
+
+var nums = [1, 2, 3, 4, 5, 6];
+var parts = array_partition(nums, gt3);
+var hi = array_get(parts, 0);
+var lo = array_get(parts, 1);
+
+print "=== array_partition gt3 ===";
+print array_length(hi);
+print array_get(hi, 0);
+print array_get(hi, 1);
+print array_get(hi, 2);
+print array_length(lo);
+print array_get(lo, 0);
+print array_get(lo, 1);
+print array_get(lo, 2);
+
+print "=== source unchanged ===";
+print array_length(nums);
+print array_get(nums, 0);

@@ -1,0 +1,33 @@
+// Stage 61: array_slice(arr, start, end?) -> array
+// Half-open [start, end). Optional end. Negative indices from end.
+
+print "=== array_slice basic middle ===";
+var nums = [10, 20, 30, 40, 50];
+var mid = array_slice(nums, 1, 4);
+print array_length(mid); // 3
+print string(array_get(mid, 0)); // 20
+print string(array_get(mid, 1)); // 30
+print string(array_get(mid, 2)); // 40
+
+print "=== array_slice omit end ===";
+var tail = array_slice(nums, 3);
+print array_length(tail); // 2
+print string(array_get(tail, 0)); // 40
+print string(array_get(tail, 1)); // 50
+
+print "=== array_slice negative indices ===";
+// last three excluding the very last: indices 2,3
+var neg = array_slice(nums, -3, -1);
+print array_length(neg); // 2
+print string(array_get(neg, 0)); // 30
+print string(array_get(neg, 1)); // 40
+
+print "=== array_slice full copy ===";
+var copy = array_slice(nums, 0);
+print array_length(copy); // 5
+print string(array_get(copy, 0)); // 10
+print string(array_get(copy, 4)); // 50
+
+print "=== source unchanged ===";
+print array_length(nums); // 5
+print string(array_get(nums, 0)); // 10

@@ -6220,7 +6220,7 @@ static void test_array_union_does_not_mutate(void) {
 }
 
 static void test_array_union_wrong_arg_count(void) {
-    /* Defensive: 2 args required, not 1 or 3. */
+    /* Stage 59: 2 or 3 args valid; 1 or 4 error. */
     int exitCode;
     char *out1 = runClox("var t = array_union([1, 2]);\n", &exitCode);
     if (exitCode == 0) {
@@ -6230,13 +6230,130 @@ static void test_array_union_wrong_arg_count(void) {
     }
     free(out1);
 
-    char *out2 = runClox("var t = array_union([1], [2], [3]);\n", &exitCode);
+    char *out2 = runClox("var t = array_union([1], [2], 3, 4);\n", &exitCode);
     if (exitCode == 0) {
-        fail("stdlib/array-union-wrong-arg-count-3: expected non-zero exit for 3 args");
+        fail("stdlib/array-union-wrong-arg-count-4: expected non-zero exit for 4 args");
     } else {
         pass();
     }
     free(out2);
+}
+
+static void test_array_union_by_key_basic(void) {
+    /* Stage 59: array_union(arr1, arr2, keyFn?).
+     * keyFn(x) = x > 2.
+     * arr1 = [1, 2, 3, 4, 5] -> keys F F T T T
+     * arr2 = [7, 8, 9]      -> keys T T T
+     * max counts: T -> 3 (arr1 already has 3),
+     *             F -> 2 (only arr1).
+     * Result is all of arr1, no leftover arr2:
+     * [1, 2, 3, 4, 5]. */
+    int exitCode;
+    char *out = runClox(
+        "fun isLarge(x) { return x > 2; }\n"
+        "var r = array_union([1, 2, 3, 4, 5], [7, 8, 9], isLarge);\n"
+        "print array_length(r);\n"
+        "for (var i = 0; i < array_length(r); i = i + 1) {\n"
+        "    print array_get(r, i);\n"
+        "}\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-union-by-key-basic: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "5\n1\n2\n3\n4\n5\n")) {
+        fail("stdlib/array-union-by-key-basic: expected '5\n1\n2\n3\n4\n5\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_union_by_key_arr2_extras(void) {
+    /* arr1 has fewer true-keys than arr2; leftover
+     * arr2 elements with unmatched key counts drain.
+     * arr1 = [3]       -> T (1)
+     * arr2 = [7, 8, 9] -> T T T (3)
+     * max T = 3: keep [3] then drain two from arr2
+     * (first-remaining after consuming one match):
+     * [3, 8, 9] (7 consumed as the match for 3). */
+    int exitCode;
+    char *out = runClox(
+        "fun isLarge(x) { return x > 2; }\n"
+        "var r = array_union([3], [7, 8, 9], isLarge);\n"
+        "print array_length(r);\n"
+        "for (var i = 0; i < array_length(r); i = i + 1) {\n"
+        "    print array_get(r, i);\n"
+        "}\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-union-by-key-arr2-extras: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "3\n3\n8\n9\n")) {
+        fail("stdlib/array-union-by-key-arr2-extras: expected '3\n3\n8\n9\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_union_by_key_objects(void) {
+    /* Union by object id. arr1 has a,b; arr2 has c
+     * (id=1, same as a) and d (id=3, new).
+     * max(id1)=1, max(id2)=1, max(id3)=1.
+     * Result: a, b from arr1, then d from arr2
+     * (c's id=1 consumed by a). */
+    int exitCode;
+    char *out = runClox(
+        "class Item {}\n"
+        "fun getId(x) { return x.id; }\n"
+        "var a = Item(); a.id = 1; a.name = \"a\";\n"
+        "var b = Item(); b.id = 2; b.name = \"b\";\n"
+        "var c = Item(); c.id = 1; c.name = \"c\";\n"
+        "var d = Item(); d.id = 3; d.name = \"d\";\n"
+        "var r = array_union([a, b], [c, d], getId);\n"
+        "print array_length(r);\n"
+        "print array_get(r, 0).name;\n"
+        "print array_get(r, 1).name;\n"
+        "print array_get(r, 2).name;\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-union-by-key-objects: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "3\na\nb\nd\n")) {
+        fail("stdlib/array-union-by-key-objects: expected '3\na\nb\nd\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_union_by_key_omitted(void) {
+    /* 2-arg form is backward-compatible with Stage 56. */
+    int exitCode;
+    char *out = runClox(
+        "var r = array_union([1, 1, 2], [1, 2, 2]);\n"
+        "print array_length(r);\n"
+        "for (var i = 0; i < array_length(r); i = i + 1) {\n"
+        "    print array_get(r, i);\n"
+        "}\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-union-by-key-omitted: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "4\n1\n1\n2\n2\n")) {
+        fail("stdlib/array-union-by-key-omitted: expected '4\n1\n1\n2\n2\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_union_by_key_wrong_type(void) {
+    /* 3rd arg, if present, must be a function. */
+    int exitCode;
+    char *out = runClox("var t = array_union([1], [2], 99);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-union-by-key-wrong-type: expected non-zero exit for non-function keyFn");
+    } else {
+        pass();
+    }
+    free(out);
 }
 
 static void test_array_union_wrong_type(void) {
@@ -6495,7 +6612,7 @@ static void test_array_difference_does_not_mutate(void) {
 }
 
 static void test_array_difference_wrong_arg_count(void) {
-    /* 1 arg + 3 args both error. */
+    /* Stage 60: 2 or 3 args valid; 1 or 4 error. */
     int exitCode;
     char *out1 = runClox("var d = array_difference([1, 2]);\n", &exitCode);
     if (exitCode == 0) {
@@ -6505,9 +6622,9 @@ static void test_array_difference_wrong_arg_count(void) {
     }
     free(out1);
 
-    char *out2 = runClox("var d = array_difference([1, 2], [3], [4]);\n", &exitCode);
+    char *out2 = runClox("var d = array_difference([1], [2], 3, 4);\n", &exitCode);
     if (exitCode == 0) {
-        fail("stdlib/array-difference-wrong-arg-count-3args: expected non-zero exit for 3 args");
+        fail("stdlib/array-difference-wrong-arg-count-4args: expected non-zero exit for 4 args");
     } else {
         pass();
     }
@@ -6534,6 +6651,667 @@ static void test_array_difference_wrong_type(void) {
     }
     free(out2);
 }
+
+static void test_array_difference_by_key_basic(void) {
+    /* Stage 60: array_difference(arr1, arr2, keyFn?).
+     * keyFn(x) = x > 2.
+     * arr1 = [1, 2, 3, 4, 5] -> keys F F T T T
+     * arr2 = [7, 8]          -> keys T T
+     * Drop two true-key arr1 elems (3 then 4);
+     * keep F F and the leftover true (5):
+     * [1, 2, 5]. */
+    int exitCode;
+    char *out = runClox(
+        "fun isLarge(x) { return x > 2; }\n"
+        "var r = array_difference([1, 2, 3, 4, 5], [7, 8], isLarge);\n"
+        "print array_length(r);\n"
+        "for (var i = 0; i < array_length(r); i = i + 1) {\n"
+        "    print array_get(r, i);\n"
+        "}\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-difference-by-key-basic: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "3\n1\n2\n5\n")) {
+        fail("stdlib/array-difference-by-key-basic: expected '3\n1\n2\n5\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_difference_by_key_multiset(void) {
+    /* Multiset-by-key: three trues in arr1, one in arr2
+     * -> drop one true, keep two.
+     * arr1 = [3, 4, 5] keys T T T; arr2 = [7] key T
+     * -> [4, 5] (3 consumed as the match). */
+    int exitCode;
+    char *out = runClox(
+        "fun isLarge(x) { return x > 2; }\n"
+        "var r = array_difference([3, 4, 5], [7], isLarge);\n"
+        "print array_length(r);\n"
+        "for (var i = 0; i < array_length(r); i = i + 1) {\n"
+        "    print array_get(r, i);\n"
+        "}\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-difference-by-key-multiset: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "2\n4\n5\n")) {
+        fail("stdlib/array-difference-by-key-multiset: expected '2\n4\n5\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_difference_by_key_objects(void) {
+    /* Difference by object id. arr1 has a,b,d (ids
+     * 1,2,3); arr2 has c (id=1). Drop a (id match),
+     * keep b and d. */
+    int exitCode;
+    char *out = runClox(
+        "class Item {}\n"
+        "fun getId(x) { return x.id; }\n"
+        "var a = Item(); a.id = 1; a.name = \"a\";\n"
+        "var b = Item(); b.id = 2; b.name = \"b\";\n"
+        "var c = Item(); c.id = 1; c.name = \"c\";\n"
+        "var d = Item(); d.id = 3; d.name = \"d\";\n"
+        "var r = array_difference([a, b, d], [c], getId);\n"
+        "print array_length(r);\n"
+        "print array_get(r, 0).name;\n"
+        "print array_get(r, 1).name;\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-difference-by-key-objects: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "2\nb\nd\n")) {
+        fail("stdlib/array-difference-by-key-objects: expected '2\nb\nd\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_difference_by_key_omitted(void) {
+    /* 2-arg form is backward-compatible with Stage 57. */
+    int exitCode;
+    char *out = runClox(
+        "var r = array_difference([1, 1, 2], [1]);\n"
+        "print array_length(r);\n"
+        "for (var i = 0; i < array_length(r); i = i + 1) {\n"
+        "    print array_get(r, i);\n"
+        "}\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-difference-by-key-omitted: expected exit 0, got %d (output: %s)", exitCode, out);
+    } else if (!contains(out, "2\n1\n2\n")) {
+        fail("stdlib/array-difference-by-key-omitted: expected '2\n1\n2\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_difference_by_key_wrong_type(void) {
+    /* 3rd arg, if present, must be a function. */
+    int exitCode;
+    char *out = runClox("var t = array_difference([1], [2], 99);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-difference-by-key-wrong-type: expected non-zero exit for non-function keyFn");
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+/* ===== Stage 61: array_slice(arr, start, end?) -> array ===== */
+
+static void test_array_slice_basic(void) {
+    /* Half-open [start, end): middle of the array. */
+    int exitCode;
+    char *out = runClox(
+        "var arr = [10, 20, 30, 40, 50];\n"
+        "var s = array_slice(arr, 1, 4);\n"
+        "print array_length(s);\n"
+        "print string(array_get(s, 0));\n"
+        "print string(array_get(s, 1));\n"
+        "print string(array_get(s, 2));\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-slice-basic: unexpected non-zero exit: %s", out);
+    } else if (!contains(out, "3\n20\n30\n40\n")) {
+        fail("stdlib/array-slice-basic: expected '3\n20\n30\n40\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_slice_omit_end(void) {
+    /* 2-arg form: slice from start to end of array. */
+    int exitCode;
+    char *out = runClox(
+        "var arr = [10, 20, 30, 40, 50];\n"
+        "var s = array_slice(arr, 2);\n"
+        "print array_length(s);\n"
+        "print string(array_get(s, 0));\n"
+        "print string(array_get(s, 1));\n"
+        "print string(array_get(s, 2));\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-slice-omit-end: unexpected non-zero exit: %s", out);
+    } else if (!contains(out, "3\n30\n40\n50\n")) {
+        fail("stdlib/array-slice-omit-end: expected '3\n30\n40\n50\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_slice_negative_indices(void) {
+    /* JS-style: negative start/end count from the end. */
+    int exitCode;
+    char *out = runClox(
+        "var arr = [10, 20, 30, 40, 50];\n"
+        "var s = array_slice(arr, -3, -1);\n"
+        "print array_length(s);\n"
+        "print string(array_get(s, 0));\n"
+        "print string(array_get(s, 1));\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-slice-negative: unexpected non-zero exit: %s", out);
+    } else if (!contains(out, "2\n30\n40\n")) {
+        fail("stdlib/array-slice-negative: expected '2\n30\n40\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_slice_clamp_and_empty(void) {
+    /* start past end -> []; end past len clamps; end <= start -> []. */
+    int exitCode;
+    char *out = runClox(
+        "var arr = [1, 2, 3];\n"
+        "var a = array_slice(arr, 10);\n"
+        "var b = array_slice(arr, 1, 99);\n"
+        "var c = array_slice(arr, 2, 2);\n"
+        "var d = array_slice(arr, 2, 1);\n"
+        "print array_length(a);\n"
+        "print array_length(b);\n"
+        "print string(array_get(b, 0));\n"
+        "print string(array_get(b, 1));\n"
+        "print array_length(c);\n"
+        "print array_length(d);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-slice-clamp: unexpected non-zero exit: %s", out);
+    } else if (!contains(out, "0\n2\n2\n3\n0\n0\n")) {
+        fail("stdlib/array-slice-clamp: expected '0\n2\n2\n3\n0\n0\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_slice_does_not_mutate(void) {
+    int exitCode;
+    char *out = runClox(
+        "var arr = [1, 2, 3, 4];\n"
+        "var s = array_slice(arr, 1, 3);\n"
+        "print array_length(arr);\n"
+        "print string(array_get(arr, 0));\n"
+        "print string(array_get(arr, 3));\n"
+        "print array_length(s);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-slice-no-mutate: unexpected non-zero exit: %s", out);
+    } else if (!contains(out, "4\n1\n4\n2\n")) {
+        fail("stdlib/array-slice-no-mutate: expected '4\n1\n4\n2\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_slice_full_copy(void) {
+    /* array_slice(arr, 0) is a full shallow copy. */
+    int exitCode;
+    char *out = runClox(
+        "var arr = [7, 8, 9];\n"
+        "var s = array_slice(arr, 0);\n"
+        "print array_length(s);\n"
+        "print string(array_get(s, 0));\n"
+        "print string(array_get(s, 1));\n"
+        "print string(array_get(s, 2));\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-slice-full-copy: unexpected non-zero exit: %s", out);
+    } else if (!contains(out, "3\n7\n8\n9\n")) {
+        fail("stdlib/array-slice-full-copy: expected '3\n7\n8\n9\n', got '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_slice_wrong_arg_count(void) {
+    int exitCode;
+    char *out1 = runClox("var t = array_slice([1, 2, 3]);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-slice-wrong-arg-count: expected non-zero exit for 1 arg");
+    } else {
+        pass();
+    }
+    free(out1);
+    char *out2 = runClox("var t = array_slice([1], 0, 1, 2);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-slice-wrong-arg-count: expected non-zero exit for 4 args");
+    } else {
+        pass();
+    }
+    free(out2);
+}
+
+static void test_array_slice_wrong_type(void) {
+    int exitCode;
+    char *out1 = runClox("var t = array_slice(42, 0);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-slice-wrong-type: expected non-zero exit for non-array");
+    } else {
+        pass();
+    }
+    free(out1);
+    char *out2 = runClox("var t = array_slice([1, 2], \"x\");\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-slice-wrong-type: expected non-zero exit for non-number start");
+    } else {
+        pass();
+    }
+    free(out2);
+    char *out3 = runClox("var t = array_slice([1, 2], 0, \"y\");\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-slice-wrong-type: expected non-zero exit for non-number end");
+    } else {
+        pass();
+    }
+    free(out3);
+}
+
+/* ===== Stage 62: array_partition(arr, predicate) -> [pass, fail] ===== */
+
+static void test_array_partition_basic(void) {
+    int exitCode;
+    char *out = runClox(
+        "fun gt3(n) { return n > 3; }\n"
+        "var arr = [1, 2, 3, 4, 5, 6];\n"
+        "var p = array_partition(arr, gt3);\n"
+        "var passA = array_get(p, 0);\n"
+        "var failA = array_get(p, 1);\n"
+        "print array_length(p);\n"
+        "print array_length(passA);\n"
+        "print array_length(failA);\n"
+        "print string(array_get(passA, 0));\n"
+        "print string(array_get(passA, 1));\n"
+        "print string(array_get(passA, 2));\n"
+        "print string(array_get(failA, 0));\n"
+        "print string(array_get(failA, 1));\n"
+        "print string(array_get(failA, 2));\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-partition-basic: unexpected non-zero exit: %s", out);
+    } else if (!contains(out, "2\n3\n3\n4\n5\n6\n1\n2\n3\n")) {
+        fail("stdlib/array-partition-basic: unexpected output: '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_partition_empty(void) {
+    int exitCode;
+    char *out = runClox(
+        "fun always(x) { return true; }\n"
+        "var p = array_partition([], always);\n"
+        "print array_length(p);\n"
+        "print array_length(array_get(p, 0));\n"
+        "print array_length(array_get(p, 1));\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-partition-empty: unexpected non-zero exit: %s", out);
+    } else if (!contains(out, "2\n0\n0\n")) {
+        fail("stdlib/array-partition-empty: unexpected output: '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_partition_all_pass(void) {
+    int exitCode;
+    char *out = runClox(
+        "fun always(x) { return true; }\n"
+        "var p = array_partition([7, 8], always);\n"
+        "print array_length(array_get(p, 0));\n"
+        "print array_length(array_get(p, 1));\n"
+        "print string(array_get(array_get(p, 0), 0));\n"
+        "print string(array_get(array_get(p, 0), 1));\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-partition-all-pass: unexpected non-zero exit: %s", out);
+    } else if (!contains(out, "2\n0\n7\n8\n")) {
+        fail("stdlib/array-partition-all-pass: unexpected output: '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_partition_all_fail(void) {
+    int exitCode;
+    char *out = runClox(
+        "fun never(x) { return false; }\n"
+        "var p = array_partition([7, 8], never);\n"
+        "print array_length(array_get(p, 0));\n"
+        "print array_length(array_get(p, 1));\n"
+        "print string(array_get(array_get(p, 1), 0));\n"
+        "print string(array_get(array_get(p, 1), 1));\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-partition-all-fail: unexpected non-zero exit: %s", out);
+    } else if (!contains(out, "0\n2\n7\n8\n")) {
+        fail("stdlib/array-partition-all-fail: unexpected output: '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_partition_truthiness(void) {
+    /* Only false and nil are falsy; 0 and "" are truthy in clox. */
+    int exitCode;
+    char *out = runClox(
+        "fun id(x) { return x; }\n"
+        "var p = array_partition([0, false, \"\", nil, 1], id);\n"
+        "var passA = array_get(p, 0);\n"
+        "var failA = array_get(p, 1);\n"
+        "print array_length(passA);\n"
+        "print array_length(failA);\n"
+        "print array_get(passA, 0);\n"
+        "print array_get(passA, 1);\n"
+        "print array_get(passA, 2);\n"
+        "print array_get(failA, 0);\n"
+        "print array_get(failA, 1);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-partition-truthiness: unexpected non-zero exit: %s", out);
+    } else if (!contains(out, "3\n2\n0\n\n1\nfalse\nnil\n")) {
+        fail("stdlib/array-partition-truthiness: unexpected output: '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_partition_does_not_mutate(void) {
+    int exitCode;
+    char *out = runClox(
+        "fun gt3(n) { return n > 3; }\n"
+        "var arr = [1, 2, 3];\n"
+        "var p = array_partition(arr, gt3);\n"
+        "print array_length(arr);\n"
+        "print string(array_get(arr, 0));\n"
+        "print string(array_get(arr, 1));\n"
+        "print string(array_get(arr, 2));\n"
+        "print array_length(array_get(p, 0));\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-partition-no-mutate: unexpected non-zero exit: %s", out);
+    } else if (!contains(out, "3\n1\n2\n3\n0\n")) {
+        fail("stdlib/array-partition-no-mutate: unexpected output: '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_partition_wrong_arg_count(void) {
+    int exitCode;
+    char *out1 = runClox("var t = array_partition([1]);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-partition-argc-1: expected non-zero exit");
+    } else {
+        pass();
+    }
+    free(out1);
+    char *out2 = runClox(
+        "fun f(x) { return true; }\n"
+        "var t = array_partition([1], f, f);\n",
+        &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-partition-argc-3: expected non-zero exit");
+    } else {
+        pass();
+    }
+    free(out2);
+}
+
+static void test_array_partition_wrong_type(void) {
+    int exitCode;
+    char *out1 = runClox(
+        "fun f(x) { return true; }\n"
+        "var t = array_partition(42, f);\n",
+        &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-partition-type-arr: expected non-zero exit");
+    } else {
+        pass();
+    }
+    free(out1);
+    char *out2 = runClox("var t = array_partition([1], 99);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-partition-type-fn: expected non-zero exit");
+    } else {
+        pass();
+    }
+    free(out2);
+}
+
+
+
+/* ===== Stage 63: array_flat_map(arr, mapper) -> array ===== */
+
+static void test_array_flat_map_basic(void) {
+    int exitCode;
+    char *out = runClox(
+        "fun pair(x) { return [x, x]; }\n"
+        "var r = array_flat_map([1, 2, 3], pair);\n"
+        "print array_length(r);\n"
+        "print array_get(r, 0);\n"
+        "print array_get(r, 1);\n"
+        "print array_get(r, 2);\n"
+        "print array_get(r, 3);\n"
+        "print array_get(r, 4);\n"
+        "print array_get(r, 5);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-flat-map-basic: unexpected non-zero exit: %s", out);
+    } else if (strcmp(out, "6\n1\n1\n2\n2\n3\n3\n") != 0) {
+        fail("stdlib/array-flat-map-basic: unexpected output: '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_flat_map_scalar_mapper(void) {
+    /* Mapper returns scalars only — behaves like array_map. */
+    int exitCode;
+    char *out = runClox(
+        "fun double(x) { return x * 2; }\n"
+        "var r = array_flat_map([1, 2, 3], double);\n"
+        "print array_length(r);\n"
+        "print array_get(r, 0);\n"
+        "print array_get(r, 1);\n"
+        "print array_get(r, 2);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-flat-map-scalar: unexpected non-zero exit: %s", out);
+    } else if (strcmp(out, "3\n2\n4\n6\n") != 0) {
+        fail("stdlib/array-flat-map-scalar: unexpected output: '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_flat_map_mixed(void) {
+    /* Some returns are arrays, some scalars. */
+    int exitCode;
+    char *out = runClox(
+        "fun m(x) {\n"
+        "  if (x == 2) { return [20, 21]; }\n"
+        "  return x;\n"
+        "}\n"
+        "var r = array_flat_map([1, 2, 3], m);\n"
+        "print array_length(r);\n"
+        "print array_get(r, 0);\n"
+        "print array_get(r, 1);\n"
+        "print array_get(r, 2);\n"
+        "print array_get(r, 3);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-flat-map-mixed: unexpected non-zero exit: %s", out);
+    } else if (strcmp(out, "4\n1\n20\n21\n3\n") != 0) {
+        fail("stdlib/array-flat-map-mixed: unexpected output: '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_flat_map_empty(void) {
+    int exitCode;
+    char *out = runClox(
+        "fun f(x) { return [x]; }\n"
+        "var r = array_flat_map([], f);\n"
+        "print array_length(r);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-flat-map-empty: unexpected non-zero exit: %s", out);
+    } else if (strcmp(out, "0\n") != 0) {
+        fail("stdlib/array-flat-map-empty: unexpected output: '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_flat_map_empty_inner(void) {
+    /* Mapper may return empty arrays — contribute nothing. */
+    int exitCode;
+    char *out = runClox(
+        "fun maybe(x) {\n"
+        "  if (x == 2) { return []; }\n"
+        "  return [x];\n"
+        "}\n"
+        "var r = array_flat_map([1, 2, 3], maybe);\n"
+        "print array_length(r);\n"
+        "print array_get(r, 0);\n"
+        "print array_get(r, 1);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-flat-map-empty-inner: unexpected non-zero exit: %s", out);
+    } else if (strcmp(out, "2\n1\n3\n") != 0) {
+        fail("stdlib/array-flat-map-empty-inner: unexpected output: '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_flat_map_no_recurse(void) {
+    /* Nested arrays inside mapped arrays are NOT flattened further. */
+    int exitCode;
+    char *out = runClox(
+        "fun nest(x) { return [[x]]; }\n"
+        "var r = array_flat_map([1, 2], nest);\n"
+        "print array_length(r);\n"
+        "print array_length(array_get(r, 0));\n"
+        "print array_get(array_get(r, 0), 0);\n"
+        "print array_get(array_get(r, 1), 0);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-flat-map-no-recurse: unexpected non-zero exit: %s", out);
+    } else if (strcmp(out, "2\n1\n1\n2\n") != 0) {
+        fail("stdlib/array-flat-map-no-recurse: unexpected output: '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_flat_map_does_not_mutate(void) {
+    int exitCode;
+    char *out = runClox(
+        "var arr = [1, 2];\n"
+        "fun pair(x) { return [x, x]; }\n"
+        "var r = array_flat_map(arr, pair);\n"
+        "print array_length(arr);\n"
+        "print array_get(arr, 0);\n"
+        "print array_get(arr, 1);\n"
+        "print array_length(r);\n",
+        &exitCode);
+    if (exitCode != 0) {
+        fail("stdlib/array-flat-map-no-mutate: unexpected non-zero exit: %s", out);
+    } else if (strcmp(out, "2\n1\n2\n4\n") != 0) {
+        fail("stdlib/array-flat-map-no-mutate: unexpected output: '%s'", out);
+    } else {
+        pass();
+    }
+    free(out);
+}
+
+static void test_array_flat_map_wrong_arg_count(void) {
+    int exitCode;
+    char *out1 = runClox("var t = array_flat_map([1]);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-flat-map-argc-1: expected non-zero exit");
+    } else {
+        pass();
+    }
+    free(out1);
+    char *out2 = runClox(
+        "fun f(x) { return x; }\n"
+        "var t = array_flat_map([1], f, f);\n",
+        &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-flat-map-argc-3: expected non-zero exit");
+    } else {
+        pass();
+    }
+    free(out2);
+}
+
+static void test_array_flat_map_wrong_type(void) {
+    int exitCode;
+    char *out1 = runClox(
+        "fun f(x) { return x; }\n"
+        "var t = array_flat_map(42, f);\n",
+        &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-flat-map-type-arr: expected non-zero exit");
+    } else {
+        pass();
+    }
+    free(out1);
+    char *out2 = runClox("var t = array_flat_map([1], 99);\n", &exitCode);
+    if (exitCode == 0) {
+        fail("stdlib/array-flat-map-type-fn: expected non-zero exit");
+    } else {
+        pass();
+    }
+    free(out2);
+}
+
 
 static void test_array_group_by_three_groups(void) {
     /* Three distinct keys, in the order they first appear.
@@ -9238,6 +10016,12 @@ int main(void) {
     test_array_union_does_not_mutate();
     test_array_union_wrong_arg_count();
     test_array_union_wrong_type();
+    /* Stage 59: array_union with optional keyFn. */
+    test_array_union_by_key_basic();
+    test_array_union_by_key_arr2_extras();
+    test_array_union_by_key_objects();
+    test_array_union_by_key_omitted();
+    test_array_union_by_key_wrong_type();
     /* Stage 57: array_difference. */
     test_array_difference_basic();
     test_array_difference_empty_inputs();
@@ -9250,6 +10034,40 @@ int main(void) {
     test_array_difference_does_not_mutate();
     test_array_difference_wrong_arg_count();
     test_array_difference_wrong_type();
+    /* Stage 60: array_difference with optional keyFn. */
+    test_array_difference_by_key_basic();
+    test_array_difference_by_key_multiset();
+    test_array_difference_by_key_objects();
+    test_array_difference_by_key_omitted();
+    test_array_difference_by_key_wrong_type();
+    /* Stage 61: array_slice(arr, start, end?). */
+    test_array_slice_basic();
+    test_array_slice_omit_end();
+    test_array_slice_negative_indices();
+    test_array_slice_clamp_and_empty();
+    test_array_slice_does_not_mutate();
+    test_array_slice_full_copy();
+    test_array_slice_wrong_arg_count();
+    test_array_slice_wrong_type();
+    /* Stage 62: array_partition(arr, predicate) -> [pass, fail]. */
+    test_array_partition_basic();
+    test_array_partition_empty();
+    test_array_partition_all_pass();
+    test_array_partition_all_fail();
+    test_array_partition_truthiness();
+    test_array_partition_does_not_mutate();
+    test_array_partition_wrong_arg_count();
+    test_array_partition_wrong_type();
+    /* Stage 63: array_flat_map(arr, mapper) -> array. */
+    test_array_flat_map_basic();
+    test_array_flat_map_scalar_mapper();
+    test_array_flat_map_mixed();
+    test_array_flat_map_empty();
+    test_array_flat_map_empty_inner();
+    test_array_flat_map_no_recurse();
+    test_array_flat_map_does_not_mutate();
+    test_array_flat_map_wrong_arg_count();
+    test_array_flat_map_wrong_type();
     /* Stage 29: string_split with limit. */
     test_string_split_with_limit();
     test_string_split_limit_zero();
