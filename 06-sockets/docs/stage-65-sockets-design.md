@@ -72,8 +72,15 @@ layer is already understood.
 | **65.5** | non-blocking + `select()`/`poll()` multiplexing with per-connection buffers | A stream has no message boundaries — you must frame it yourself |
 | **65.6** | HTTP/1.1 server from the wire: request line, headers, `Content-Length`, keep-alive, 404 | HTTP is text with rules; the server is a state machine over bytes |
 | **65.7** | HTTP/1.1 client from the wire (no `curl`, no libraries) | The client side is where framing bugs bite first |
-| **65.8** | DNS from scratch: build the query packet, parse the response, cache it | A lookup is a UDP exchange, not a function call |
-| **65.9** | two concurrency models on one server: `fork()` vs event loop, measured | The tradeoff is throughput and latency, not taste |
+| **65.8** | DNS from scratch, first half -- the packets: build a query, parse a response | A name can be compressed, and a pointer can land in the middle of another name |
+| **65.9** | DNS from scratch, second half -- the transport and the cache: send over UDP, read, cache | A lookup is a UDP exchange, not a function call |
+| **65.10** | two concurrency models on one server: `fork()` vs event loop, measured | The tradeoff is throughput and latency, not taste |
+
+**Split note (2026-11-11):** 65.8 was split into two stages after two
+judgment cycles in a row blew the 900-second cap. 65.8 (the packets)
+shipped as `20a0344`; 65.9 (the transport and the cache) is the
+remainder, and the concurrency measurement moved to 65.10. **A stage
+has to be sized to the window, not to the ladder.**
 
 **Ordering note:** 65.5 before 65.6 is deliberate. An HTTP server written on top of a
 byte-stream model you do not yet understand produces a server whose bugs are all framing
