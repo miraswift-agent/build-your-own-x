@@ -408,6 +408,23 @@ impl TreeBuilder {
 
     /// Formatting elements (HTML Living Standard §13.2.8) — the set the
     /// adoption agency algorithm reconstructs when they are misnested.
+    /// §13.2.8: the elements in the "special" category.
+    ///
+    /// The "any other end tag" handling walks the stack from the top and
+    /// gives up at a special element: the end tag is a parse error there
+    /// and nothing is popped.
+    const SPECIAL_ELEMENTS: &[&str] = &[
+        "address", "applet", "area", "article", "aside", "base", "basefont", "bgsound",
+        "blockquote", "body", "br", "button", "caption", "center", "col", "colgroup", "dd",
+        "details", "dir", "div", "dl", "dt", "embed", "fieldset", "figcaption", "figure",
+        "footer", "form", "frame", "frameset", "h1", "h2", "h3", "h4", "h5", "h6", "head",
+        "header", "hgroup", "hr", "html", "iframe", "img", "input", "keygen", "li", "link",
+        "listing", "main", "marquee", "menu", "meta", "nav", "noembed", "noframes",
+        "noscript", "object", "ol", "p", "param", "plaintext", "pre", "script", "section",
+        "select", "source", "style", "summary", "table", "tbody", "td", "template",
+        "textarea", "tfoot", "th", "thead", "title", "tr", "track", "ul", "wbr", "xmp",
+    ];
+
     const FORMATTING_ELEMENTS: &[&str] = &[
         "a", "b", "big", "code", "em", "font", "i", "nobr", "s", "small", "strike", "strong", "tt",
         "u",
@@ -533,6 +550,16 @@ impl TreeBuilder {
 
             // Steps 10+: the inner loop.
             if !inner(self, id) {
+                // §13.2.8: when the inner step is finished, the outer
+                // loop removes the formatting element from the list of
+                // active formatting elements. The entry is found by the
+                // element's id, not by the index: the inner step can
+                // shrink the list (the Noah's Ark clause fires while
+                // it re-opens elements), and a stale index would remove
+                // the wrong entry -- or none at all.
+                if let Some(pos) = self.afe.iter().position(|e| e.id == Some(id)) {
+                    self.afe.remove(pos);
+                }
                 return OuterOutcome::InnerCompleted;
             }
         }
@@ -557,6 +584,57 @@ impl TreeBuilder {
     /// Scope: this implements the re-opening step for misnested formatting
     /// elements. The full algorithm's list-of-active-formatting-elements
     /// bookkeeping, and its `<a>` special case, are still not implemented.
+    /// §13.2.8: the adoption agency algorithm, as the tree runs it.
+    ///
+    /// The outer loop (slice 5) decides whether the inner step runs: it
+    /// searches the list of active formatting elements for the subject,
+    /// bounded by the last marker, and stops when the element is not on
+    /// the stack of open elements or is out of scope. The inner step is
+    /// this component's re-opening of the misnested formatting elements.
+    ///
+    /// When the outer loop finds no formatting element with that name,
+    /// §13.2.8 says to act as described in the "any other end tag"
+    /// entry -- which is not the same as popping to the tag: the walk
+    /// stops at a *special* element.
+    fn adoption_agency_wired(&mut self, tag: &str) -> OuterOutcome {
+        let outcome = self.adoption_agency_outer(tag, &mut |b, _id| {
+            b.adoption_agency(tag);
+            false // the inner step is finished
+        });
+        if matches!(outcome, OuterOutcome::NoSuchElement) {
+            self.any_other_end_tag(tag);
+        }
+        outcome
+    }
+
+    /// §13.2.8: the "any other end tag" handling.
+    ///
+    /// The end tag's name is compared against the elements on the stack,
+    /// from the top down. If it matches, the stack is popped down to and
+    /// including that element. If a *special* element comes first, the
+    /// search gives up there and nothing is popped.
+    fn any_other_end_tag(&mut self, tag: &str) {
+        for &id in self.open.iter().rev() {
+            let name = match self.doc.node(id).tag_name() {
+                Some(n) => n,
+                None => continue,
+            };
+            if name == tag {
+                self.generate_implied_end_tags(Some(tag));
+                while let Some(&top) = self.open.last() {
+                    self.open.pop();
+                    if top == id {
+                        break;
+                    }
+                }
+                return;
+            }
+            if Self::SPECIAL_ELEMENTS.contains(&name) {
+                return;
+            }
+        }
+    }
+
     fn adoption_agency(&mut self, tag: &str) {
         let Some(target_idx) = self
             .open
@@ -1226,7 +1304,7 @@ impl TreeBuilder {
                         | "u"
                 ) =>
             {
-                self.adoption_agency(name);
+                self.adoption_agency_wired(name);
             }
 
             // Generic end tags
@@ -1608,6 +1686,44 @@ mod tests {
         assert_eq!(iterations, 1);
     }
 
+// --- the adoption agency, wired into the tree (§13.2.8) ---
+
+    #[test]
+    fn the_formatting_element_leaves_the_list_when_the_inner_completes() {
+        let mut b = TreeBuilder::new();
+        b.insert_and_push("b", vec![]);
+        assert_eq!(b.afe.len(), 1);
+        let outcome = b.adoption_agency_wired("b");
+        assert_eq!(outcome, OuterOutcome::InnerCompleted);
+        assert!(b.afe.is_empty(), "the element must leave the list");
+    }
+
+    #[test]
+    fn an_out_of_scope_element_is_left_open() {
+        let mut b = TreeBuilder::new();
+        let bold = b.insert_and_push("b", vec![]);
+        b.insert_and_push("table", vec![]);
+        // The <table> is a scope boundary, so the <b> is in the list and
+        // on the stack but out of scope: the outer loop stops, and
+        // nothing is popped.
+        let outcome = b.adoption_agency_wired("b");
+        assert_eq!(outcome, OuterOutcome::NotInScope);
+        assert!(b.open.contains(&bold), "the <b> must still be open");
+    }
+
+    #[test]
+    fn the_fallback_stops_at_a_special_element() {
+        let mut b = TreeBuilder::new();
+        let bold = b.insert_and_push("b", vec![]);
+        b.insert_and_push("button", vec![]);
+        // The <button> pushed a marker, so the search for the <b> is
+        // bounded before it; the fallback walks the stack and gives up
+        // at the special <button> without popping anything.
+        let outcome = b.adoption_agency_wired("b");
+        assert_eq!(outcome, OuterOutcome::NoSuchElement);
+        assert!(b.open.contains(&bold), "the <b> must still be open");
+    }
+
 }
 
     // --- marker semantics (§13.2.6) ---
@@ -1680,4 +1796,7 @@ mod tests {
         // marker goes, the marker goes, and what came BEFORE it stays
         // in scope.
         assert_eq!(list_shape(&b), vec!["b"]);
+    
+
+    
     }
