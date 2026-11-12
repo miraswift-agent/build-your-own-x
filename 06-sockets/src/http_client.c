@@ -326,6 +326,8 @@ static http_parse_status chunked_next(http_response_parser *p, http_response *ou
     if (!p->body_started) {
         p->body_start = body_start;
         p->body_fed_upto = body_start;
+        p->decoded_len = 0;
+        http_chunk_decoder_init(&p->chunker);
         p->body_started = 1;
     }
     if (p->len > p->body_fed_upto) {
@@ -356,20 +358,40 @@ static http_parse_status chunked_next(http_response_parser *p, http_response *ou
         if (cst == HTTP_CHUNK_ERROR) {
             return HTTP_PARSE_ERROR;
         }
-        /* The terminal chunk: the body is complete. */
+        /* The terminal chunk: the body is complete. What arrived after
+         * it is the start of the NEXT message on this connection, so it
+         * is kept -- the bytes live in the decoder, not in the parser's
+         * buffer, because the decoder consumed the framing. */
         memcpy(out->body, p->decoded, p->decoded_len);
         out->body[p->decoded_len] = '\0';
         out->body_len = p->decoded_len;
         out->framed_by_length = 0;
         out->framed_by_chunked = 1;
-        p->len = 0;
+        {
+            const char *pend = NULL;
+            size_t pending = http_chunk_decoder_pending(&p->chunker, &pend);
+            if (pending > 0) {
+                memcpy(p->buf, pend, pending);
+            }
+            p->len = pending;
+        }
+        http_chunk_decoder_init(&p->chunker);
         p->body_started = 0;
         p->body_fed_upto = 0;
+        p->decoded_len = 0;
         return HTTP_PARSE_OK;
     }
 }
 
 /* ---------- the parser ---------- */
+
+size_t http_response_parser_pending(const http_response_parser *p)
+{
+    if (p == NULL) {
+        return 0;
+    }
+    return p->len;
+}
 
 void http_response_parser_init(http_response_parser *p)
 {
@@ -430,6 +452,8 @@ http_parse_status http_response_parser_next(http_response_parser *p, http_respon
     out->body_len = cl;
     out->framed_by_length = 1;
     {
+        /* What follows the body is the start of the next message on this
+         * connection: keep it. */
         size_t consumed = body_start + cl;
         memmove(p->buf, p->buf + consumed, p->len - consumed);
         p->len -= consumed;

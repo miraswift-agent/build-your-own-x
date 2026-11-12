@@ -544,6 +544,15 @@ void http_chunk_decoder_init(http_chunk_decoder *d)
     d->done = 0;
 }
 
+size_t http_chunk_decoder_pending(const http_chunk_decoder *d, const char **out)
+{
+    if (d == NULL || out == NULL) {
+        return 0;
+    }
+    *out = d->buf + d->pos;
+    return d->len - d->pos;
+}
+
 int http_chunk_decoder_feed(http_chunk_decoder *d, const void *data, size_t len)
 {
     if (!d || (!data && len > 0)) {

@@ -79,6 +79,15 @@ typedef struct {
 
 void http_response_parser_init(http_response_parser *p);
 
+/* The bytes the parser is holding for the NEXT message on this
+ * connection (0 when it is empty).
+ *
+ * A connection carries messages back to back, so a response can end
+ * before the bytes that follow it have been read. The parser keeps
+ * those bytes: they are the start of the next response, and throwing
+ * them away would lose a message the peer has already sent. */
+size_t http_response_parser_pending(const http_response_parser *p);
+
 /* Add bytes to the parser's buffer. Returns 0, or -1 with errno set to
  * ENOBUFS if the buffer cannot hold them. */
 int http_response_parser_feed(http_response_parser *p, const void *data, size_t len);

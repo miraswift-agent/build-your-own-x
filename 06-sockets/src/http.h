@@ -159,6 +159,11 @@ typedef struct {
 
 void http_chunk_decoder_init(http_chunk_decoder *d);
 
+/* The bytes that arrived after the terminal chunk: the start of the next
+ * message on the same connection. *out points into the decoder's buffer
+ * and is valid until the next feed. */
+size_t http_chunk_decoder_pending(const http_chunk_decoder *d, const char **out);
+
 /* Add bytes to the decoder. Returns 0, or -1 with errno set to ENOBUFS
  * if the buffer cannot hold them (the decoded prefix is dropped first,
  * so room is made as the caller goes). */
