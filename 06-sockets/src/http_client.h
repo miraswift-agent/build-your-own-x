@@ -129,7 +129,21 @@ int http_response_parser_feed(http_response_parser *p, const void *data, size_t 
  *
  * HTTP_PARSE_OK when the response is complete, HTTP_PARSE_NEED_MORE when
  * it is not (and the peer has not closed), HTTP_PARSE_ERROR when it will
- * never be valid. */
+ * never be valid.
+ *
+ * Stage 65.24: a response whose Transfer-Encoding names a transfer
+ * coding this client cannot apply is an error, and the reason is
+ * ENOTSUP -- "not implemented", the same reason the server uses for a
+ * request it cannot frame (Stage 65.23). The codings are applied in
+ * turn, so a body that still carries one we cannot undo is not a body
+ * this client can deliver, and out.body means "the body".
+ *
+ * The refusal happens in the head: the client does not wait for a body
+ * it has already decided it cannot read.
+ *
+ * On the error path the output is NOT filled in -- a caller must not
+ * read a response the parser refused. (The server's request parser
+ * zeroes its output; this one does not.) */
 http_parse_status http_response_parser_next(http_response_parser *p, http_response *out);
 
 /* The peer closed: complete an EOF-framed response.

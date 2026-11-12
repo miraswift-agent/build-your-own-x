@@ -18,6 +18,7 @@
 #include <strings.h>
 
 #include "sockets.h"
+#include "coding.h"
 
 static int ieq(const char *a, const char *b)
 {
@@ -222,77 +223,23 @@ static int parse_content_length(http_request *r)
  * Chunked is the only one: it is the only coding we can decode (the
  * decoder Stage 65.11 wrote). RFC 9112 6.1: "A server that receives a
  * request message with a transfer coding it does not understand SHOULD
- * respond with 501 (Not Implemented)." */
-static int coding_is_understood(const char *coding, size_t len)
+ * respond with 501 (Not Implemented)."
+ *
+ * The set is the server's own -- the list is read by the shared scan
+ * in coding.h, but what this server can APPLY is a property of this
+ * program, not of the header. */
+static int server_coding_is_understood(const char *coding, size_t len)
 {
-    return len == 7 && strncasecmp(coding, "chunked", 7) == 0;
-}
-
-/* What the Transfer-Encoding header says, read once.
- *
- * The coding header is a LIST, and each coding in it is applied to the
- * body in turn: "gzip, chunked" means the content was compressed and
- * then the compressed content was chunked. Two questions come out of
- * that list, and one reading answers both:
- *
- *   - is the FINAL coding chunked? Only the last coding frames the
- *     body (RFC 9112 6.3 item 4), so only the last one has to be
- *     chunked for the length to be determinate.
- *   - does the list name a coding we do not understand? We apply
- *     chunked and nothing else (RFC 9112 6.1).
- *
- * A list may carry EMPTY elements -- RFC 9110 5.6.1: "a recipient MUST
- * accept lists that satisfy the following syntax: #element => [ element
- * ] *( OWS "," OWS [ element ] )" -- so an empty element is not a
- * coding: it is neither the final coding nor an unknown one. */
-typedef struct {
-    int final_is_chunked;   /* the last non-empty element is "chunked" */
-    int has_unknown;        /* some non-empty element is a coding we cannot apply */
-} coding_scan;
-
-static void scan_codings(const char *v, coding_scan *out)
-{
-    const char *p;
-
-    memset(out, 0, sizeof(*out));
-    if (v == NULL) {
-        return;
-    }
-    p = v;
-    for (;;) {
-        const char *comma = strchr(p, ',');
-        const char *end = comma ? comma : p + strlen(p);
-        const char *s = p;
-        const char *e = end;
-
-        while (s < e && (*s == ' ' || *s == '\t')) {
-            s++;
-        }
-        while (e > s && (e[-1] == ' ' || e[-1] == '\t')) {
-            e--;
-        }
-        if (e > s) {
-            /* A non-empty element names a coding. The last one seen is
-             * the final coding, and the scan remembers whether any of
-             * them is one we cannot apply. */
-            out->final_is_chunked = coding_is_understood(s, (size_t)(e - s));
-            if (!out->final_is_chunked) {
-                out->has_unknown = 1;
-            }
-        }
-        if (!comma) {
-            break;
-        }
-        p = comma + 1;
-    }
+    return http_coding_is_chunked(coding, len);
 }
 
 /* Is the body framed by chunked transfer-encoding? */
 static int request_is_chunked(const http_request *r)
 {
-    coding_scan cs;
+    http_coding_scan cs;
 
-    scan_codings(http_header_get(r, "Transfer-Encoding"), &cs);
+    http_coding_scan_list(http_header_get(r, "Transfer-Encoding"),
+                          server_coding_is_understood, &cs);
     return cs.final_is_chunked;
 }
 
@@ -406,9 +353,9 @@ http_parse_status http_parser_next(http_parser *p, http_request *out)
         const char *te = http_header_get(out, "Transfer-Encoding");
 
         if (te != NULL) {
-            coding_scan cs;
+            http_coding_scan cs;
 
-            scan_codings(te, &cs);
+            http_coding_scan_list(te, server_coding_is_understood, &cs);
 
             /* Stage 65.22: the body length cannot be determined. */
             if (!cs.final_is_chunked) {

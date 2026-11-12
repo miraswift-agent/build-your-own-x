@@ -34,6 +34,7 @@
 #include <sys/socket.h>
 
 #include "sockets.h"
+#include "coding.h"
 
 /* ---------- small helpers ---------- */
 
@@ -221,37 +222,33 @@ static int header_content_length(const http_response *r, long *out)
     return 0;
 }
 
-/* Whether the response's final transfer-coding is "chunked".
+/* The transfer codings this client understands.
  *
- * The header is a comma-separated list of codings, and the LAST one is
- * the coding that framed the body: "gzip, chunked" is a chunked body
- * inside a gzip coding. */
-static int header_is_chunked(const http_response *r)
+ * Chunked is the only one -- the same set the server has, for the same
+ * reason: RFC 9112 6.1 says "A recipient MUST be able to parse the
+ * chunked transfer coding" and says nothing about the others, and we
+ * have no decoder for any other coding.
+ *
+ * A coding this client cannot apply is a coding it cannot UNDO: the
+ * codings are applied in turn, so a body that still carries one of them
+ * is not the body the caller asked for. The set is the client's own --
+ * what a program can apply is a property of the program. */
+static int client_coding_is_understood(const char *coding, size_t len)
 {
-    const char *v = http_response_header_get(r, "Transfer-Encoding");
-    const char *end;
-    size_t len;
+    return http_coding_is_chunked(coding, len);
+}
 
-    if (v == NULL) {
-        return 0;
-    }
-    /* Walk to the last coding. */
-    for (;;) {
-        const char *comma = strchr(v, ',');
-        if (comma == NULL) {
-            break;
-        }
-        v = comma + 1;
-    }
-    while (*v == ' ' || *v == '\t') {
-        v++;
-    }
-    end = v + strlen(v);
-    while (end > v && (end[-1] == ' ' || end[-1] == '\t')) {
-        end--;
-    }
-    len = (size_t)(end - v);
-    return len == 7 && strncasecmp(v, "chunked", 7) == 0;
+/* What the response's Transfer-Encoding header says, read once.
+ *
+ * The list is read by the shared scan in coding.h -- the same one the
+ * server uses, so the two roles cannot drift apart. (They had: the
+ * client was still using the old scan, the text after the last comma,
+ * so it read "Transfer-Encoding: chunked," as "no coding" and handed
+ * back the raw chunk framing as the body.) */
+static void response_coding_scan(const http_response *r, http_coding_scan *out)
+{
+    http_coding_scan_list(http_response_header_get(r, "Transfer-Encoding"),
+                          client_coding_is_understood, out);
 }
 
 /* ---------- the head: status line, headers, and where the body starts ---------- */
@@ -300,7 +297,32 @@ static http_parse_status parse_head(http_response_parser *p, http_response *out,
         return HTTP_PARSE_ERROR;
     }
     out->content_length = cl;
-    out->framed_by_chunked = header_is_chunked(out);
+    {
+        http_coding_scan cs;
+
+        response_coding_scan(out, &cs);
+        if (cs.has_unknown) {
+            /* Stage 65.24: the response names a transfer coding this
+             * client cannot apply.
+             *
+             * The mirror of Stage 65.23, on the other side of the
+             * wire. The server could refuse such a REQUEST with 501 --
+             * it chooses not to send a body it cannot frame. The client
+             * has no such choice: the body is already on the wire, and
+             * the codings are applied in turn, so the bytes that arrive
+             * still carry a coding we cannot undo. out.body means "the
+             * body", and a body this client cannot decode is not one.
+             *
+             * The refusal happens HERE, in the head: the client does
+             * not wait for a body it has already decided it cannot
+             * read. The reason travels out in errno -- ENOTSUP, the
+             * same reason the server used, because it is the same
+             * reason: "not implemented". */
+            errno = ENOTSUP;
+            return HTTP_PARSE_ERROR;
+        }
+        out->framed_by_chunked = cs.final_is_chunked;
+    }
     if (out->framed_by_chunked) {
         /* Transfer-Encoding overrides Content-Length. A message with
          * both is the classic request-smuggling shape, and the safe
