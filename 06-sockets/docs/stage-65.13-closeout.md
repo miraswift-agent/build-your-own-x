@@ -75,10 +75,16 @@ for byte.
 client used to know two. The third was sitting in the response
 headers the whole time, waiting to be read.
 
-**Transfer-Encoding overrides Content-Length.** RFC 9112 §6.1: a
+**Transfer-Encoding overrides Content-Length.** RFC 9112 §6.3 item 3: a
 message carrying both is the classic request-smuggling shape, and the
 safe reading is the one that trusts the coding that is actually on the
 wire. The client ignores the length and reads the coding.
+
+> **Citation corrected 2026-11-12 (Stage 65.21):** the precedence rule is
+> RFC 9112 **§6.3 item 3** (*Message Body Length*), not §6.1 — §6.1
+> defines the `Transfer-Encoding` field. The rule also says such a
+> message "ought to be handled as an error", not "MUST respond 400".
+> See `stage-65.21-closeout.md` §2.
 
 **The coding header is a list, and the last coding frames the body.**
 `gzip, chunked` is a chunked body inside a gzip coding. (The client

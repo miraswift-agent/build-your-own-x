@@ -123,11 +123,17 @@ more than a test that only checks the connection stays in sync.
   body) and **no `405`** for a method the server does not implement —
   the two smaller conformance gaps, and the alternatives if the next
   stage proves too big for a judgment window.
-- **The request-smuggling rule is not implemented**: RFC 9112 §6.1 says
-  a server **MUST** answer `400` to a request carrying both
-  `Transfer-Encoding` and `Content-Length`. Ours uses the
+- **The request-smuggling rule is not implemented**: RFC 9112 §6.3 item 3
+  says a message carrying both a `Transfer-Encoding` and a
+  `Content-Length` **ought to be handled as an error**. Ours uses the
   `Content-Length` and ignores the coding — the shape that rule exists
   to close. Named, not silently patched.
+
+> **Citation corrected 2026-11-12 (Stage 65.21):** the precedence rule is
+> RFC 9112 **§6.3 item 3** (*Message Body Length*), not §6.1 — §6.1
+> defines the `Transfer-Encoding` field. The rule also says such a
+> message "ought to be handled as an error", not "MUST respond 400".
+> See `stage-65.21-closeout.md` §2.
 - **The echo answers any method** — the server does not dispatch on the
   method at all (that is the `405` stage's work).
 

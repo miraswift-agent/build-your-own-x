@@ -29,11 +29,17 @@ chunk are the start of the next message**, not part of this one.
 
 ## 2. A coding overrides a length
 
-RFC 9112 §6.1: when a request carries both `Transfer-Encoding` and
-`Content-Length`, the coding that is on the wire frames the body. The
-**safe** reading trusts the coding — a length in a request that also
-says "chunked" is exactly the shape that lets one end of a connection
-and the other disagree about where the body ends.
+RFC 9112 §6.3 item 3: when a request carries both `Transfer-Encoding`
+and `Content-Length`, the coding that is on the wire frames the body.
+The **safe** reading trusts the coding — a length in a request that
+also says "chunked" is exactly the shape that lets one end of a
+connection and the other disagree about where the body ends.
+
+> **Citation corrected 2026-11-12 (Stage 65.21):** the precedence rule is
+> RFC 9112 **§6.3 item 3** (*Message Body Length*), not §6.1 — §6.1
+> defines the `Transfer-Encoding` field. The rule also says such a
+> message "ought to be handled as an error", not "MUST respond 400".
+> See `stage-65.21-closeout.md` §2.
 
 **The client learned this rule in Stage 65.13; the server applies it
 here.** The test makes the length a lie (`Content-Length: 3`, a
@@ -108,10 +114,11 @@ fed from the buffer afresh each time, so nothing is half-consumed.
 ## 6. What this stage deliberately does *not* do
 
 - **The loud half of the smuggling rule is still missing.** The *safe*
-  half is in (the coding wins), but RFC 9112 §6.1 also says a server
-  **MUST** answer `400` to a request carrying both a coding and a
-  length. Ours still answers it — with the chunked body — rather than
-  refusing it. Named, not silently patched.
+  half is in (the coding wins), but the same RFC 9112 §6.3 item 3
+  paragraph says such a message **ought to be handled as an error**. Ours
+  still answers it — with the chunked body — rather than refusing it.
+  Named, not silently patched. (Stage 65.21 shipped the loud half: the
+  server now refuses with `400` and closes the connection.)
 - **No `gzip` transfer coding.** The coding list's *last* coding frames
   the body, so `gzip, chunked` is read as chunked ✓; the gzip
   *content* is not decoded (it is not decoded in the response path

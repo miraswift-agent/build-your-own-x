@@ -179,7 +179,7 @@ that moves **nothing** is `EPIPE` — and the new path uses it too.
 ## 8. Next
 
 **Stage 65.21 — the server answers `400` to a request that carries both
-a coding and a length** (RFC 9112 §6.1). The *safe* half of that rule
+a coding and a length** (RFC 9112 §6.3 item 3). The *safe* half of that rule
 shipped in 65.19 (the coding on the wire frames the body); the *loud*
 half — refusing the request outright — is the last named gap in this
 arc, and it is small: one more rule in the parser's branch, one test
