@@ -278,7 +278,20 @@ int http_client_connection_write_chunked_end(http_client_connection *c);
  * for a body: RFC 9112 6.3 item 1 says such a response "is always
  * terminated by the first empty line after the header fields". The
  * Content-Length in that head is a claim about the body the matching
- * GET would have returned, and the bytes are not coming. */
+ * GET would have returned, and the bytes are not coming.
+ *
+ * Stage 65.31: the STATUS may decide the same thing. RFC 9112 6.3 item
+ * 1 covers a 1xx, 204 and 304 response too: each "is always terminated
+ * by the first empty line after the header fields, regardless of the
+ * header fields present in the message". So a 204 that carries
+ * "Content-Length: 5" has no body -- the length is reported (it is a
+ * claim) but the bytes are not waited for.
+ *
+ * A 1xx is INTERIM: it is a complete message, but it is not the answer
+ * to the request, and the final response follows it. This call returns
+ * the final response; the interim is read past. If the peer closes
+ * after an interim, the request is unanswered and the reason is
+ * HTTP_REASON_INCOMPLETE (the same reason a truncated body has). */
 int http_client_connection_read_response(http_client_connection *c, http_response *out);
 
 /* Write a request on the connection and read the response that answers

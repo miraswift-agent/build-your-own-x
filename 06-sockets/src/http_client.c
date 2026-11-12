@@ -259,6 +259,38 @@ static void response_coding_scan(const http_response *r, http_coding_scan *out)
 
 /* ---------- the head: status line, headers, and where the body starts ---------- */
 
+/* Stage 65.31: does the STATUS alone say that this message has no body?
+ *
+ * RFC 9112 6.3 item 1 -- the first item of the precedence list:
+ *
+ *   "Any response to a HEAD request and any response with a 1xx
+ *   (Informational), 204 (No Content), or 304 (Not Modified) status code
+ *   is always terminated by the first empty line after the header fields,
+ *   regardless of the header fields present in the message, and thus
+ *   cannot contain a message body or trailer section."
+ *
+ * The HEAD half of that sentence needs the conversation -- only the
+ * connection knows it asked for HEAD (Stage 65.28). These three are
+ * different: the status line carries the answer, so the parser can see
+ * it. The rule does not care where the knowledge comes from, only that
+ * it is there.
+ *
+ * "Regardless of the header fields present in the message" is the load
+ * bearing half: a 204 that carries "Content-Length: 5" still has no
+ * body, and a 204 that says "Transfer-Encoding: chunked" is not
+ * chunk-decoded. */
+static int status_has_no_body(int status)
+{
+    return status == 204 || status == 304 || (status >= 100 && status < 200);
+}
+
+/* Stage 65.31: an interim response is a complete message that is not
+ * the answer to the request -- the final response follows it. */
+static int status_is_interim(int status)
+{
+    return status >= 100 && status < 200;
+}
+
 static http_parse_status parse_head(http_response_parser *p, http_response *out,
                                     size_t *body_start)
 {
@@ -267,6 +299,7 @@ static http_parse_status parse_head(http_response_parser *p, http_response *out,
     size_t hdr_start;
     size_t hdr_end;
     long cl;
+    int bodyless;
 
     if (p->len == 0) {
         return HTTP_PARSE_NEED_MORE;
@@ -279,6 +312,9 @@ static http_parse_status parse_head(http_response_parser *p, http_response *out,
         errno = EPROTO;
         return HTTP_PARSE_ERROR;
     }
+    /* Stage 65.31: the status may already have decided that this
+     * message has no body at all. */
+    bodyless = status_has_no_body(out->status);
     blank = find_blank(p->buf, p->len);
     if (blank == (size_t)-1) {
         return HTTP_PARSE_NEED_MORE;
@@ -311,8 +347,11 @@ static http_parse_status parse_head(http_response_parser *p, http_response *out,
          * used does not make the message invalid: there is no body for
          * it to be invalid about. The length is still reported when it
          * can be read, because it is a claim about the body the
-         * matching GET would have returned. */
-        if (!p->no_body) {
+         * matching GET would have returned.
+         *
+         * Stage 65.31: the same precedence holds for a 1xx, 204 or 304
+         * -- the status decides, and the status is in the message. */
+        if (!p->no_body && !bodyless) {
             errno = EBADMSG;
             return HTTP_PARSE_ERROR;
         }
@@ -339,9 +378,17 @@ static http_parse_status parse_head(http_response_parser *p, http_response *out,
              * not wait for a body it has already decided it cannot
              * read. The reason travels out in errno -- ENOTSUP, the
              * same reason the server used, because it is the same
-             * reason: "not implemented". */
-            errno = ENOTSUP;
-            return HTTP_PARSE_ERROR;
+             * reason: "not implemented".
+             *
+             * Stage 65.31: but a message that cannot contain a body at
+             * all has nothing to decode. A 204 that names gzip is
+             * bodyless "regardless of the header fields present in the
+             * message", so the coding is meaningless and the refusal
+             * has nothing to act on. */
+            if (!bodyless) {
+                errno = ENOTSUP;
+                return HTTP_PARSE_ERROR;
+            }
         }
         out->framed_by_chunked = cs.final_is_chunked;
     }
@@ -473,6 +520,29 @@ http_parse_status http_response_parser_next(http_response_parser *p, http_respon
     if (st != HTTP_PARSE_OK) {
         return st;
     }
+    if (status_has_no_body(out->status)) {
+        /* Stage 65.31: the status decides.
+         *
+         * A 1xx, 204 or 304 response "is always terminated by the first
+         * empty line after the header fields, regardless of the header
+         * fields present in the message, and thus cannot contain a
+         * message body or trailer section" (RFC 9112 6.3 item 1).
+         *
+         * So a length in the head is not a promise -- the bytes are not
+         * coming -- and a coding is not a framing: there is no body to
+         * frame. What follows the head, if anything, is the start of
+         * the NEXT message (for a 1xx, the final response).
+         *
+         * This branch comes BEFORE the HEAD branch: an interim response
+         * does not consume the HEAD expectation, because it does not
+         * answer the request -- the final response does. */
+        out->body_len = 0;
+        out->framed_by_length = 0;
+        out->framed_by_chunked = 0;
+        memmove(p->buf, p->buf + body_start, p->len - body_start);
+        p->len -= body_start;
+        return HTTP_PARSE_OK;
+    }
     if (p->no_body) {
         /* Stage 65.28: the response to a HEAD request ends at the end of
          * the head.
@@ -560,6 +630,18 @@ http_parse_status http_response_parser_finish(http_response_parser *p, http_resp
     }
     if (st != HTTP_PARSE_OK) {
         return st;
+    }
+    if (status_has_no_body(out->status)) {
+        /* Stage 65.31: the peer closed after a 1xx, 204 or 304. That
+         * response ended at the end of its head (RFC 9112 6.3 item 1),
+         * so it is COMPLETE -- the close is the peer hanging up on a
+         * conversation it is done with, not a message that stopped
+         * early. */
+        out->body_len = 0;
+        out->framed_by_length = 0;
+        out->framed_by_chunked = 0;
+        p->len = 0;
+        return HTTP_PARSE_OK;
     }
     if (p->no_body) {
         /* Stage 65.28: the peer closed after a response to a HEAD
@@ -950,6 +1032,7 @@ int http_client_connection_read_response(http_client_connection *c, http_respons
 {
     char buf[4096];
     http_parse_status st;
+    int saw_interim = 0;
 
     if (c == NULL || c->fd < 0 || out == NULL) {
         errno = EINVAL;
@@ -963,14 +1046,30 @@ int http_client_connection_read_response(http_client_connection *c, http_respons
      * in order and the responses come back in that order, so the front
      * of the queue is this response. */
     c->parser.no_body = (c->n_inflight > 0) ? c->in_flight[0] : 0;
-    if (c->n_inflight > 0) {
-        memmove(c->in_flight, c->in_flight + 1,
-                (size_t)(c->n_inflight - 1) * sizeof(c->in_flight[0]));
-        c->n_inflight--;
-    }
     for (;;) {
         st = http_response_parser_next(&c->parser, out);
         if (st == HTTP_PARSE_OK) {
+            if (status_is_interim(out->status)) {
+                /* Stage 65.31: an interim response is a complete
+                 * message, but it is not the answer to the request --
+                 * the final response follows it. RFC 9112 15.2: "A
+                 * client MUST be able to parse one or more 1xx
+                 * responses received prior to a final response, even if
+                 * the client does not expect one."
+                 *
+                 * So the request stays in flight: the interim does not
+                 * answer it, and the expectation (a HEAD response has
+                 * no body) belongs to the final one. */
+                saw_interim = 1;
+                continue;
+            }
+            /* The final response answers the request at the front of
+             * the queue -- and only then is the queue advanced. */
+            if (c->n_inflight > 0) {
+                memmove(c->in_flight, c->in_flight + 1,
+                        (size_t)(c->n_inflight - 1) * sizeof(c->in_flight[0]));
+                c->n_inflight--;
+            }
             return 0;
         }
         if (st == HTTP_PARSE_ERROR) {
@@ -1007,6 +1106,15 @@ int http_client_connection_read_response(http_client_connection *c, http_respons
                 st = http_response_parser_finish(&c->parser, out);
                 if (st == HTTP_PARSE_OK) {
                     return 0;
+                }
+                if (saw_interim) {
+                    /* Stage 65.31: the peer closed after an interim
+                     * response. The final response never came, so the
+                     * request is unanswered -- and the reason is the
+                     * same one a truncated body has: the message did
+                     * not arrive. Not EPROTO ("there was no response"):
+                     * there was one, and it was not the answer. */
+                    errno = HTTP_REASON_INCOMPLETE;
                 }
                 if (errno == HTTP_REASON_INCOMPLETE) {
                     /* Stage 65.27: RFC 9112 6.3 item 6 -- "If the
@@ -1057,6 +1165,7 @@ int http_client_get(const char *host, uint16_t port, const char *target,
     size_t sent = 0;
     http_response_parser p;
     http_parse_status st = HTTP_PARSE_NEED_MORE;
+    int saw_interim = 0;
 
     if (host == NULL || target == NULL || out == NULL) {
         errno = EINVAL;
@@ -1103,8 +1212,26 @@ int http_client_get(const char *host, uint16_t port, const char *target,
     for (;;) {
         ssize_t n = read(fd, buf, sizeof(buf));
         if (n == 0) {
-            /* The peer closed: an EOF-framed response is complete now. */
-            st = http_response_parser_finish(&p, out);
+            /* The peer closed. But the buffer may still hold a complete
+             * response that was fed and not yet parsed -- the interim
+             * case, where the final response arrived in the same read.
+             * The parser is asked before the close is believed. */
+            st = http_response_parser_next(&p, out);
+            if (st == HTTP_PARSE_OK) {
+                if (!status_is_interim(out->status)) {
+                    break;                 /* the final response */
+                }
+                /* The peer closed after an interim response: the final
+                 * one never came. */
+                errno = HTTP_REASON_INCOMPLETE;
+                st = HTTP_PARSE_ERROR;
+            } else {
+                /* The peer closed: an EOF-framed response is complete now. */
+                st = http_response_parser_finish(&p, out);
+                if (saw_interim && st != HTTP_PARSE_OK) {
+                    errno = HTTP_REASON_INCOMPLETE;
+                }
+            }
             break;
         }
         if (n < 0) {
@@ -1125,6 +1252,12 @@ int http_client_get(const char *host, uint16_t port, const char *target,
         }
         st = http_response_parser_next(&p, out);
         if (st == HTTP_PARSE_OK) {
+            if (status_is_interim(out->status)) {
+                /* Stage 65.31: the interim response is not the answer;
+                 * the final response follows it. */
+                saw_interim = 1;
+                continue;
+            }
             break;
         }
         if (st == HTTP_PARSE_ERROR) {
