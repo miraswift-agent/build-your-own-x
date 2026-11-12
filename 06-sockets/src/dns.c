@@ -29,6 +29,13 @@ const char *dns_status_name(dns_status st)
     case DNS_ERR_COMPRESSION:  return "compression";
     case DNS_ERR_NOSPACE:      return "nospace";
     case DNS_ERR_NOTFOUND:     return "notfound";
+    case DNS_ERR_TIMEOUT:      return "timeout";
+    case DNS_ERR_IO:           return "io";
+    case DNS_ERR_ID_MISMATCH:  return "id-mismatch";
+    case DNS_ERR_QUESTION:     return "question-mismatch";
+    case DNS_ERR_SOURCE:       return "wrong-source";
+    case DNS_ERR_NXDOMAIN:     return "nxdomain";
+    case DNS_ERR_RCODE:        return "server-refused";
     }
     return "unknown";
 }

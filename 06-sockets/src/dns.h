@@ -67,7 +67,16 @@ typedef enum {
     DNS_ERR_NAME,         /* an illegal name (label too long, empty label) */
     DNS_ERR_COMPRESSION,  /* a pointer that loops or points nowhere */
     DNS_ERR_NOSPACE,      /* the output buffer is too small */
-    DNS_ERR_NOTFOUND      /* the thing asked for is not in the message */
+    DNS_ERR_NOTFOUND,     /* the thing asked for is not in the message */
+    /* Stage 65.9 -- the transport. A lookup is an exchange, and the
+     * exchange has outcomes that are not "malformed message". */
+    DNS_ERR_TIMEOUT,      /* no answer arrived in time */
+    DNS_ERR_IO,           /* the socket failed */
+    DNS_ERR_ID_MISMATCH,  /* the answer is for a different query */
+    DNS_ERR_QUESTION,     /* the answer is for a different question */
+    DNS_ERR_SOURCE,       /* the answer came from somewhere else */
+    DNS_ERR_NXDOMAIN,     /* the name does not exist */
+    DNS_ERR_RCODE         /* the server refused (SERVFAIL, REFUSED, ...) */
 } dns_status;
 
 typedef struct {
