@@ -61,6 +61,17 @@ int http_client_request_build(char *dst, size_t dst_len,
                               const char *method, const char *target,
                               const char *host, const char *body, size_t body_len);
 
+/* The same request, with the connection's fate stated in the header.
+ *
+ * keep_alive != 0 writes "Connection: keep-alive"; keep_alive == 0
+ * writes "Connection: close". HTTP/1.1 keeps a connection open by
+ * default, but saying so is worth the bytes: the header is how the
+ * peer learns that a second request is coming. */
+int http_client_request_build_ex(char *dst, size_t dst_len,
+                                 const char *method, const char *target,
+                                 const char *host, const char *body, size_t body_len,
+                                 int keep_alive);
+
 /* The parser's buffer: bytes received, not yet consumed. */
 typedef struct {
     char   buf[HTTP_CLIENT_MAX_REQUEST];
@@ -107,6 +118,35 @@ http_parse_status http_response_parser_finish(http_response_parser *p, http_resp
 
 /* Look up a header by name, case-insensitively. NULL if absent. */
 const char *http_response_header_get(const http_response *r, const char *name);
+
+/* A connection: a socket, a parser, and the address it is talking to.
+ *
+ * A connection carries a conversation, not a message. The object holds
+ * the socket so that a second request can be written on it after the
+ * first response has been read -- and the parser, because the bytes of
+ * the next response may already have arrived in the same read as the
+ * end of this one. */
+typedef struct {
+    int         fd;
+    uint16_t    port;
+    char        host[64];
+    http_response_parser parser;
+} http_client_connection;
+
+/* Open a connection to a dotted-quad address. Returns 0, or -1 with
+ * errno set. */
+int http_client_connection_open(http_client_connection *c, const char *host, uint16_t port);
+
+/* Write a request on the connection and read the response that answers
+ * it. The request asks to keep the connection alive, so a second call
+ * writes a second request on the same socket. Returns 0 with *out
+ * filled, or -1 with errno set. */
+int http_client_connection_request(http_client_connection *c, const char *method,
+                                   const char *target, const char *body, size_t body_len,
+                                   http_response *out);
+
+/* Close the connection. Safe to call twice. */
+void http_client_connection_close(http_client_connection *c);
 
 /* One request and one response over TCP.
  *

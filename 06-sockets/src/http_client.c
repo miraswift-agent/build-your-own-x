@@ -508,6 +508,15 @@ int http_client_request_build(char *dst, size_t dst_len,
                               const char *method, const char *target,
                               const char *host, const char *body, size_t body_len)
 {
+    return http_client_request_build_ex(dst, dst_len, method, target, host,
+                                        body, body_len, 0);
+}
+
+int http_client_request_build_ex(char *dst, size_t dst_len,
+                                 const char *method, const char *target,
+                                 const char *host, const char *body, size_t body_len,
+                                 int keep_alive)
+{
     int n;
     size_t need;
 
@@ -528,8 +537,8 @@ int http_client_request_build(char *dst, size_t dst_len,
                  "%s %s HTTP/1.1\r\n"
                  "Host: %s\r\n"
                  "User-Agent: mira-http/1.0\r\n"
-                 "Connection: close\r\n",
-                 method, target, host);
+                 "Connection: %s\r\n",
+                 method, target, host, keep_alive ? "keep-alive" : "close");
     if (n < 0 || (size_t)n >= dst_len) {
         errno = ENOBUFS;
         return -1;
@@ -555,13 +564,150 @@ int http_client_request_build(char *dst, size_t dst_len,
     return n;
 }
 
+/* ---------- the address, octet by octet ---------- */
+
+/* The port bytes come from the helper that already knows how to spell
+ * them; the address is ours, octet by octet. */
+static int client_addr(const char *host, uint16_t port, struct sockaddr_in *addr)
+{
+    uint8_t ip[4];
+    sock_ipv4_bytes b;
+
+    if (host == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (sock_ipv4_from_dotted(host, ip) != 0) {
+        return -1;
+    }
+    if (sock_ipv4_loopback_bytes(port, &b) != 0) {
+        return -1;
+    }
+    memcpy(b.ip, ip, 4);
+    return sock_addr_apply(&b, addr);
+}
+
+/* ---------- the connection: a socket that carries a conversation ---------- */
+
+int http_client_connection_open(http_client_connection *c, const char *host, uint16_t port)
+{
+    struct sockaddr_in addr;
+    size_t hostlen;
+
+    if (c == NULL || host == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+    hostlen = strlen(host);
+    if (hostlen == 0 || hostlen >= sizeof(c->host)) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (client_addr(host, port, &addr) != 0) {
+        return -1;
+    }
+    c->fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (c->fd < 0) {
+        return -1;
+    }
+    if (connect(c->fd, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
+        int e = errno;
+        close(c->fd);
+        c->fd = -1;
+        errno = e;
+        return -1;
+    }
+    memcpy(c->host, host, hostlen + 1);
+    c->port = port;
+    http_response_parser_init(&c->parser);
+    return 0;
+}
+
+void http_client_connection_close(http_client_connection *c)
+{
+    if (c == NULL) {
+        return;
+    }
+    if (c->fd >= 0) {
+        close(c->fd);
+        c->fd = -1;
+    }
+}
+
+int http_client_connection_request(http_client_connection *c, const char *method,
+                                   const char *target, const char *body, size_t body_len,
+                                   http_response *out)
+{
+    char req[HTTP_CLIENT_MAX_REQUEST];
+    char buf[4096];
+    int reqlen;
+    size_t sent = 0;
+    http_parse_status st;
+
+    if (c == NULL || c->fd < 0 || method == NULL || target == NULL || out == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+    reqlen = http_client_request_build_ex(req, sizeof(req), method, target, c->host,
+                                          body, body_len, 1);
+    if (reqlen < 0) {
+        return -1;
+    }
+    while (sent < (size_t)reqlen) {
+        ssize_t n = write(c->fd, req + sent, (size_t)reqlen - sent);
+        if (n < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            return -1;
+        }
+        if (n == 0) {
+            errno = EPIPE;
+            return -1;
+        }
+        sent += (size_t)n;
+    }
+    for (;;) {
+        st = http_response_parser_next(&c->parser, out);
+        if (st == HTTP_PARSE_OK) {
+            return 0;
+        }
+        if (st == HTTP_PARSE_ERROR) {
+            return -1;
+        }
+        /* NEED_MORE: the response is not here yet. The bytes of the NEXT
+         * response may already be in the parser -- Stage 65.14a's
+         * leftovers -- but the parser only says so by handing us the
+         * next one, so read only when the parser has nothing complete. */
+        {
+            ssize_t n = read(c->fd, buf, sizeof(buf));
+            if (n > 0) {
+                if (http_response_parser_feed(&c->parser, buf, (size_t)n) != 0) {
+                    return -1;
+                }
+                continue;
+            }
+            if (n == 0) {
+                /* The peer hung up. */
+                st = http_response_parser_finish(&c->parser, out);
+                if (st == HTTP_PARSE_OK) {
+                    return 0;
+                }
+                return -1;
+            }
+            if (errno == EINTR) {
+                continue;
+            }
+            return -1;
+        }
+    }
+}
+
 /* ---------- one round trip ---------- */
 
 int http_client_get(const char *host, uint16_t port, const char *target,
                     http_response *out)
 {
-    uint8_t ip[4];
-    sock_ipv4_bytes b;
     struct sockaddr_in addr;
     int fd;
     char req[HTTP_CLIENT_MAX_REQUEST];
@@ -575,16 +721,7 @@ int http_client_get(const char *host, uint16_t port, const char *target,
         errno = EINVAL;
         return -1;
     }
-    if (sock_ipv4_from_dotted(host, ip) != 0) {
-        return -1;
-    }
-    /* The port bytes come from the helper that already knows how to spell
-     * them; the address is ours, octet by octet. */
-    if (sock_ipv4_loopback_bytes(port, &b) != 0) {
-        return -1;
-    }
-    memcpy(b.ip, ip, 4);
-    if (sock_addr_apply(&b, &addr) != 0) {
+    if (client_addr(host, port, &addr) != 0) {
         return -1;
     }
 
