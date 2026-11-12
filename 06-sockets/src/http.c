@@ -19,6 +19,7 @@
 
 #include "sockets.h"
 #include "coding.h"
+#include "content_length.h"
 
 static int ieq(const char *a, const char *b)
 {
@@ -193,26 +194,36 @@ static int parse_headers(const char *s, size_t n, http_request *out)
     return 0;
 }
 
+/* Stage 65.25: the Content-Length, read by the shared reader.
+ *
+ * The field value is not one number -- it is a LIST of numbers, and the
+ * list has one legal shape: every value valid, every value the same
+ * (RFC 9112 6.3 item 5). "5, 5" is one value, 5, and the message is
+ * processed with it; "5, 6" is invalid, and so is a value that is not
+ * 1*DIGIT (RFC 9110 8.6). The old strtol accepted a sign ("+5"), so
+ * the same header meant two different things on the two sides of a
+ * socket.
+ *
+ * The return says WHICH failure it was, because the two failures are
+ * different claims: -1 is "the framing is invalid" (the RFC's
+ * unrecoverable error) and -2 is "a length we will not hold" (our
+ * capacity, not the message's fault). */
 static int parse_content_length(http_request *r)
 {
     const char *v = http_header_get(r, "Content-Length");
-    char *end;
     long n;
+    int st;
 
     r->content_length = -1;
-    if (!v) {
+    st = http_content_length_parse(v, &n);
+    if (st == HTTP_CL_ABSENT) {
         return 0;                /* absent: no body */
     }
-    if (*v == '\0') {
-        return -1;
-    }
-    errno = 0;
-    n = strtol(v, &end, 10);
-    if (errno != 0 || end == v || *end != '\0' || n < 0) {
-        return -1;               /* not a number: a broken request */
+    if (st != HTTP_CL_OK) {
+        return -1;               /* invalid: the framing is invalid */
     }
     if (n > HTTP_MAX_BODY) {
-        return -1;               /* bigger than we are willing to hold */
+        return -2;               /* bigger than we are willing to hold */
     }
     r->content_length = n;
     return 0;
@@ -296,9 +307,17 @@ http_parse_status http_parser_next(http_parser *p, http_request *out)
             return HTTP_PARSE_ERROR;
         }
     }
-    if (parse_content_length(out) != 0) {
-        errno = EPROTO;
-        return HTTP_PARSE_ERROR;
+    {
+        int clrc = parse_content_length(out);
+        if (clrc != 0) {
+            /* The reason travels out in errno: EBADMSG for an invalid
+             * Content-Length (the framing is invalid -- RFC 9112 6.3
+             * item 5) and EPROTO for a length we will not hold. The
+             * server answers 400 for both -- the request is wrong --
+             * and closes the connection either way. */
+            errno = (clrc == -1) ? EBADMSG : EPROTO;
+            return HTTP_PARSE_ERROR;
+        }
     }
 
     /* Stage 65.21: a request that carries BOTH a Transfer-Encoding and

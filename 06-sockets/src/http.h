@@ -90,7 +90,7 @@ int http_parser_feed(http_parser *p, const void *data, size_t len);
  * request is not complete yet (and leaves the buffer alone), or
  * HTTP_PARSE_ERROR with errno set for a request that will never be
  * valid -- a broken request line, a header with no colon, a
- * Content-Length that is not a number.
+ * Content-Length that cannot be used.
  *
  * A body is framed by a length OR by a coding. When the request says
  * "Transfer-Encoding: chunked", the body is the chunks, and the bytes
@@ -121,10 +121,19 @@ int http_parser_feed(http_parser *p, const void *data, size_t len);
  * and we cannot decompress it -- so the body could not be handed back
  * decoded.
  *
+ * And a request whose Content-Length cannot be USED is refused too
+ * (RFC 9112 6.3 item 5): the message framing is invalid, and the
+ * server MUST answer 400 and close. The field value is a LIST of
+ * numbers, and the list has one legal shape -- every value valid,
+ * every value the same -- so "5, 5" is one value and the request is
+ * processed, while "5, 6" is invalid. What a length may LOOK like is
+ * 1*DIGIT (RFC 9110 8.6), so a sign is not a length.
+ *
  * The reason travels out of the parser in errno: ENOTSUP for a coding
- * we do not implement, EPROTO for everything else. The server chooses
- * the status from it: 501 says "the request is fine, this server is
- * not capable", 400 says "the request is wrong". */
+ * we do not implement, EBADMSG for a Content-Length that cannot be
+ * used (the framing is invalid), EPROTO for everything else. The server
+ * chooses the status from it: 501 says "the request is fine, this
+ * server is not capable", 400 says "the request is wrong". */
 http_parse_status http_parser_next(http_parser *p, http_request *out);
 
 /* Look up a header by name, case-insensitively. NULL if absent. */

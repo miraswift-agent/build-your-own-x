@@ -141,6 +141,12 @@ int http_response_parser_feed(http_response_parser *p, const void *data, size_t 
  * The refusal happens in the head: the client does not wait for a body
  * it has already decided it cannot read.
  *
+ * Stage 65.25: a response whose Content-Length cannot be USED is
+ * refused too (RFC 9112 6.3 item 5) -- the message framing is
+ * invalid. The reason travels out in errno: EBADMSG, so the
+ * connection layer can do what the RFC says a user agent must do --
+ * close the connection to the server and discard the response.
+ *
  * On the error path the output is NOT filled in -- a caller must not
  * read a response the parser refused. (The server's request parser
  * zeroes its output; this one does not.) */
@@ -226,7 +232,15 @@ int http_client_connection_write_chunked_end(http_client_connection *c);
  *
  * The parser is asked before the socket: the bytes of the next response
  * may already be in hand (Stage 65.14a's leftovers). Returns 0 with
- * *out filled, or -1 with errno set. */
+ * *out filled, or -1 with errno set.
+ *
+ * Stage 65.25: a response whose framing is invalid (a Content-Length
+ * that cannot be used) closes the connection -- RFC 9112 6.3 item 5:
+ * "If it is in a response message received by a user agent, the user
+ * agent MUST close the connection to the server and discard the
+ * received response." A connection whose framing is untrustworthy
+ * cannot be trusted with a second message. The reason survives the
+ * close: it is the evidence of what happened. */
 int http_client_connection_read_response(http_client_connection *c, http_response *out);
 
 /* Write a request on the connection and read the response that answers

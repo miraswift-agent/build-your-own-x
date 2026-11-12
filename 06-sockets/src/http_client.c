@@ -35,6 +35,7 @@
 
 #include "sockets.h"
 #include "coding.h"
+#include "content_length.h"
 
 /* ---------- small helpers ---------- */
 
@@ -193,32 +194,31 @@ const char *http_response_header_get(const http_response *r, const char *name)
     return NULL;
 }
 
-/* The Content-Length, or -1 when the header is absent. A Content-Length
- * that is not a number is a protocol error, not a missing header. */
+/* The Content-Length, or -1 when the header is absent.
+ *
+ * A Content-Length that cannot be used is not a missing header: the
+ * framing is invalid (RFC 9112 6.3 item 5).
+ *
+ * Stage 65.25: the value is read by the shared reader, so the list
+ * exception applies -- "5, 5" names one value, 5, and the message is
+ * processed with it -- and the two roles cannot drift apart again.
+ * (They had: the server's strtol accepted a sign, this side's digit
+ * loop did not.) */
 static int header_content_length(const http_response *r, long *out)
 {
     const char *v = http_response_header_get(r, "Content-Length");
-    const char *p;
-    long value;
+    int st = http_content_length_parse(v, out);
 
-    if (v == NULL) {
+    if (st == HTTP_CL_ABSENT) {
         *out = -1;
         return 0;
     }
-    if (*v == '\0') {
+    if (st != HTTP_CL_OK) {
         return -1;
     }
-    value = 0;
-    for (p = v; *p != '\0'; p++) {
-        if (*p < '0' || *p > '9') {
-            return -1;
-        }
-        value = value * 10L + (*p - '0');
-        if (value > 100000000L) {
-            return -1;
-        }
+    if (*out > 100000000L) {
+        return -1;               /* bigger than this client will hold */
     }
-    *out = value;
     return 0;
 }
 
@@ -293,7 +293,11 @@ static http_parse_status parse_head(http_response_parser *p, http_response *out,
         return HTTP_PARSE_ERROR;
     }
     if (header_content_length(out, &cl) != 0) {
-        errno = EPROTO;
+        /* Stage 65.25: the framing is invalid (RFC 9112 6.3 item 5).
+         * The reason travels out in errno: EBADMSG, so the connection
+         * layer can do what the RFC says a user agent must do -- close
+         * the connection to the server and discard the response. */
+        errno = EBADMSG;
         return HTTP_PARSE_ERROR;
     }
     out->content_length = cl;
@@ -853,6 +857,20 @@ int http_client_connection_read_response(http_client_connection *c, http_respons
             return 0;
         }
         if (st == HTTP_PARSE_ERROR) {
+            /* Stage 65.25: the user agent's half of RFC 9112 6.3 item
+             * 5 -- "If it is in a response message received by a user
+             * agent, the user agent MUST close the connection to the
+             * server and discard the received response."
+             *
+             * The close is the claim: a connection whose framing is
+             * untrustworthy cannot be trusted with a second message.
+             * The reason survives the close -- it is the evidence of
+             * what happened. */
+            if (errno == EBADMSG) {
+                int saved = errno;
+                http_client_connection_close(c);
+                errno = saved;
+            }
             return -1;
         }
         /* NEED_MORE: the response is not here yet. The bytes of the NEXT
