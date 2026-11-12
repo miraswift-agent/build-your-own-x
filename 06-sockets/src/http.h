@@ -44,6 +44,23 @@
 /* The largest request we are willing to hold: headers plus a body. */
 #define HTTP_MAX_REQUEST 16384
 
+/* Stage 65.27: the reason a message was INCOMPLETE -- the peer closed
+ * (or the recipient timed out) before the framing was satisfied.
+ *
+ * RFC 9112 6.3 item 6: "If the sender closes the connection or the
+ * recipient times out before the indicated number of octets are
+ * received, the recipient MUST consider the message to be incomplete
+ * and close the connection." RFC 9112 8 uses the same word: "MUST
+ * record the message as incomplete".
+ *
+ * This is a component-level reason, deliberately outside the system
+ * errno range: the errno space has no value for "the message did not
+ * arrive", and borrowing one (EPIPE, ECONNRESET, ETIMEDOUT) would
+ * claim something about the wire that is not true -- the peer closed
+ * cleanly; it did not reset the connection and it did not time out.
+ * The value sits in a range no system errno uses. */
+#define HTTP_REASON_INCOMPLETE 1001
+
 /* One header line. The name is stored as it arrived; comparisons are
  * case-insensitive (see http_header_get). */
 typedef struct {

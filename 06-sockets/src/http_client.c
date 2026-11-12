@@ -501,24 +501,46 @@ http_parse_status http_response_parser_finish(http_response_parser *p, http_resp
 
     st = parse_head(p, out, &body_start);
     if (st == HTTP_PARSE_NEED_MORE) {
-        /* The peer closed and we never got a status line. That is not a
-         * short response; there was no response. */
-        errno = EPROTO;
+        if (p->len == 0) {
+            /* The peer closed and we never got a status line. That is
+             * not a short response; there was no response. */
+            errno = EPROTO;
+            return HTTP_PARSE_ERROR;
+        }
+        /* Stage 65.27: the peer closed in the MIDDLE of the header
+         * section. The message is incomplete: "If a response
+         * terminates in the middle of the header section (before the
+         * empty line is received) and the status code might rely on
+         * header fields to convey the full meaning of the response,
+         * then the client cannot assume that meaning has been conveyed"
+         * (RFC 9112 8). */
+        errno = HTTP_REASON_INCOMPLETE;
         return HTTP_PARSE_ERROR;
     }
     if (st != HTTP_PARSE_OK) {
         return st;
     }
     if (out->framed_by_chunked) {
-        /* The peer closed before the terminal chunk. A chunked body that
-         * stops is truncated, not short. */
-        errno = EPROTO;
+        /* The peer closed before the terminal chunk. A chunked body
+         * that stops is truncated, not short -- and "a message body
+         * that uses the chunked transfer coding is incomplete if the
+         * zero-sized chunk that terminates the encoding has not been
+         * received" (RFC 9112 8). */
+        errno = HTTP_REASON_INCOMPLETE;
         return HTTP_PARSE_ERROR;
     }
     if (out->content_length >= 0) {
-        /* The peer closed before the promised bytes arrived. That is a
-         * truncated response, not a short one. */
-        errno = EPROTO;
+        /* The peer closed before the promised octets arrived. "A
+         * message that uses a valid Content-Length is incomplete if the
+         * size of the message body received (in octets) is less than
+         * the value given by Content-Length" (RFC 9112 8); and the
+         * recipient "MUST consider the message to be incomplete and
+         * close the connection" (RFC 9112 6.3 item 6).
+         *
+         * The reason is its own: not EPROTO (the bytes that arrived
+         * were well formed) and not EBADMSG (the length was valid --
+         * the octets did not arrive). */
+        errno = HTTP_REASON_INCOMPLETE;
         return HTTP_PARSE_ERROR;
     }
     blen = p->len - body_start;
@@ -897,6 +919,22 @@ int http_client_connection_read_response(http_client_connection *c, http_respons
                 if (st == HTTP_PARSE_OK) {
                     return 0;
                 }
+                if (errno == HTTP_REASON_INCOMPLETE) {
+                    /* Stage 65.27: RFC 9112 6.3 item 6 -- "If the
+                     * sender closes the connection or the recipient
+                     * times out before the indicated number of octets
+                     * are received, the recipient MUST consider the
+                     * message to be incomplete and close the
+                     * connection."
+                     *
+                     * The close is the claim: a connection whose
+                     * message did not finish cannot be trusted with
+                     * another one. The reason survives the close --
+                     * it is the evidence of what happened. */
+                    int saved = errno;
+                    http_client_connection_close(c);
+                    errno = saved;
+                }
                 return -1;
             }
             if (errno == EINTR) {
@@ -1007,10 +1045,13 @@ int http_client_get(const char *host, uint16_t port, const char *target,
             return -1;
         }
     }
-    close(fd);
     if (st != HTTP_PARSE_OK) {
-        errno = EPROTO;
+        /* The reason is the evidence: it has to survive the close. */
+        int e = errno;
+        close(fd);
+        errno = e;
         return -1;
     }
+    close(fd);
     return 0;
 }
