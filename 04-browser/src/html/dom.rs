@@ -311,6 +311,52 @@ impl Document {
         self.nodes[child].parent = None;
     }
 
+    /// Clone an element node: a fresh element with the same tag name,
+    /// attributes, category and role, and **no children**.
+    ///
+    /// The adoption agency's inner loop (§13.2.8.3) re-opens a formatting
+    /// element by creating a *new* element for the token the old one was
+    /// created for, and then moving the old element's children across.
+    /// html5lib calls this "an element for the token for which the node
+    /// was created": the element is new, not a copy of the subtree.
+    ///
+    /// Returns `None` for a node that is not an element.
+    pub fn clone_element(&mut self, id: NodeId) -> Option<NodeId> {
+        let data = self.nodes[id].element_data().cloned()?;
+        Some(self.create_node(NodeData::Element(data)))
+    }
+
+    /// Move every child of `from` to the end of `to`.
+    ///
+    /// This is html5lib's `reparentChildren`: the children keep their
+    /// identity and their text, but their parent changes. It is the
+    /// "move" half of the adoption agency's clone-and-move machinery.
+    pub fn reparent_children(&mut self, from: NodeId, to: NodeId) {
+        let children = std::mem::take(&mut self.nodes[from].children);
+        for child in children {
+            self.nodes[child].parent = Some(to);
+            self.nodes[to].children.push(child);
+        }
+    }
+
+    /// Insert an existing node as a child of `parent` at `index`.
+    ///
+    /// The node is detached from its current parent first, so this is
+    /// also the "move a node to a position" operation the inner loop
+    /// needs ("insert last node into node, first removing it from its
+    /// previous parent"). An `index` past the end appends.
+    ///
+    /// These three operations are parser-internal tree surgery: they do
+    /// not record mutation records, because the adoption agency's
+    /// rewiring is the parser fixing its own tree, not a change an
+    /// outside observer caused.
+    pub fn insert_child_at(&mut self, parent: NodeId, child: NodeId, index: usize) {
+        self.detach_from_parent(child);
+        let index = index.min(self.nodes[parent].children.len());
+        self.nodes[parent].children.insert(index, child);
+        self.nodes[child].parent = Some(parent);
+    }
+
     pub fn node(&self, id: NodeId) -> &Node {
         &self.nodes[id]
     }
@@ -929,4 +975,49 @@ fn write_node(doc: &Document, id: NodeId, f: &mut fmt::Formatter<'_>, depth: usi
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod reparent_tests {
+    use super::*;
+    use crate::html::parse;
+
+    #[test]
+    fn a_cloned_element_keeps_its_name_and_attributes_but_has_no_children() {
+        let mut doc = parse("<div id='a' class='x'><b>bold</b></div>");
+        let div = doc.get_elements_by_tag_name("div")[0];
+        let clone = doc.clone_element(div).expect("a div is an element");
+        assert_ne!(clone, div);
+        let data = doc.node(clone).element_data().expect("the clone is an element");
+        assert_eq!(data.tag_name, "div");
+        assert_eq!(data.attr("id"), Some("a"));
+        assert_eq!(data.attr("class"), Some("x"));
+        assert!(doc.children_of(clone).is_empty(), "a clone starts empty");
+        assert_eq!(doc.children_of(div).len(), 1, "the original keeps its child");
+    }
+
+    #[test]
+    fn reparenting_moves_the_children_and_empties_the_old_parent() {
+        let mut doc = parse("<div><b>bold</b></div><p></p>");
+        let div = doc.get_elements_by_tag_name("div")[0];
+        let p = doc.get_elements_by_tag_name("p")[0];
+        let b = doc.get_elements_by_tag_name("b")[0];
+        doc.reparent_children(div, p);
+        assert!(doc.children_of(div).is_empty(), "the old parent is empty");
+        assert_eq!(doc.children_of(p), &[b], "the child moved across");
+        assert_eq!(doc.parent_of(b), Some(p), "and knows its new parent");
+    }
+
+    #[test]
+    fn inserting_at_a_position_moves_the_node_and_reorders_the_siblings() {
+        let mut doc = parse("<div><b>1</b><i>2</i></div>");
+        let div = doc.get_elements_by_tag_name("div")[0];
+        let b = doc.get_elements_by_tag_name("b")[0];
+        let i = doc.get_elements_by_tag_name("i")[0];
+        doc.insert_child_at(div, i, 0);
+        assert_eq!(doc.children_of(div), &[i, b], "the node landed at the front");
+        assert_eq!(doc.parent_of(i), Some(div));
+        doc.insert_child_at(div, i, 99);
+        assert_eq!(doc.children_of(div), &[b, i], "an index past the end appends");
+    }
 }
