@@ -153,6 +153,29 @@ int http_parser_feed(http_parser *p, const void *data, size_t len);
  * server is not capable", 400 says "the request is wrong". */
 http_parse_status http_parser_next(http_parser *p, http_request *out);
 
+/* Stage 65.33: the head on its own.
+ *
+ * http_parser_next() reports one answer for two questions: "is the
+ * head complete?" and "is the body complete too?". A server that
+ * wants to answer BEFORE the body arrives needs the first question
+ * on its own -- RFC 9110 10.1.1, the 100 Continue: the server
+ * confirms that it will take the body, and the client sends the body
+ * after the confirmation.
+ *
+ * Same rules, same errno, same refusals: the head-level refusals of
+ * Stages 65.21-65.26 are decided from the head, and they still fire
+ * here. One reader for the head, used by both entry points. */
+http_parse_status http_parser_head_next(http_parser *p, http_request *out);
+
+/* Stage 65.33: is the body of a head-complete request still pending?
+ *
+ * The question the serving loop asks before it sends a 100: if the
+ * body has already all arrived, there is nothing to wait for and the
+ * interim response is not needed (RFC 9110 10.1.1: "A server MAY omit
+ * sending a 100 (Continue) response if it has already received some
+ * or all of the content for the corresponding request"). */
+int http_parser_body_pending(http_parser *p, const http_request *r);
+
 /* Look up a header by name, case-insensitively. NULL if absent. */
 const char *http_header_get(const http_request *r, const char *name);
 
@@ -253,6 +276,20 @@ int http_response_build_full(char *dst, size_t dst_len, int status,
                               const char *body, size_t body_len,
                               int keep_alive, const char *date,
                               const char *allow, const char *etag);
+
+/* Stage 65.33: an interim (1xx) response.
+ *
+ * RFC 9110 6.6.1: "A server MUST NOT generate a Date header field in
+ * a 1xx response." RFC 9110 8.6: a 1xx carries no Content-Length.
+ * RFC 9112 6.3 item 1: the message is terminated by the empty line
+ * that ends the header section.
+ *
+ * So the interim response is the status line and nothing else. Note
+ * the OPPOSITE of the 304, which KEEPS the Date (RFC 9110 15.4.5) --
+ * a 304 is a final response about a representation; a 1xx is not a
+ * response about anything, it is the server saying "go ahead". */
+int http_response_build_interim(char *dst, size_t dst_len, int status,
+                                 const char *reason);
 
 /* Stage 65.29: the methods this server supports for a target -- the
  * value of the Allow header ("GET, HEAD"), or an empty string for a

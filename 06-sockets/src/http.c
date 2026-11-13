@@ -262,10 +262,18 @@ static int request_is_chunked(const http_request *r)
     return cs.final_is_chunked;
 }
 
-http_parse_status http_parser_next(http_parser *p, http_request *out)
+/* The head of a request: the request line, the header lines, and every
+ * head-level refusal (Stages 65.21-65.26).
+ *
+ * The head is parsed from the buffer every time, so asking for it
+ * twice costs nothing in consequence -- and the serving loop asks for
+ * it twice, because it has to know that the head is complete before
+ * the body has arrived (Stage 65.33). One reader for the head. */
+static http_parse_status parser_head(http_parser *p, http_request *out,
+                                      size_t *body_start_out)
 {
     long hend;
-    size_t first_crlf, i, body_start, want, total, rest;
+    size_t first_crlf, i;
 
     if (!p || !out) {
         errno = EINVAL;
@@ -423,61 +431,65 @@ http_parse_status http_parser_next(http_parser *p, http_request *out)
         }
     }
 
-    body_start = (size_t)hend + 4;
+    *body_start_out = (size_t)hend + 4;
+    return HTTP_PARSE_OK;
+}
 
-    if (request_is_chunked(out)) {
-        /* The body draws its own boundaries: it is a sequence of chunks,
-         * and the terminal chunk is followed by the bytes that belong to
-         * the NEXT message.
-         *
-         * A coding frames the body when it is the ONLY framing on the
-         * wire. (A request that carries both a coding and a length was
-         * refused above -- RFC 9112 6.3 item 3, and the loud half of
-         * it.)
-         *
-         * The decoder is fed from the buffer every time, so a request
-         * that arrives in pieces is simply not ready until it is whole. */
-        http_chunk_decoder d;
-        const char *pending = NULL;
-        size_t pending_len;
-        size_t total = 0;
+/* The body of a head-complete request, taken apart.
+ *
+ * The chunked body draws its own boundaries, so whether a chunked body
+ * is complete is a question for the decoder and not a subtraction. The
+ * decode flag is what lets the serving loop ask the question without
+ * taking the body apart: the decoder runs either way, and only the
+ * copy is conditional. */
+static http_parse_status chunked_body(http_parser *p, http_request *out,
+                                      size_t body_start, int decode)
+{
+    http_chunk_decoder d;
+    const char *pending = NULL;
+    size_t pending_len;
+    size_t total = 0;
 
-        http_chunk_decoder_init(&d);
-        if (p->len > body_start) {
-            if (http_chunk_decoder_feed(&d, p->buf + body_start,
-                                        p->len - body_start) != 0) {
-                errno = EPROTO;
-                return HTTP_PARSE_ERROR;
-            }
+    http_chunk_decoder_init(&d);
+    if (p->len > body_start) {
+        if (http_chunk_decoder_feed(&d, p->buf + body_start,
+                                    p->len - body_start) != 0) {
+            errno = EPROTO;
+            return HTTP_PARSE_ERROR;
         }
-        for (;;) {
-            char chunk[HTTP_MAX_BODY];
-            size_t clen = 0;
-            http_chunk_status st;
+    }
+    for (;;) {
+        char chunk[HTTP_MAX_BODY];
+        size_t clen = 0;
+        http_chunk_status st;
 
-            st = http_chunk_decoder_next(&d, chunk, sizeof(chunk), &clen);
-            if (st == HTTP_CHUNK_NEED_MORE) {
-                /* The body has not all arrived. This is not an error:
-                 * the request is simply not ready yet, and the buffer is
-                 * left untouched. */
-                return HTTP_PARSE_NEED_MORE;
-            }
-            if (st == HTTP_CHUNK_ERROR) {
-                errno = EPROTO;
-                return HTTP_PARSE_ERROR;
-            }
-            if (st == HTTP_CHUNK_DONE) {
-                break;
-            }
-            if (total + clen > HTTP_MAX_BODY) {
-                errno = EMSGSIZE;
-                return HTTP_PARSE_ERROR;   /* bigger than we will hold */
-            }
+        st = http_chunk_decoder_next(&d, chunk, sizeof(chunk), &clen);
+        if (st == HTTP_CHUNK_NEED_MORE) {
+            /* The body has not all arrived. This is not an error:
+             * the request is simply not ready yet, and the buffer is
+             * left untouched. */
+            return HTTP_PARSE_NEED_MORE;
+        }
+        if (st == HTTP_CHUNK_ERROR) {
+            errno = EPROTO;
+            return HTTP_PARSE_ERROR;
+        }
+        if (st == HTTP_CHUNK_DONE) {
+            break;
+        }
+        if (total + clen > HTTP_MAX_BODY) {
+            errno = EMSGSIZE;
+            return HTTP_PARSE_ERROR;   /* bigger than we will hold */
+        }
+        if (decode) {
             memcpy(out->body + total, chunk, clen);
-            total += clen;
         }
-        out->body_len = total;
+        total += clen;
+    }
+    if (decode) {
+        size_t rest;
 
+        out->body_len = total;
         /* What follows the terminal chunk is the start of the next
          * message, not part of this one. */
         pending_len = http_chunk_decoder_pending(&d, &pending);
@@ -486,7 +498,18 @@ http_parse_status http_parser_next(http_parser *p, http_request *out)
             memmove(p->buf, pending, rest);
         }
         p->len = rest;
-        return HTTP_PARSE_OK;
+    }
+    return HTTP_PARSE_OK;
+}
+
+/* The body, once the head is complete. */
+static http_parse_status parser_body(http_parser *p, http_request *out,
+                                      size_t body_start)
+{
+    size_t want, total, rest;
+
+    if (request_is_chunked(out)) {
+        return chunked_body(p, out, body_start, 1);
     }
 
     want = (out->content_length > 0) ? (size_t)out->content_length : 0;
@@ -507,6 +530,57 @@ http_parse_status http_parser_next(http_parser *p, http_request *out)
     }
     p->len = rest;
     return HTTP_PARSE_OK;
+}
+
+/* Stage 65.33: the head on its own. */
+http_parse_status http_parser_head_next(http_parser *p, http_request *out)
+{
+    size_t body_start;
+
+    return parser_head(p, out, &body_start);
+}
+
+/* The whole request: the head, then the body. */
+http_parse_status http_parser_next(http_parser *p, http_request *out)
+{
+    size_t body_start;
+    http_parse_status st;
+
+    st = parser_head(p, out, &body_start);
+    if (st != HTTP_PARSE_OK) {
+        return st;
+    }
+    return parser_body(p, out, body_start);
+}
+
+/* Stage 65.33: is the body of a head-complete request still pending? */
+int http_parser_body_pending(http_parser *p, const http_request *r)
+{
+    long hend;
+    size_t body_start;
+
+    if (!p || !r) {
+        errno = EINVAL;
+        return 0;
+    }
+    hend = find_header_end(p);
+    if (hend < 0) {
+        errno = EPROTO;
+        return 0;
+    }
+    body_start = (size_t)hend + 4;
+    if (request_is_chunked(r)) {
+        http_request scratch;
+
+        memset(&scratch, 0, sizeof(scratch));
+        scratch.content_length = -1;
+        return chunked_body(p, &scratch, body_start, 0) == HTTP_PARSE_OK ? 0 : 1;
+    }
+    {
+        size_t want = (r->content_length > 0) ? (size_t)r->content_length : 0;
+
+        return (p->len - body_start < want) ? 1 : 0;
+    }
 }
 
 const char *http_header_get(const http_request *r, const char *name)
@@ -720,6 +794,39 @@ int http_response_build_full(char *dst, size_t dst_len, int status, const char *
     }
     return n + (int)body_len;
 }
+/* Stage 65.33: an interim (1xx) response.
+ *
+ * RFC 9110 6.6.1: "A server MUST NOT generate a Date header field in
+ * a 1xx response." RFC 9110 8.6: a 1xx carries no Content-Length.
+ * RFC 9112 6.3 item 1: the message is terminated by the empty line
+ * that ends the header section.
+ *
+ * So the interim response is the status line and nothing else -- which
+ * is the OPPOSITE of the 304, that one KEEPS the Date (RFC 9110
+ * 15.4.5), because a 304 is a final response about a representation
+ * while a 1xx is not a response about anything: it is the server
+ * saying "go ahead". */
+int http_response_build_interim(char *dst, size_t dst_len, int status,
+                                 const char *reason)
+{
+    int n;
+
+    if (!dst || dst_len == 0) {
+        errno = EINVAL;
+        return -1;
+    }
+    n = snprintf(dst, dst_len, "HTTP/1.1 %d %s\r\n\r\n",
+                 status, reason ? reason : "");
+    if (n < 0) {
+        return -1;
+    }
+    if ((size_t)n >= dst_len) {
+        errno = ENOBUFS;
+        return -1;
+    }
+    return n;
+}
+
 
 /* The host name from a Host header value.
  *
@@ -926,6 +1033,55 @@ static size_t response_bytes_to_send(const char *resp, size_t n, int is_head)
 /* The one serve loop. require_host says whether this server routes by
  * the Host header -- and so whether a request without one can be
  * answered at all. */
+/* The request asks us to confirm before it sends the body.
+ *
+ * RFC 9110 10.1.1: the expectation is named "100-continue". The
+ * comparison is on the token, and the header is hop-by-hop (the same
+ * section), so it is never forwarded. */
+static int expect_100_continue(const http_request *r)
+{
+    const char *v = http_header_get(r, "Expect");
+
+    return v != NULL && ieq(v, "100-continue");
+}
+
+/* Would this request be refused before it is served?
+ *
+ * The same two readers the serving block uses -- resource_methods and
+ * method_bit -- and the same order, so the two cannot drift apart:
+ * the refusal is decided from the head, which is what lets the
+ * interim response be decided from the head too.
+ *
+ * The answer is only about WHETHER the request is refused; the status
+ * the server will send is the serving block's business. */
+static int request_will_be_refused(const http_request *req, int require_host)
+{
+    unsigned supported;
+    unsigned bit;
+
+    if (require_host) {
+        char host[HTTP_MAX_HVALUE + 1];
+        const char *hostv = http_header_get(req, "Host");
+
+        if (hostv == NULL ||
+            host_name_from_value(hostv, host, sizeof(host)) != 0) {
+            return 1;           /* 400: the request does not say which site */
+        }
+    }
+    supported = resource_methods(req->target);
+    if (supported == 0u) {
+        return 1;               /* 404: there is no such resource */
+    }
+    bit = method_bit(req->method);
+    if (bit == 0u) {
+        return 1;               /* 501: the server does not know this method */
+    }
+    if ((supported & bit) == 0u) {
+        return 1;               /* 405: this resource does not support it */
+    }
+    return 0;
+}
+
 static int serve_connection(int fd, const http_host_route *routes, size_t route_count,
                              const char *default_body, int require_host,
                              http_server_stats *st)
@@ -944,8 +1100,68 @@ static int serve_connection(int fd, const http_host_route *routes, size_t route_
         st->bytes_out = 0;
     }
 
+    /* Has the interim response gone out for the request in flight?
+     * Once per request: the client may send the body in pieces, and
+     * the head is still complete while it does, so the hook below
+     * would otherwise ask again on every read. */
+    int continue_sent = 0;
+
     for (;;) {
-        while ((ps = http_parser_next(&p, &req)) == HTTP_PARSE_OK) {
+        while (1) {
+            ps = http_parser_head_next(&p, &req);
+            if (ps != HTTP_PARSE_OK) {
+                break;
+            }
+            /* Stage 65.33: the head is complete and the body may not
+             * be. If the client asked us to confirm before it sends
+             * the body, and the body has not all arrived, and we
+             * intend to serve this request -- say so, and say it with
+             * a 100.
+             *
+             * Three conditions, and each one is a rule:
+             *
+             *   - the client asked: "Expect: 100-continue"
+             *     (RFC 9110 10.1.1);
+             *   - the body has not all arrived: a server MAY omit the
+             *     interim response when it already has the content
+             *     (the same section), and there is nothing to wait
+             *     for when the request carries no body at all;
+             *   - we intend to serve it: the final response satisfies
+             *     the MUST on its own, so a request the server is
+             *     going to refuse gets the refusal and not a 100.
+             *
+             * RFC 9110 10.1.1: "A server that receives a 100-continue
+             * expectation MUST send either a 100 (Continue) interim
+             * response or a final response." */
+            if (!continue_sent && expect_100_continue(&req) &&
+                !request_will_be_refused(&req, require_host) &&
+                http_parser_body_pending(&p, &req)) {
+                char interim[128];
+                int in;
+                sock_io_result iwr;
+
+                in = http_response_build_interim(interim, sizeof(interim),
+                                                  100, "Continue");
+                if (in < 0) {
+                    return -1;
+                }
+                if (sock_write_exact(fd, interim, (size_t)in, &iwr) != 0) {
+                    return -1;
+                }
+                if (iwr.status != SOCK_IO_COMPLETE) {
+                    return -1;
+                }
+                continue_sent = 1;
+                if (st) {
+                    st->bytes_out += (unsigned long)in;
+                }
+            }
+            ps = http_parser_next(&p, &req);
+            if (ps != HTTP_PARSE_OK) {
+                break;
+            }
+            /* A whole request: the next one starts fresh. */
+            continue_sent = 0;
             int keep = http_request_keep_alive(&req);
             char host[HTTP_MAX_HVALUE + 1];
             const char *host_name = NULL;
