@@ -728,10 +728,11 @@ int http_client_request_build(char *dst, size_t dst_len,
                                         body, body_len, 0);
 }
 
-int http_client_request_build_ex(char *dst, size_t dst_len,
-                                 const char *method, const char *target,
-                                 const char *host, const char *body, size_t body_len,
-                                 int keep_alive)
+int http_client_request_build_with_header(char *dst, size_t dst_len,
+                                           const char *method, const char *target,
+                                           const char *host, const char *body,
+                                           size_t body_len, int keep_alive,
+                                           const char *hdr_name, const char *hdr_value)
 {
     int n;
     size_t need;
@@ -741,7 +742,29 @@ int http_client_request_build_ex(char *dst, size_t dst_len,
         errno = EINVAL;
         return -1;
     }
+    if ((hdr_name == NULL) != (hdr_value == NULL)) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (hdr_name != NULL) {
+        /* A header value that carries a CR or an LF ends the line and
+         * starts another one: the request would then say two things
+         * about itself, and a request that says two things about where
+         * the body ends is the shape request smuggling is made of
+         * (RFC 9112 6.3 item 3). A name carrying a colon is not a
+         * name. An empty name or an empty value is not a header. */
+        if (hdr_name[0] == '\0' || hdr_value[0] == '\0' ||
+            strchr(hdr_name, '\r') || strchr(hdr_name, '\n') ||
+            strchr(hdr_name, ':') || strchr(hdr_name, ' ') ||
+            strchr(hdr_value, '\r') || strchr(hdr_value, '\n')) {
+            errno = EINVAL;
+            return -1;
+        }
+    }
     need = strlen(method) + strlen(target) + strlen(host) + 128;
+    if (hdr_name != NULL) {
+        need += strlen(hdr_name) + strlen(hdr_value) + 4;
+    }
     if (body_len > 0) {
         need += body_len + 32;
     }
@@ -758,6 +781,15 @@ int http_client_request_build_ex(char *dst, size_t dst_len,
     if (n < 0 || (size_t)n >= dst_len) {
         errno = ENOBUFS;
         return -1;
+    }
+    if (hdr_name != NULL) {
+        int m = snprintf(dst + n, dst_len - (size_t)n,
+                         "%s: %s\r\n", hdr_name, hdr_value);
+        if (m < 0 || (size_t)(n + m) >= dst_len) {
+            errno = ENOBUFS;
+            return -1;
+        }
+        n += m;
     }
     if (body_len > 0) {
         int m = snprintf(dst + n, dst_len - (size_t)n,
@@ -778,6 +810,18 @@ int http_client_request_build_ex(char *dst, size_t dst_len,
         n += m;
     }
     return n;
+}
+
+/* Stage 65.34: the plain request is the one with no extra header, so
+ * there is one reader for the head and not two. */
+int http_client_request_build_ex(char *dst, size_t dst_len,
+                                 const char *method, const char *target,
+                                 const char *host, const char *body, size_t body_len,
+                                 int keep_alive)
+{
+    return http_client_request_build_with_header(dst, dst_len, method, target,
+                                                 host, body, body_len,
+                                                 keep_alive, NULL, NULL);
 }
 
 /* Stage 65.20: the head of a request whose body length is not known.
@@ -1154,8 +1198,9 @@ int http_client_connection_request(http_client_connection *c, const char *method
 
 /* ---------- one round trip ---------- */
 
-int http_client_get(const char *host, uint16_t port, const char *target,
-                    http_response *out)
+static int client_get_inner(const char *host, uint16_t port, const char *target,
+                         const char *hdr_name, const char *hdr_value,
+                         http_response *out)
 {
     struct sockaddr_in addr;
     int fd;
@@ -1186,7 +1231,8 @@ int http_client_get(const char *host, uint16_t port, const char *target,
         return -1;
     }
 
-    reqlen = http_client_request_build(req, sizeof(req), "GET", target, host, NULL, 0);
+    reqlen = http_client_request_build_with_header(req, sizeof(req), "GET", target, host,
+                                           NULL, 0, 0, hdr_name, hdr_value);
     if (reqlen < 0) {
         int e = errno;
         close(fd);
@@ -1276,4 +1322,23 @@ int http_client_get(const char *host, uint16_t port, const char *target,
     }
     close(fd);
     return 0;
+}
+
+int http_client_get(const char *host, uint16_t port, const char *target,
+                    http_response *out)
+{
+    return client_get_inner(host, port, target, NULL, NULL, out);
+}
+
+/* Stage 65.34: the conditional GET. The tag goes out as "If-None-Match"
+ * and the answer is whatever the server makes of it -- a 304 when the
+ * representation has not changed, a 200 when it has. */
+int http_client_get_conditional(const char *host, uint16_t port,
+                                const char *target, const char *etag,
+                                http_response *out)
+{
+    if (etag == NULL) {
+        return client_get_inner(host, port, target, NULL, NULL, out);
+    }
+    return client_get_inner(host, port, target, "If-None-Match", etag, out);
 }

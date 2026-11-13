@@ -80,6 +80,27 @@ int http_client_request_build_ex(char *dst, size_t dst_len,
                                  const char *host, const char *body, size_t body_len,
                                  int keep_alive);
 
+/* Stage 65.34: the same request with ONE extra header.
+ *
+ * The slot exists for the client's conditional request: a revalidating
+ * GET carries "If-None-Match: <tag>" (RFC 9110 13.1.2), and the
+ * server's answer to that is a 304 (Stage 65.32). The mirror of that
+ * stage: 65.32 gave the server the rule, this gives the client the
+ * request that triggers it.
+ *
+ * The name and the value are checked. A value carrying a CR or an LF
+ * would end the header line and start another one -- a request that
+ * says two things about itself -- and a name carrying a colon is not a
+ * name. Both are EINVAL.
+ *
+ * hdr_name and hdr_value are both NULL for "no extra header"; exactly
+ * one of them NULL is EINVAL. */
+int http_client_request_build_with_header(char *dst, size_t dst_len,
+                                           const char *method, const char *target,
+                                           const char *host, const char *body,
+                                           size_t body_len, int keep_alive,
+                                           const char *hdr_name, const char *hdr_value);
+
 /* Stage 65.20: the head of a request whose body length is not known yet.
  *
  * The same request line, Host, User-Agent and Connection as
@@ -312,5 +333,17 @@ void http_client_connection_close(http_client_connection *c);
  * Returns 0 with *out filled, or -1 with errno set. */
 int http_client_get(const char *host, uint16_t port, const char *target,
                     http_response *out);
+
+/* Stage 65.34: a conditional GET -- the client's half of Stage 65.32.
+ *
+ * etag is the entity tag the server handed out (read it with
+ * http_response_header_get). The request carries "If-None-Match:
+ * <etag>", and a server that agrees answers 304 (Not Modified): no
+ * body, and the validator on the answer again (RFC 9110 15.4.5).
+ *
+ * etag == NULL is a plain GET. */
+int http_client_get_conditional(const char *host, uint16_t port,
+                                const char *target, const char *etag,
+                                http_response *out);
 
 #endif /* HTTP_CLIENT_H */
