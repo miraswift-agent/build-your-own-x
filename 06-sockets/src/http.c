@@ -20,6 +20,7 @@
 #include "sockets.h"
 #include "coding.h"
 #include "content_length.h"
+#include "etag.h"
 
 static int ieq(const char *a, const char *b)
 {
@@ -601,10 +602,36 @@ int http_response_build_allow(char *dst, size_t dst_len, int status, const char 
                                size_t body_len, int keep_alive, const char *date,
                                const char *allow)
 {
+    return http_response_build_full(dst, dst_len, status, reason, content_type,
+                                    body, body_len, keep_alive, date, allow,
+                                    NULL);
+}
+
+/* Stage 65.32: the builder with every header this component can send.
+ *
+ * The optional headers are the Allow list and the entity tag; both are
+ * NULL for "no such header". And body_len == HTTP_NO_LENGTH means the
+ * response carries NO Content-Length header field and no content --
+ * which is what a 304 is: RFC 9110 15.4.5, "A 304 response is
+ * terminated by the end of the header section; it cannot contain
+ * content or trailers."
+ *
+ * One implementation, so the header order and the framing cannot
+ * differ between the responses that have an ETag and the ones that do
+ * not. */
+int http_response_build_full(char *dst, size_t dst_len, int status, const char *reason,
+                              const char *content_type, const char *body,
+                              size_t body_len, int keep_alive, const char *date,
+                              const char *allow, const char *etag)
+{
     char ctype_line[80];
     char allow_line[160];
+    char etag_line[HTTP_ETAG_MAX + 16];
+    char length_line[48];
     const char *ctype_hdr = "";
     const char *allow_hdr = "";
+    const char *etag_hdr = "";
+    const char *length_hdr = "";
     int n;
 
     if (!dst || dst_len == 0 || !date) {
@@ -638,21 +665,51 @@ int http_response_build_allow(char *dst, size_t dst_len, int status, const char 
         }
         allow_hdr = allow_line;
     }
+    /* Stage 65.32: the entity tag of the selected representation. */
+    if (etag != NULL && *etag != '\0') {
+        int en = snprintf(etag_line, sizeof(etag_line), "ETag: %s\r\n", etag);
+        if (en < 0 || (size_t)en >= sizeof(etag_line)) {
+            errno = ENOBUFS;
+            return -1;
+        }
+        etag_hdr = etag_line;
+    }
+    /* The length -- unless the response says it has none. */
+    if (body_len != HTTP_NO_LENGTH) {
+        int ln = snprintf(length_line, sizeof(length_line),
+                          "Content-Length: %zu\r\n", body_len);
+        if (ln < 0 || (size_t)ln >= sizeof(length_line)) {
+            errno = ENOBUFS;
+            return -1;
+        }
+        length_hdr = length_line;
+    }
     n = snprintf(dst, dst_len,
                  "HTTP/1.1 %d %s\r\n"
                  "Date: %s\r\n"
                  "%s"
                  "%s"
-                 "Content-Length: %zu\r\n"
+                 "%s"
+                 "%s"
                  "Connection: %s\r\n"
                  "\r\n",
                  status, reason ? reason : "",
                  date,
                  ctype_hdr,
                  allow_hdr,
-                 body_len, keep_alive ? "keep-alive" : "close");
+                 etag_hdr,
+                 length_hdr,
+                 keep_alive ? "keep-alive" : "close");
     if (n < 0) {
         return -1;
+    }
+    if (body_len == HTTP_NO_LENGTH) {
+        /* No content, and no claim about any. */
+        if ((size_t)n >= dst_len) {
+            errno = ENOBUFS;
+            return -1;
+        }
+        return n;
     }
     if ((size_t)n + body_len >= dst_len) {
         errno = ENOBUFS;
@@ -893,10 +950,7 @@ static int serve_connection(int fd, const http_host_route *routes, size_t route_
             char host[HTTP_MAX_HVALUE + 1];
             const char *host_name = NULL;
             const char *body;
-            const char *ctype;
-            const char *reason;
             size_t blen;
-            int code;
             int n;
             size_t to_send;
             sock_io_result wr;
@@ -1193,21 +1247,70 @@ static int serve_connection(int fd, const http_host_route *routes, size_t route_
                 continue;
             }
 
+            /* The document route: the one resource whose representation
+             * is a fixed document, and so the one resource this
+             * server can give a validator for.
+             *
+             * Stage 65.32: a conditional GET.
+             *
+             * RFC 9110 13.1.2: "When an origin server receives a
+             * request that selects a representation and that request
+             * includes an If-None-Match header field, the origin server
+             * MUST evaluate the If-None-Match condition per Section
+             * 13.2 prior to performing the method." And: "An origin
+             * server that evaluates an If-None-Match condition MUST NOT
+             * perform the requested method if the condition evaluates
+             * to false; instead, the origin server MUST respond with
+             * either a) the 304 (Not Modified) status code if the
+             * request method is GET or HEAD or b) the 412 (Precondition
+             * Failed) status code for all other request methods."
+             *
+             * The 304 carries the validator and the date -- RFC 9110
+             * 15.4.5: "The server generating a 304 response MUST
+             * generate any of the following header fields that would
+             * have been sent in a 200 (OK) response to the same
+             * request: Content-Location, Date, ETag, and Vary" -- and
+             * no content and no length: "A 304 response is terminated
+             * by the end of the header section; it cannot contain
+             * content or trailers."
+             *
+             * The 412 case cannot arise here, and that is not an
+             * oversight: the only method that selects a representation
+             * is GET or HEAD. POST is only supported on /echo, whose
+             * representation is the request's own body and so has no
+             * validator, and POST / is a 405 answered before this
+             * point. RFC 9110 13.2.1 says a server "MUST ignore the
+             * conditional request header fields ... when received with
+             * a request method that does not involve the selection or
+             * modification of a selected representation". */
             if (strcmp(req.target, "/") == 0) {
-                code = 200;
-                reason = "OK";
-                ctype = "text/html";
-                body = route_document(routes, route_count, host_name, default_body);
-            } else {
-                code = 404;
-                reason = "Not Found";
-                ctype = "text/plain";
-                body = "404 Not Found\n";
-            }
-            blen = strlen(body);
+                char etag[HTTP_ETAG_MAX];
+                const char *inm;
 
-            n = http_response_build(resp, sizeof(resp), code, reason, ctype,
-                                    body, blen, keep, date);
+                body = route_document(routes, route_count, host_name, default_body);
+                blen = strlen(body);
+                /* The validator for the representation. It is weak, and
+                 * it says so: a hash of the bytes is not collision-free,
+                 * so it is not a strong validator (RFC 9110 8.8.1). */
+                if (http_etag_weak(etag, sizeof(etag), body, blen) < 0) {
+                    return -1;
+                }
+                inm = http_header_get(&req, "If-None-Match");
+                if (inm != NULL && http_if_none_match_matches(inm, etag)) {
+                    n = http_response_build_full(resp, sizeof(resp), 304,
+                                                 "Not Modified", "", NULL,
+                                                 HTTP_NO_LENGTH, keep, date,
+                                                 NULL, etag);
+                } else {
+                    n = http_response_build_full(resp, sizeof(resp), 200, "OK",
+                                                 "text/html", body, blen, keep,
+                                                 date, NULL, etag);
+                }
+            } else {
+                n = http_response_build(resp, sizeof(resp), 404, "Not Found",
+                                        "text/plain", "404 Not Found\n", 14,
+                                        keep, date);
+            }
             if (n < 0) {
                 return -1;
             }

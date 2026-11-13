@@ -208,6 +208,52 @@ int http_response_build_allow(char *dst, size_t dst_len, int status,
                                int keep_alive, const char *date,
                                const char *allow);
 
+/* Stage 65.32: the value that says "this response has no
+ * Content-Length header field".
+ *
+ * It is NOT a length. A body of zero octets is "Content-Length: 0" --
+ * a claim that there is no content. A message with no length is a
+ * different claim, and the difference is a rule:
+ *
+ *   RFC 9110 8.6: "A server MUST NOT send a Content-Length header
+ *   field in any response with a status code of 1xx (Informational)
+ *   or 204 (No Content)."
+ *
+ *   RFC 9110 8.6 again, for the 304: "A server MAY send a
+ *   Content-Length header field in a 304 (Not Modified) response to a
+ *   conditional GET request; a server MUST NOT send Content-Length in
+ *   such a response unless its field value equals the decimal number
+ *   of octets that would have been sent in the content of a 200 (OK)
+ *   response to the same request."
+ *
+ * So a 304 MAY carry the length the matching 200 would have carried,
+ * and MAY carry none. This component's 304 carries none: RFC 9110
+ * 15.4.5 says a 304 "is terminated by the end of the header section;
+ * it cannot contain content or trailers", and a sender "SHOULD NOT
+ * generate representation metadata other than" the listed fields. */
+#define HTTP_NO_LENGTH ((size_t)-1)
+
+/* Stage 65.32: the builder with every header this component can send.
+ *
+ * One builder, not two: the header order, the length, the date, the
+ * connection -- all of it is the same code path, so a response with an
+ * ETag cannot drift from a response without one.
+ *
+ * etag is the entity tag of the selected representation ("W/"x""),
+ * pass NULL for no ETag header. allow is the Allow list, NULL for no
+ * Allow header.
+ *
+ * body_len == HTTP_NO_LENGTH means the response carries no
+ * Content-Length header field and no content.
+ *
+ * http_response_build and http_response_build_allow are this function
+ * with the optional headers left out. */
+int http_response_build_full(char *dst, size_t dst_len, int status,
+                              const char *reason, const char *content_type,
+                              const char *body, size_t body_len,
+                              int keep_alive, const char *date,
+                              const char *allow, const char *etag);
+
 /* Stage 65.29: the methods this server supports for a target -- the
  * value of the Allow header ("GET, HEAD"), or an empty string for a
  * target that is not a resource this server serves.
