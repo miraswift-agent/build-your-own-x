@@ -140,6 +140,7 @@ static int ask_with_lines(const char *cl_lines, const char *connection,
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     char req[512];
     int status;
 
@@ -486,6 +487,7 @@ static void test_the_client_closes_the_connection_on_differing_duplicates(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r;
 
     TEST("the client closes the connection on differing duplicates");

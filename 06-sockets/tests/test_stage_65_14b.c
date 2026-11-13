@@ -179,6 +179,7 @@ static void test_two_requests_on_one_socket_get_two_responses(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r1;
     http_response r2;
     int fd_before;
@@ -231,6 +232,7 @@ static void test_the_server_did_not_close_between_the_requests(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r1;
     const char *conn;
 
@@ -270,6 +272,7 @@ static void test_a_peer_that_closes_leaves_the_next_request_failed(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r1;
 
     TEST("a peer that closes leaves the next request failed");
@@ -301,6 +304,7 @@ static void test_two_of_nodes_responses_come_back_on_one_socket(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r1;
     http_response r2;
     static const char expected[] = "Hello, chunked world!\n";

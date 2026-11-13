@@ -244,6 +244,7 @@ static void test_the_write_and_the_read_are_separate(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r1;
 
     TEST("the write and the read are separate");
@@ -281,6 +282,7 @@ static void test_two_requests_go_out_before_either_response(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r1;
     http_response r2;
 
@@ -329,6 +331,7 @@ static void test_the_responses_come_back_in_order(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r1;
     http_response r2;
     http_response r3;
@@ -397,6 +400,7 @@ static void test_node_answers_a_pipelined_pair(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r1;
     http_response r2;
 
@@ -449,6 +453,7 @@ static void test_a_peer_that_answers_once_leaves_the_second_read_failed(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r1;
 
     TEST("a peer that answers once leaves the second read failed");

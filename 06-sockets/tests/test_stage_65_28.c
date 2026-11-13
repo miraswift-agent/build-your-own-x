@@ -504,6 +504,7 @@ static void test_the_client_does_not_wait_for_a_head_body(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r;
     double t0;
     double elapsed;
@@ -567,6 +568,7 @@ static void test_content_after_a_head_response_is_not_the_body(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r;
 
     TEST("content after a HEAD response is not the body");
@@ -621,6 +623,7 @@ static void test_an_unusable_length_on_a_head_response_is_still_complete(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r;
 
     TEST("an unusable length on a HEAD response is still complete");
@@ -667,6 +670,7 @@ static void test_a_chunked_head_response_has_no_body_either(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r;
 
     TEST("a chunked HEAD response has no body either");
@@ -709,6 +713,7 @@ static void test_our_client_asks_our_server_for_a_head(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r;
     struct timeval tv;
 

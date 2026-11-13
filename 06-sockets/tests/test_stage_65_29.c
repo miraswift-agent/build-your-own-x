@@ -855,6 +855,7 @@ static void test_our_client_reads_a_405(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r;
     struct timeval tv;
     int i;

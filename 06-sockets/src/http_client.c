@@ -952,6 +952,16 @@ static int client_addr(const char *host, uint16_t port, struct sockaddr_in *addr
 
 /* ---------- the connection: a socket that carries a conversation ---------- */
 
+void http_client_connection_init(http_client_connection *c)
+{
+    if (c == NULL) {
+        return;
+    }
+    memset(c, 0, sizeof(*c));
+    c->fd = -1;
+    http_response_parser_init(&c->parser);
+}
+
 int http_client_connection_open(http_client_connection *c, const char *host, uint16_t port)
 {
     struct sockaddr_in addr;

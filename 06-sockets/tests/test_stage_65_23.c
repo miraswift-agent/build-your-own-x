@@ -126,6 +126,7 @@ static void test_a_coding_we_do_not_understand_is_refused(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r;
     static const char req[] =
         "POST /echo HTTP/1.1\r\n"
@@ -182,6 +183,7 @@ static void test_the_refusal_closes_the_connection(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r;
     http_response r2;
     const char *conn_hdr;
@@ -261,6 +263,7 @@ static void test_the_refusal_does_not_wait_for_the_body(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r;
     struct timeval tv;
     static const char head[] =
@@ -358,6 +361,7 @@ static void test_the_must_outranks_the_should(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r;
     static const char not_final[] =
         "POST /echo HTTP/1.1\r\n"
@@ -437,6 +441,7 @@ static void test_a_coding_we_understand_is_still_answered(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r;
     static const char req[] =
         "POST /echo HTTP/1.1\r\n"
@@ -490,6 +495,7 @@ static void test_the_coding_s_name_is_case_insensitive(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r;
     static const char unknown[] =
         "POST /echo HTTP/1.1\r\n"
@@ -629,6 +635,7 @@ static void test_a_plain_request_is_still_answered(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r;
     static const char req[] =
         "GET / HTTP/1.1\r\n"

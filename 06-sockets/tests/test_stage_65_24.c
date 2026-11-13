@@ -483,6 +483,7 @@ static void test_the_client_refuses_a_coded_response_over_a_socket(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r;
     struct timeval tv;
     int rc;

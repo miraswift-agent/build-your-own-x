@@ -100,6 +100,7 @@ static void test_a_request_with_a_body_is_answered_with_that_body(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r;
     static const char sent[] = "hello, body";
 
@@ -140,6 +141,7 @@ static void test_the_echo_is_byte_for_byte(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r;
     static const char sent[] = { 'a', '\0', (char)0xff, 'b' };
 
@@ -181,6 +183,7 @@ static void test_a_body_and_then_another_request(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r1;
     http_response r2;
     static const char sent[] = "hello, body";
@@ -289,6 +292,7 @@ static void test_a_request_without_a_body_echoes_nothing(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r;
 
     TEST("a request without a body echoes nothing");

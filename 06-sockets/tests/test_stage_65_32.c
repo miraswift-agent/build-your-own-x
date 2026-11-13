@@ -956,6 +956,7 @@ static void test_the_304_keeps_the_connection(void)
 static void test_the_client_reads_the_validator_and_the_304(void)
 {
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r;
     pid_t pid;
     uint16_t port;

@@ -133,6 +133,7 @@ static void test_a_final_coding_that_is_not_chunked_is_refused(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r;
     static const char req[] =
         "POST /echo HTTP/1.1\r\n"
@@ -188,6 +189,7 @@ static void test_the_refusal_closes_the_connection(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r;
     http_response r2;
     const char *conn_hdr;
@@ -251,6 +253,7 @@ static void test_the_refusal_does_not_wait_for_the_body(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r;
     struct timeval tv;
     static const char head[] =
@@ -345,6 +348,7 @@ static void test_the_final_coding_is_the_last_one_not_the_first(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r;
     static const char req[] =
         "POST /echo HTTP/1.1\r\n"
@@ -464,6 +468,7 @@ static void test_an_empty_transfer_encoding_is_refused(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r;
     static const char req[] =
         "POST /echo HTTP/1.1\r\n"
@@ -508,6 +513,7 @@ static void test_a_length_alone_is_still_answered(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r;
     static const char req[] =
         "POST /echo HTTP/1.1\r\n"
@@ -560,6 +566,7 @@ static void test_no_coding_at_all_is_still_answered(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r;
     static const char req[] =
         "GET / HTTP/1.1\r\n"

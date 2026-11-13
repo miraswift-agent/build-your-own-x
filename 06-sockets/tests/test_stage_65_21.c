@@ -111,6 +111,7 @@ static void test_a_coding_and_a_length_together_are_refused(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r;
     static const char req[] =
         "POST /echo HTTP/1.1\r\n"
@@ -168,6 +169,7 @@ static void test_the_refusal_closes_the_connection(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r;
     http_response r2;
     const char *conn_hdr;
@@ -234,6 +236,7 @@ static void test_the_refusal_does_not_wait_for_the_body(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r;
     struct timeval tv;
     static const char head[] =
@@ -328,6 +331,7 @@ static void test_a_coding_alone_is_still_answered(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r;
     static const char decoded[] = "Hello, chunked world!\n";
     static const char req[] =
@@ -384,6 +388,7 @@ static void test_a_length_alone_is_still_answered(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r;
     static const char req[] =
         "POST /echo HTTP/1.1\r\n"
@@ -436,6 +441,7 @@ static void test_a_zero_length_is_still_a_conflict(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r;
     static const char req[] =
         "POST /echo HTTP/1.1\r\n"
@@ -485,6 +491,7 @@ static void test_the_rule_is_about_presence_not_the_coding_s_name(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r;
     static const char req[] =
         "POST /echo HTTP/1.1\r\n"

@@ -214,6 +214,7 @@ static void test_the_client_refuses_a_body_shorter_than_the_length(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r;
 
     TEST("the client refuses a body shorter than the length");
@@ -255,6 +256,7 @@ static void test_the_connection_is_really_closed(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r;
     int saved;
 
@@ -304,6 +306,7 @@ static void test_a_chunked_body_that_stops_is_incomplete(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r;
 
     TEST("a chunked body that stops is incomplete");
@@ -347,6 +350,7 @@ static void test_a_close_delimited_response_is_complete(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r;
 
     TEST("a close-delimited response is complete");
@@ -388,6 +392,7 @@ static void test_a_complete_response_is_unaffected(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r;
 
     TEST("a complete response is still read");
@@ -539,6 +544,7 @@ static ssize_t ask_our_server_with_short_body(const char *request, size_t len)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     char buf[512];
     ssize_t total = 0;
 
@@ -644,6 +650,7 @@ static void test_the_client_does_not_close_on_a_malformed_response(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r;
     int st = 0;
 

@@ -241,6 +241,7 @@ static void test_the_bytes_on_the_wire_are_the_bytes_node_wrote(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     int capture_fd;
     unsigned char captured[4096];
     size_t captured_len = 0;
@@ -304,6 +305,7 @@ static void test_a_chunked_request_body_is_read_by_the_server(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r;
     static const char decoded[] = "Hello, chunked world!\n";
 
@@ -347,6 +349,7 @@ static void test_a_chunked_body_is_byte_for_byte(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r;
     static const char payload[] = { 'a', '\0', (char)0xff, 'b' };
 
@@ -388,6 +391,7 @@ static void test_an_empty_chunked_body_is_the_terminal_chunk_alone(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r;
 
     TEST("an empty chunked body is the terminal chunk alone");
@@ -430,6 +434,7 @@ static void test_the_connection_refuses_mixed_framing(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r;
 
     TEST("the connection refuses mixed framing");
@@ -516,6 +521,7 @@ static void test_a_chunked_request_and_then_another_request(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r1;
     http_response r2;
     static const char decoded[] = "Hello, chunked world!\n";
@@ -581,6 +587,7 @@ static void test_a_body_written_in_pieces_is_one_body(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r;
     static const char decoded[] = "Hello, chunked world!\n";
 

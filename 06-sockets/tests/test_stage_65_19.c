@@ -106,6 +106,7 @@ static void test_a_chunked_request_body_is_decoded_and_echoed(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r;
     static const char decoded[] = "Hello, chunked world!\n";
 
@@ -146,6 +147,7 @@ static void test_a_chunked_body_is_byte_for_byte(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r;
     static const char payload[] = { 'a', '\0', (char)0xff, 'b' };
     char req[512];
@@ -204,6 +206,7 @@ static void test_a_chunked_body_and_then_another_request(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r1;
     http_response r2;
     static const char decoded[] = "Hello, chunked world!\n";
@@ -264,6 +267,7 @@ static void test_a_chunked_body_that_arrives_in_pieces(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r;
     size_t head_len = 0;
     size_t i;
@@ -334,6 +338,7 @@ static void test_an_empty_chunked_body_echoes_nothing(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r;
     static const char req[] =
         "POST /echo HTTP/1.1\r\n"

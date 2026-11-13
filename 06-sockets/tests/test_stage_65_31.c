@@ -237,6 +237,7 @@ static void test_204_with_a_length_has_no_body(void)
     static const char resp[] =
         "HTTP/1.1 204 No Content\r\nContent-Length: 5\r\n\r\n";
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r;
     pid_t pid;
     uint16_t port;
@@ -279,6 +280,7 @@ static void test_304_with_a_length_has_no_body(void)
     static const char resp[] =
         "HTTP/1.1 304 Not Modified\r\nContent-Length: 5\r\n\r\n";
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r;
     pid_t pid;
     uint16_t port;
@@ -322,6 +324,7 @@ static void test_1xx_is_interim(void)
     static const char second[] =
         "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello";
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r;
     pid_t pid;
     uint16_t port;
@@ -365,6 +368,7 @@ static void test_interim_keeps_the_head_flag(void)
     static const char second[] =
         "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\n";
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r;
     pid_t pid;
     uint16_t port;
@@ -409,6 +413,7 @@ static void test_204_with_an_invalid_length_is_complete(void)
     static const char resp[] =
         "HTTP/1.1 204 No Content\r\nContent-Length: abc\r\n\r\n";
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r;
     pid_t pid;
     uint16_t port;
@@ -451,6 +456,7 @@ static void test_204_with_an_unknown_coding_has_no_body(void)
     static const char resp[] =
         "HTTP/1.1 204 No Content\r\nTransfer-Encoding: gzip\r\n\r\n";
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r;
     pid_t pid;
     uint16_t port;
@@ -493,6 +499,7 @@ static void test_204_that_says_chunked_is_not_decoded(void)
     static const char resp[] =
         "HTTP/1.1 204 No Content\r\nTransfer-Encoding: chunked\r\n\r\n";
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r;
     pid_t pid;
     uint16_t port;
@@ -534,6 +541,7 @@ static void test_close_after_an_interim_is_incomplete(void)
 {
     static const char resp[] = "HTTP/1.1 100 Continue\r\n\r\n";
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r;
     pid_t pid;
     uint16_t port;
@@ -576,6 +584,7 @@ static void test_an_ordinary_response_still_has_its_body(void)
     static const char resp[] =
         "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello";
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r;
     pid_t pid;
     uint16_t port;
@@ -618,6 +627,7 @@ static void test_204_leaves_the_connection_in_sync(void)
     static const char resp[] =
         "HTTP/1.1 204 No Content\r\nContent-Length: 5\r\n\r\n";
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r;
     pid_t pid;
     uint16_t port;

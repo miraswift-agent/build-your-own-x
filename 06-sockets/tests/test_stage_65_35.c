@@ -156,6 +156,7 @@ static void test_the_head_carries_the_expectation(void)
 {
     int sv[2];
     http_client_connection c;
+    http_client_connection_init(&c);
     char buf[1024];
     ssize_t n;
 
@@ -222,6 +223,7 @@ static void test_a_final_response_before_the_body_sends_no_body(void)
 {
     int sv[2];
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response msg;
     char buf[256];
     ssize_t n;
@@ -293,6 +295,7 @@ static void test_no_answer_means_the_body_goes_anyway(void)
 {
     int sv[2];
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response msg;
     char buf[1024];
     size_t total;
@@ -332,6 +335,7 @@ static void test_expect_with_no_content_is_refused(void)
 {
     int sv[2];
     http_client_connection c;
+    http_client_connection_init(&c);
     char buf[64];
     ssize_t n;
 
@@ -366,6 +370,7 @@ static void test_the_interim_does_not_advance_the_queue(void)
 {
     int sv[2];
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response msg;
 
     TEST("the interim does not advance the in-flight queue");
@@ -425,6 +430,7 @@ static void test_the_peer_closes_after_the_interim(void)
 {
     int sv[2];
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response msg;
 
     TEST("the peer closes after the 100: the reason is incomplete");
@@ -492,6 +498,7 @@ static void test_the_peer_closes_after_the_interim(void)
 static void test_the_wait_is_bounded(void)
 {    int sv[2];
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response msg;
     struct timespec t0;
     struct timespec t1;

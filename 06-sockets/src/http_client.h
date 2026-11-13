@@ -261,6 +261,22 @@ typedef struct {
     int         interims;
 } http_client_connection;
 
+/* Put a connection into its initial state.
+ *
+ * Stage 65.35: a connection carries state that a caller CANNOT be
+ * expected to know about -- the open-body flag, the in-flight queue,
+ * the interim count. A caller that hand-builds the struct (the tests
+ * do, to drive a socket they opened themselves) would leave those
+ * fields whatever was on the stack, and valgrind said so:
+ *
+ *   Conditional jump or move depends on uninitialised value(s)
+ *      at client_read_message (http_client.c:1255)
+ *
+ * So the component owns the initialization of its own state, and the
+ * one place that knows what a connection looks like before use is
+ * THIS function. */
+void http_client_connection_init(http_client_connection *c);
+
 /* Open a connection to a dotted-quad address. Returns 0, or -1 with
  * errno set. */
 int http_client_connection_open(http_client_connection *c, const char *host, uint16_t port);

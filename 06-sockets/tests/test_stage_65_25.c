@@ -143,6 +143,7 @@ static int ask_with_length(const char *cl_value, http_response *r)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     char req[512];
     int status;
 
@@ -459,6 +460,7 @@ static void test_the_client_closes_the_connection_on_an_unusable_length(void)
     pid_t pid;
     uint16_t port;
     http_client_connection c;
+    http_client_connection_init(&c);
     http_response r;
 
     TEST("the client closes the connection on an unusable length");
