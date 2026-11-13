@@ -83,6 +83,18 @@ int sock_connect_loopback(uint16_t port);
 ssize_t sock_read_once(int fd, void *buf, size_t len);
 ssize_t sock_write_once(int fd, const void *buf, size_t len);
 
+/* Stage 65.35: wait until the socket has something to read.
+ *
+ * The house has ONE way of waiting: select() -- the idiom sock_mux_poll
+ * already uses. Returns 1 when the socket is readable, 0 when the
+ * timeout passed with nothing to read, -1 with errno set.
+ *
+ * A bounded wait is not a convenience. RFC 9110 10.1.1 says a client
+ * that sent a 100-continue expectation SHOULD NOT wait for an indefinite
+ * period, and an indefinite wait against a server that never answers is
+ * a hang, not a slow answer. */
+int sock_wait_readable(int fd, int timeout_ms);
+
 /* Close a descriptor. Returns 0 on success, -1 with errno set (EBADF if the
  * descriptor was already closed). */
 int sock_close(int fd);

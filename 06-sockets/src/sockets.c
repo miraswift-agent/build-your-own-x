@@ -217,6 +217,34 @@ ssize_t sock_write_once(int fd, const void *buf, size_t len)
     return write(fd, buf, len);
 }
 
+/* Stage 65.35: the bounded wait.
+ *
+ * select() is the house's waiting idiom (sock_mux_poll uses it), so the
+ * house has one way of waiting and not two. The timeout is in
+ * milliseconds; 0 asks "is it readable right now". */
+int sock_wait_readable(int fd, int timeout_ms)
+{
+    fd_set rfds;
+    struct timeval tv;
+    int rc;
+
+    if (fd < 0 || timeout_ms < 0 || fd >= FD_SETSIZE) {
+        errno = EINVAL;
+        return -1;
+    }
+    FD_ZERO(&rfds);
+    FD_SET(fd, &rfds);
+    tv.tv_sec = timeout_ms / 1000;
+    tv.tv_usec = (timeout_ms % 1000) * 1000;
+    rc = select(fd + 1, &rfds, NULL, NULL, &tv);
+    if (rc < 0) {
+        /* EINTR comes out of select() with errno set: the caller
+         * decides whether to wait again. */
+        return -1;
+    }
+    return rc > 0 ? 1 : 0;
+}
+
 int sock_close(int fd)
 {
     return close(fd);

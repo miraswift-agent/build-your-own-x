@@ -101,6 +101,27 @@ int http_client_request_build_with_header(char *dst, size_t dst_len,
                                            size_t body_len, int keep_alive,
                                            const char *hdr_name, const char *hdr_value);
 
+/* Stage 65.35: the HEAD of a request, without its body.
+ *
+ * The expect flow needs the head on the wire first: it carries
+ * "Content-Length: N" and "Expect: 100-continue", and the body follows
+ * only if the server says so. So the head is built on its own, and the
+ * whole-request builder delegates to it and appends the body -- ONE
+ * reader for the head, so the bytes are the same whether a request is
+ * built whole or in two parts.
+ *
+ * content_length < 0 means no Content-Length header at all.
+ *
+ * hdr_name and hdr_value are both NULL for "no extra header"; exactly
+ * one of them NULL is EINVAL. The name and the value are checked: a
+ * value carrying a CR or an LF would end the header line and start
+ * another one, and a name carrying a colon is not a name. */
+int http_client_request_build_head(char *dst, size_t dst_len,
+                                   const char *method, const char *target,
+                                   const char *host, long content_length,
+                                   int keep_alive,
+                                   const char *hdr_name, const char *hdr_value);
+
 /* Stage 65.20: the head of a request whose body length is not known yet.
  *
  * The same request line, Host, User-Agent and Connection as
@@ -227,6 +248,17 @@ typedef struct {
      * HEAD response, there is no body". */
     int         in_flight[HTTP_CLIENT_MAX_INFLIGHT];
     int         n_inflight;
+
+    /* Stage 65.35: 1 when a head is on the wire whose body has not
+     * been sent yet -- the expect flow. */
+    int         body_pending;
+
+    /* Stage 65.35: the interim responses read so far for the request
+     * being answered. It lives HERE because the expect flow reads the
+     * 100 in one call and the final response in another, and a peer
+     * that closes between them is still a peer that closed after an
+     * interim (Stage 65.31). */
+    int         interims;
 } http_client_connection;
 
 /* Open a connection to a dotted-quad address. Returns 0, or -1 with
@@ -245,6 +277,55 @@ int http_client_connection_open(http_client_connection *c, const char *host, uin
 int http_client_connection_write_request(http_client_connection *c, const char *method,
                                          const char *target, const char *body,
                                          size_t body_len);
+
+/* Stage 65.35: write the HEAD of a request, and nothing else.
+ *
+ * The head carries "Content-Length: N" (when content_length >= 0) and
+ * -- when expect_continue is set -- "Expect: 100-continue", which is
+ * the RFC 9110 10.1.1 expectation. The body is NOT written here: it is
+ * written later, by http_client_connection_write_body, and only if the
+ * server wants it.
+ *
+ * The request enters the in-flight queue when the HEAD goes out, not
+ * when the body goes: the server's answer may be a final response that
+ * arrives before the body does, and that answer belongs to this
+ * request.
+ *
+ * An expectation on a request with no content is EINVAL, and nothing
+ * goes on the wire: RFC 9110 10.1.1 -- "A client MUST NOT generate a
+ * 100-continue expectation in a request that does not include content."
+ *
+ * Returns 0, or -1 with errno set. */
+int http_client_connection_write_head(http_client_connection *c, const char *method,
+                                      const char *target, long content_length,
+                                      int keep_alive, int expect_continue);
+
+/* Stage 65.35: wait for the server's answer to the expectation.
+ *
+ * The wait is BOUNDED, because RFC 9110 10.1.1 says a client that
+ * sent a 100-continue expectation SHOULD NOT wait for an indefinite
+ * period. One second is the house's number (curl's), and it is a
+ * parameter, not a constant.
+ *
+ * Returns:
+ *   1  an interim response arrived (in *msg) -- the caller sends the
+ *      body;
+ *   0  a FINAL response arrived (in *msg) -- the server answered
+ *      without the content, and the body must NOT be sent;
+ *  -1  with errno == ETIMEDOUT: no answer within the timeout. The
+ *      connection is still good and the body still has to go, so this
+ *      is an outcome, not a broken connection; or -1 with another
+ *      errno: a read or parse error. */
+int http_client_connection_expect_continue(http_client_connection *c, int timeout_ms,
+                                           http_response *msg);
+
+/* Stage 65.35: write the body of the request whose head went out.
+ *
+ * EINVAL when no head is waiting for a body: bytes on the wire now
+ * would answer nothing, and the peer would read them as the start of
+ * the next request. Returns 0, or -1 with errno set. */
+int http_client_connection_write_body(http_client_connection *c, const void *body,
+                                      size_t body_len);
 
 /* Stage 65.20: write the head of a chunked request.
  *
@@ -345,5 +426,25 @@ int http_client_get(const char *host, uint16_t port, const char *target,
 int http_client_get_conditional(const char *host, uint16_t port,
                                 const char *target, const char *etag,
                                 http_response *out);
+
+/* Stage 65.35: one request that asks before it sends its body.
+ *
+ * The client's half of the 100 Continue: the request carries
+ * "Expect: 100-continue", the client waits for the server's answer
+ * (bounded by timeout_ms), and the body goes only if the server wants
+ * it.
+ *
+ * A request with no content is EINVAL and nothing goes on the wire.
+ *
+ * On a timeout the body goes anyway (RFC 9110 10.1.1: a client MAY
+ * proceed to send the content even if it has not yet received a
+ * response). On a final response before the body -- a 417, a 401, a
+ * 405 -- the body is NOT sent, and that response is the answer.
+ *
+ * Returns 0 with *out filled, or -1 with errno set. */
+int http_client_request_expect(const char *host, uint16_t port,
+                                const char *method, const char *target,
+                                const char *body, size_t body_len,
+                                int timeout_ms, http_response *out);
 
 #endif /* HTTP_CLIENT_H */

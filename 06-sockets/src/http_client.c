@@ -22,14 +22,20 @@
  *     connection, and those are the only two framings.
  */
 
+/* _DEFAULT_SOURCE exposes clock_gettime and CLOCK_MONOTONIC under
+ * -std=c11. */
+#define _DEFAULT_SOURCE
+
 #include "http_client.h"
 
 #include <ctype.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <limits.h>
 #include <string.h>
 #include <strings.h>
+#include <time.h>
 #include <unistd.h>
 #include <sys/socket.h>
 
@@ -728,17 +734,26 @@ int http_client_request_build(char *dst, size_t dst_len,
                                         body, body_len, 0);
 }
 
-int http_client_request_build_with_header(char *dst, size_t dst_len,
-                                           const char *method, const char *target,
-                                           const char *host, const char *body,
-                                           size_t body_len, int keep_alive,
-                                           const char *hdr_name, const char *hdr_value)
+/* Stage 65.35: the head, on its own.
+ *
+ * The head is what goes on the wire first in the expect flow: it says
+ * how long the body will be, and it carries the expectation. So it is
+ * built here, and the whole-request builder below delegates to it and
+ * appends the body -- ONE reader for the head.
+ *
+ * The header checks are the 65.34 ones, unchanged: a header value that
+ * carries a CR or an LF ends the line and starts another one, and a
+ * name carrying a colon is not a name. */
+int http_client_request_build_head(char *dst, size_t dst_len,
+                                   const char *method, const char *target,
+                                   const char *host, long content_length,
+                                   int keep_alive,
+                                   const char *hdr_name, const char *hdr_value)
 {
     int n;
     size_t need;
 
-    if (dst == NULL || method == NULL || target == NULL || host == NULL ||
-        (body == NULL && body_len > 0)) {
+    if (dst == NULL || method == NULL || target == NULL || host == NULL) {
         errno = EINVAL;
         return -1;
     }
@@ -765,9 +780,6 @@ int http_client_request_build_with_header(char *dst, size_t dst_len,
     if (hdr_name != NULL) {
         need += strlen(hdr_name) + strlen(hdr_value) + 4;
     }
-    if (body_len > 0) {
-        need += body_len + 32;
-    }
     if (dst_len < need) {
         errno = ENOBUFS;
         return -1;
@@ -791,23 +803,77 @@ int http_client_request_build_with_header(char *dst, size_t dst_len,
         }
         n += m;
     }
-    if (body_len > 0) {
+    if (content_length >= 0) {
         int m = snprintf(dst + n, dst_len - (size_t)n,
-                         "Content-Length: %zu\r\n\r\n", body_len);
+                         "Content-Length: %ld\r\n", content_length);
         if (m < 0 || (size_t)(n + m) >= dst_len) {
             errno = ENOBUFS;
             return -1;
         }
         n += m;
-        memcpy(dst + n, body, body_len);
-        n += (int)body_len;
-    } else {
+    }
+    {
         int m = snprintf(dst + n, dst_len - (size_t)n, "\r\n");
         if (m < 0 || (size_t)(n + m) >= dst_len) {
             errno = ENOBUFS;
             return -1;
         }
         n += m;
+    }
+    return n;
+}
+
+/* The whole request: the head, then the body.
+ *
+ * Stage 65.35: this delegates to the head builder above and appends
+ * the body, so the head bytes are the same whether a request is built
+ * whole or in two parts (the expect flow needs the head alone). */
+int http_client_request_build_with_header(char *dst, size_t dst_len,
+                                           const char *method, const char *target,
+                                           const char *host, const char *body,
+                                           size_t body_len, int keep_alive,
+                                           const char *hdr_name, const char *hdr_value)
+{
+    int n;
+    size_t need;
+
+    if (dst == NULL || method == NULL || target == NULL || host == NULL ||
+        (body == NULL && body_len > 0)) {
+        errno = EINVAL;
+        return -1;
+    }
+    if ((hdr_name == NULL) != (hdr_value == NULL)) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (body_len > (size_t)LONG_MAX) {
+        errno = EINVAL;
+        return -1;
+    }
+    need = strlen(method) + strlen(target) + strlen(host) + 128;
+    if (hdr_name != NULL) {
+        need += strlen(hdr_name) + strlen(hdr_value) + 4;
+    }
+    if (body_len > 0) {
+        need += body_len + 32;
+    }
+    if (dst_len < need) {
+        errno = ENOBUFS;
+        return -1;
+    }
+    n = http_client_request_build_head(dst, dst_len, method, target, host,
+                                       body_len > 0 ? (long)body_len : -1,
+                                       keep_alive, hdr_name, hdr_value);
+    if (n < 0) {
+        return -1;
+    }
+    if (body_len > 0) {
+        if (dst_len < (size_t)n + body_len) {
+            errno = ENOBUFS;
+            return -1;
+        }
+        memcpy(dst + n, body, body_len);
+        n += (int)body_len;
     }
     return n;
 }
@@ -918,6 +984,8 @@ int http_client_connection_open(http_client_connection *c, const char *host, uin
     c->port = port;
     c->chunked_open = 0;
     c->n_inflight = 0;
+    c->body_pending = 0;
+    c->interims = 0;
     http_response_parser_init(&c->parser);
     return 0;
 }
@@ -1072,16 +1140,50 @@ int http_client_connection_write_chunked_end(http_client_connection *c)
     return 0;
 }
 
-int http_client_connection_read_response(http_client_connection *c, http_response *out)
+/* Stage 65.35: the clock the wait is measured on.
+ *
+ * Monotonic, so a wall-clock jump cannot make the wait longer or
+ * shorter than it was asked for. */
+static long monotonic_ms(void)
+{
+    struct timespec ts;
+
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (long)ts.tv_sec * 1000L + (long)(ts.tv_nsec / 1000000L);
+}
+
+/* Read ONE message off the connection.
+ *
+ * ONE reader for the bytes: the parser is asked before the socket (the
+ * bytes of the next message may already be in hand -- Stage 65.14a's
+ * leftovers), and a complete message comes back with *out filled.
+ *
+ * The interim is NOT skipped here: what an interim MEANS depends on
+ * who is asking. The final-answer reader skips it (Stage 65.31: it is
+ * not the answer to the request); the expect wait hands it to the
+ * caller (it IS the answer to the expectation). Skipping it is a
+ * decision, and this function does not make it.
+ *
+ * deadline_ms < 0 means "no deadline": wait as long as the socket
+ * takes, which is the ordinary path. A deadline bounds the wait, and
+ * a wait that runs out is ETIMEDOUT -- an OUTCOME, not a broken
+ * connection: the socket is still good and the body still has to go.
+ *
+ * *interims counts the interim messages already read for the request
+ * being answered. It lives in the CONNECTION, not in the call: the
+ * expect flow reads the 100 in one call and the final response in
+ * another (Stage 65.35), and a peer that closes between them is
+ * still a peer that closed after an interim (Stage 65.31). The
+ * knowledge lives with the conversation, not with the bytes.
+ *
+ * Returns 0 with *out filled, 1 when the message was completed by the
+ * peer's close (an EOF-framed final response), or -1 with errno set. */
+static int client_read_message(http_client_connection *c, http_response *out,
+                                long deadline_ms)
 {
     char buf[4096];
     http_parse_status st;
-    int saw_interim = 0;
 
-    if (c == NULL || c->fd < 0 || out == NULL) {
-        errno = EINVAL;
-        return -1;
-    }
     /* Stage 65.28: which response is this one?
      *
      * A response to a HEAD request carries no body (RFC 9112 6.3 item
@@ -1093,34 +1195,13 @@ int http_client_connection_read_response(http_client_connection *c, http_respons
     for (;;) {
         st = http_response_parser_next(&c->parser, out);
         if (st == HTTP_PARSE_OK) {
-            if (status_is_interim(out->status)) {
-                /* Stage 65.31: an interim response is a complete
-                 * message, but it is not the answer to the request --
-                 * the final response follows it. RFC 9112 15.2: "A
-                 * client MUST be able to parse one or more 1xx
-                 * responses received prior to a final response, even if
-                 * the client does not expect one."
-                 *
-                 * So the request stays in flight: the interim does not
-                 * answer it, and the expectation (a HEAD response has
-                 * no body) belongs to the final one. */
-                saw_interim = 1;
-                continue;
-            }
-            /* The final response answers the request at the front of
-             * the queue -- and only then is the queue advanced. */
-            if (c->n_inflight > 0) {
-                memmove(c->in_flight, c->in_flight + 1,
-                        (size_t)(c->n_inflight - 1) * sizeof(c->in_flight[0]));
-                c->n_inflight--;
-            }
             return 0;
         }
         if (st == HTTP_PARSE_ERROR) {
             /* Stage 65.25: the user agent's half of RFC 9112 6.3 item
-             * 5 -- "If it is in a response message received by a user
-             * agent, the user agent MUST close the connection to the
-             * server and discard the received response."
+             * 5 -- "If it is in a response message received by a
+             * user agent, the user agent MUST close the connection to
+             * the server and discard the received response."
              *
              * The close is the claim: a connection whose framing is
              * untrustworthy cannot be trusted with a second message.
@@ -1133,10 +1214,30 @@ int http_client_connection_read_response(http_client_connection *c, http_respons
             }
             return -1;
         }
-        /* NEED_MORE: the response is not here yet. The bytes of the NEXT
+        /* NEED_MORE: the message is not here yet. The bytes of the NEXT
          * response may already be in the parser -- Stage 65.14a's
          * leftovers -- but the parser only says so by handing us the
          * next one, so read only when the parser has nothing complete. */
+        if (deadline_ms >= 0) {
+            long remaining = deadline_ms - monotonic_ms();
+            int ready;
+
+            if (remaining <= 0) {
+                errno = ETIMEDOUT;
+                return -1;
+            }
+            ready = sock_wait_readable(c->fd, (int)remaining);
+            if (ready < 0) {
+                if (errno == EINTR) {
+                    continue;
+                }
+                return -1;
+            }
+            if (ready == 0) {
+                errno = ETIMEDOUT;
+                return -1;
+            }
+        }
         {
             ssize_t n = read(c->fd, buf, sizeof(buf));
             if (n > 0) {
@@ -1149,9 +1250,9 @@ int http_client_connection_read_response(http_client_connection *c, http_respons
                 /* The peer hung up. */
                 st = http_response_parser_finish(&c->parser, out);
                 if (st == HTTP_PARSE_OK) {
-                    return 0;
+                    return 1;
                 }
-                if (saw_interim) {
+                if (c->interims > 0) {
                     /* Stage 65.31: the peer closed after an interim
                      * response. The final response never came, so the
                      * request is unanswered -- and the reason is the
@@ -1184,6 +1285,186 @@ int http_client_connection_read_response(http_client_connection *c, http_respons
             return -1;
         }
     }
+}
+
+int http_client_connection_read_response(http_client_connection *c, http_response *out)
+{
+    if (c == NULL || c->fd < 0 || out == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+    for (;;) {
+        int rc = client_read_message(c, out, -1);
+
+        if (rc < 0) {
+            return -1;
+        }
+        if (rc == 1) {
+            /* The peer's close completed the message (an EOF-framed
+             * final response). */
+            return 0;
+        }
+        if (status_is_interim(out->status)) {
+            /* Stage 65.31: an interim response is a complete
+             * message, but it is not the answer to the request --
+             * the final response follows it. RFC 9112 15.2: "A
+             * client MUST be able to parse one or more 1xx
+             * responses received prior to a final response, even if
+             * the client does not expect one."
+             *
+             * So the request stays in flight: the interim does not
+             * answer it, and the expectation (a HEAD response has
+             * no body) belongs to the final one. */
+            c->interims++;
+            continue;
+        }
+        /* The final response answers the request at the front of
+         * the queue -- and only then is the queue advanced. */
+        if (c->n_inflight > 0) {
+            memmove(c->in_flight, c->in_flight + 1,
+                    (size_t)(c->n_inflight - 1) * sizeof(c->in_flight[0]));
+            c->n_inflight--;
+        }
+        /* The conversation with this request is over: the next one
+         * starts with no interims behind it. */
+        c->interims = 0;
+        return 0;
+    }
+}
+
+/* Stage 65.35: write the HEAD of a request, and nothing else.
+ *
+ * The head says how long the body will be and -- when expect_continue
+ * is set -- carries "Expect: 100-continue" (RFC 9110 10.1.1). The
+ * body is NOT written here: it goes later, and only if the server
+ * wants it.
+ *
+ * The request enters the in-flight queue when the HEAD goes out, not
+ * when the body goes: the server's answer may be a final response
+ * that arrives before the body does, and that answer belongs to this
+ * request. */
+int http_client_connection_write_head(http_client_connection *c, const char *method,
+                                      const char *target, long content_length,
+                                      int keep_alive, int expect_continue)
+{
+    char req[HTTP_CLIENT_MAX_REQUEST];
+    int reqlen;
+
+    if (c == NULL || c->fd < 0 || method == NULL || target == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (c->chunked_open) {
+        /* A chunked body is still open. */
+        errno = EINVAL;
+        return -1;
+    }
+    if (c->body_pending) {
+        /* The head of the last request is on the wire and its body has
+         * not gone yet: a second head now would put two messages on
+         * the wire at once. */
+        errno = EINVAL;
+        return -1;
+    }
+    if (expect_continue && content_length <= 0) {
+        /* RFC 9110 10.1.1: "A client MUST NOT generate a 100-continue
+         * expectation in a request that does not include content."
+         *
+         * Nothing goes on the wire: the request is refused before it
+         * is written, not after. */
+        errno = EINVAL;
+        return -1;
+    }
+    if (c->n_inflight >= HTTP_CLIENT_MAX_INFLIGHT) {
+        errno = ENOBUFS;
+        return -1;
+    }
+    reqlen = http_client_request_build_head(req, sizeof(req), method, target, c->host,
+                                             content_length, keep_alive,
+                                             expect_continue ? "Expect" : NULL,
+                                             expect_continue ? "100-continue" : NULL);
+    if (reqlen < 0) {
+        return -1;
+    }
+    if (write_all(c->fd, req, (size_t)reqlen) != 0) {
+        return -1;
+    }
+    c->in_flight[c->n_inflight++] = (strcmp(method, "HEAD") == 0) ? 1 : 0;
+    if (content_length > 0) {
+        c->body_pending = 1;
+    }
+    return 0;
+}
+
+/* Stage 65.35: wait for the server's answer to the expectation.
+ *
+ * The wait is BOUNDED, because RFC 9110 10.1.1 says a client that sent
+ * a 100-continue expectation SHOULD NOT wait for an indefinite period.
+ * One second is the house's number (curl's), and it is a parameter.
+ *
+ * The deadline is measured on the monotonic clock, so the wait is the
+ * time asked for and not the time the clock happened to lose. */
+int http_client_connection_expect_continue(http_client_connection *c, int timeout_ms,
+                                           http_response *msg)
+{
+    long deadline;
+    int rc;
+
+    if (c == NULL || c->fd < 0 || msg == NULL || timeout_ms < 0) {
+        errno = EINVAL;
+        return -1;
+    }
+    deadline = monotonic_ms() + (long)timeout_ms;
+    rc = client_read_message(c, msg, deadline);
+    if (rc < 0) {
+        return -1;
+    }
+    if (status_is_interim(msg->status)) {
+        /* The interim answers the EXPECTATION, not the request: the
+         * request stays in flight and the body still has to go.
+         *
+         * The count lives in the connection, because the final
+         * response comes in a LATER call (Stage 65.35): a peer that
+         * closes after this 100 is a peer that closed after an
+         * interim (Stage 65.31), and only the connection knows
+         * that. */
+        c->interims++;
+        return 1;
+    }
+    /* A final response before the body: the server has answered
+     * without the content -- a 417, a 401, a 405. That response IS
+     * the answer, and the body is NOT wanted: writing it onto a
+     * connection the peer may be closing is how a client causes a
+     * reset. */
+    if (c->n_inflight > 0) {
+        memmove(c->in_flight, c->in_flight + 1,
+                (size_t)(c->n_inflight - 1) * sizeof(c->in_flight[0]));
+        c->n_inflight--;
+    }
+    c->body_pending = 0;
+    return 0;
+}
+
+/* Stage 65.35: write the body of the request whose head went out. */
+int http_client_connection_write_body(http_client_connection *c, const void *body,
+                                      size_t body_len)
+{
+    if (c == NULL || c->fd < 0 || (body == NULL && body_len > 0)) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (!c->body_pending) {
+        /* No head is waiting for a body. Bytes on the wire now would
+         * answer nothing, and the peer would read them as the start
+         * of the next request. */
+        errno = EINVAL;
+        return -1;
+    }
+    if (body_len > 0 && write_all(c->fd, (const char *)body, body_len) != 0) {
+        return -1;
+    }
+    c->body_pending = 0;
+    return 0;
 }
 
 int http_client_connection_request(http_client_connection *c, const char *method,
@@ -1333,6 +1614,74 @@ int http_client_get(const char *host, uint16_t port, const char *target,
 /* Stage 65.34: the conditional GET. The tag goes out as "If-None-Match"
  * and the answer is whatever the server makes of it -- a 304 when the
  * representation has not changed, a 200 when it has. */
+/* Stage 65.35: one request that asks before it sends its body.
+ *
+ * The client's half of the 100 Continue, end to end: the head goes out
+ * with the expectation, the wait is bounded, and the body goes only if
+ * the server wants it.
+ *
+ * A timeout is an outcome, not an error: the RFC says a client MAY
+ * proceed to send the content even if it has not yet received a
+ * response, so the body goes anyway and the request behaves like an
+ * ordinary one. */
+int http_client_request_expect(const char *host, uint16_t port,
+                                const char *method, const char *target,
+                                const char *body, size_t body_len,
+                                int timeout_ms, http_response *out)
+{
+    http_client_connection c;
+    http_response msg;
+    int waited;
+
+    if (host == NULL || method == NULL || target == NULL || out == NULL ||
+        (body == NULL && body_len > 0)) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (body_len == 0) {
+        /* RFC 9110 10.1.1: a client MUST NOT generate a 100-continue
+         * expectation in a request that does not include content. */
+        errno = EINVAL;
+        return -1;
+    }
+    if (timeout_ms < 0) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (http_client_connection_open(&c, host, port) != 0) {
+        return -1;
+    }
+    if (http_client_connection_write_head(&c, method, target, (long)body_len,
+                                          1, 1) != 0) {
+        http_client_connection_close(&c);
+        return -1;
+    }
+    waited = http_client_connection_expect_continue(&c, timeout_ms, &msg);
+    if (waited < 0) {
+        if (errno != ETIMEDOUT) {
+            http_client_connection_close(&c);
+            return -1;
+        }
+        /* The timeout: the body goes anyway. */
+    } else if (waited == 0) {
+        /* A final response before the body: it IS the answer, and the
+         * body is not wanted. */
+        *out = msg;
+        http_client_connection_close(&c);
+        return 0;
+    }
+    if (http_client_connection_write_body(&c, body, body_len) != 0) {
+        http_client_connection_close(&c);
+        return -1;
+    }
+    if (http_client_connection_read_response(&c, out) != 0) {
+        http_client_connection_close(&c);
+        return -1;
+    }
+    http_client_connection_close(&c);
+    return 0;
+}
+
 int http_client_get_conditional(const char *host, uint16_t port,
                                 const char *target, const char *etag,
                                 http_response *out)
